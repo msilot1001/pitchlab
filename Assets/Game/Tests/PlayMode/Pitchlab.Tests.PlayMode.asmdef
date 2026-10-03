@@ -3,6 +3,7 @@
     "rootNamespace": "Pitchlab.Tests",
     "references": [
         "Pitchlab.Simulation",
+        "Pitchlab.Gameplay",
         "Pitchlab.Sandbox",
         "UnityEngine.TestRunner"
     ],

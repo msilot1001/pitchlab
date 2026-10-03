@@ -22,7 +22,7 @@ No push, no merge to main, no history rewrite, no broad process termination (exa
 - A [x] Audit: A1 physics, A2 RK4, A3 spin model, A4 coordinates, A5 tests, A6 fixes, A7 Unity verification + check.sh
 - B [x] TASK-002: B1 field research, B2 fixture, B3 adapter, B4 replay, B5 report, B6 systematic errors, B7 evidence-based changes, B8 holdout, B9 tests
 - C [x] Baseline decision (physics-reviewer), classification, PHYSICS.md, ADR only if warranted
-- D [ ] TASK-003 Hitting Sandbox
+- D [x] TASK-003 Hitting Sandbox
 - E [ ] TASK-004 Batted-ball physics (optional)
 
 ## B pre-registered analysis (written before any replay was run)
@@ -55,6 +55,14 @@ Dataset split: one game = development, a different game = holdout.
 - ADR 0003 written; PHYSICS.md baseline table.
 - `Scripts/test.sh EditMode` 70 total, 65 passed, 0 failed (5 ignored pre-registered).
 
+### D
+- physics-researcher: ball-bat parameters (Nathan 2003 q = e_A ≈ 0.21 and its barrel profile; Kensrud/Nathan/Smith 2017 e_x = 0.40, oblique geometry; Nathan 2012 incoming spin negligible; bat speed 72 mph, attack 10°; timing ~2.6°/ms; sweet-spot window 9.4 ms).
+- Design changes from exploration: bat height follows the swing plane (timing no longer flips launch angle arbitrarily); rolling exit replaced by e_x tangential restitution + recoil r_x + Coulomb cap (spin 6–9k rpm → 3–4k rpm at 25°).
+- test-reviewer: 3 production bugs confirmed + fixed (NaN PCI → Contact with NaN; late swing could hit a landed ball; negative normal impulse not rejected), parameter validation added, bat-frame offsets, speed latch, input-event hook; tests added (hand-derived oblique collision incl. friction-limited branch, boundaries, left-handed tip, spray monotonic/symmetric, golden value, timing units, button routing, event timestamp, speed latch).
+- Mutation check (spin cross product reversed) → backspin/topspin test fails; reverted.
+- `Scripts/test.sh` EditMode 96 total, 91 passed, 0 failed (5 ignored pre-registered); PlayMode 7/7.
+- MCP HittingLab: 15 + 11 scripted pitches through the live controller (perfect ≈ 102–105 mph / 11–13°, under → 25°, over → −9°, early pulls −15..−20°, late +18..+28°, timing/over/off-barrel misses); real keyboard path via simulate_key (Space throws, Space swings with event timestamp 0.0198 s < frame clock 0.032 s); Game View capture shows zone, PCI, contact point, exit ray, pitch path, readout; console 0 errors/0 warnings during play.
+
 ## Discoveries
 - Savant `plate_x/plate_z` are at the plate front (y = 17/12 ft); 9P constant-acceleration fit with t = 0 at y = 50 ft reproduces plate_x/z exactly (researcher, one row). Savant pfx (feet) on 2 rows matched Nathan's drag-corrected Magnus deviation over release→plate, not the old 40 ft window — to confirm on a larger sample in B.
 - Savant `spin_axis` is the measured (Hawk-Eye) axis, not movement-inferred (contradicts the first research report): deviation from movement mirrors by throwing hand.
@@ -67,6 +75,9 @@ Dataset split: one game = development, a different game = holdout.
 - A: rejected finding — "no test for plane+ground in the same step" (it existed; strengthened with the mirror case and a same-step precondition).
 - A: accepted, not changed — ground checked at step ends only (documented; a pitch cannot dip and recover within 5 ms).
 - B: no coefficient changes (C_D confirmed; C_L within scatter for high-efficiency pitches; breaking-ball deficit would need per-pitch-type correction, which is not allowed). Game pitch definitions for breaking balls should target movement (effective transverse spin).
+- D: Hitting logic in engine-free `Pitchlab.Gameplay` (Hitting/); HittingPitch simulates past the plate with its own FlightLimits (baseline blocker). Contact is a deterministic impulse model in the bat frame; Unity colliders not used. SwingParameters is the ratings surface (validated).
+- D: PCI is a world-space point in the contact plane; its rectangle is the barrel contact region (±5 in × bat–ball centre distance).
+- D: swing time = input event timestamp on the pitch's real-time clock; playback speed latched per pitch.
 - B: Statcast boundary = `Pitchlab.Simulation.Tracking` (StatcastPitch, StatcastNinePointFit, StatcastAdapter); simulator untouched. CSV parsing and analysis live in the EditMode test assembly.
 
 ## Remaining risks
