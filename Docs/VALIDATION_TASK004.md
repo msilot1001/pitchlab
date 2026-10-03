@@ -33,7 +33,9 @@ One-parameter sweeps on the development set (diagnostics only, nothing adopted):
 | exit speed − 5 to − 6 mph | +2.9 to −2.4 / 14.7 ft | flat (+9 … −1) |
 | backspin × 0.5 or × 0 | — | strong launch-angle trend; rejected |
 
-A uniform exit-speed offset flattens the residual best; it would arise if the 2016 fit absorbed an exit-speed reading difference between the 2016 TrackMan data it was fitted to and 2024 Hawk-Eye contact-point exit speeds (earlier tracker generations under-read exit speed by ≈ 4 mph). That is a hypothesis: drag (ball lots), the spin model, and the meaning of `hit_distance_sc` for caught balls are also candidates, and this data (no spin, no hang time) cannot separate them. The pitch-side result (2024 tracking consistent with C_D 0.35 for pitches) argues against a large drag increase.
+Split by outcome (fly balls/line drives, EV ≥ 90 mph, LA 15–40°): home runs (distance projected to the ground) +28.6 ft (n 20), caught outs +32.6 ft (n 53), landed hits +40.0 ft (n 21). The bias is the same for home runs as for caught balls, so the catch-height meaning of `hit_distance_sc` is **ruled out** as the cause.
+
+A uniform exit-speed offset flattens the residual best; it would arise if the 2016 fit absorbed an exit-speed reading difference between the 2016 TrackMan data it was fitted to and 2024 Hawk-Eye contact-point exit speeds (earlier tracker generations under-read exit speed by ≈ 4 mph). That is a hypothesis: drag (ball lots) and the spin model remain candidates, and this data (no spin, no hang time) cannot separate them. The pitch-side result (2024 tracking consistent with C_D 0.35 for pitches) argues against a large drag increase.
 
 ## Decision
 
