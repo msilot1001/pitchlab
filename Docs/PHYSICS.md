@@ -95,9 +95,16 @@ The simulator is the baseline for gameplay work. Outstanding items:
 | No seam-shifted wake | accepted approximation |
 | Constant C_D at pitch speeds; game-to-game environment uncertainty | accepted approximation |
 | Drag crisis below ~70 mph (slow curves, eephus) | research later (flagged by the validity range) |
-| C_D at batted-ball speeds/spins (spin-dependent, low-Re apex) | should improve before batted-ball work (additive `C_D(S, Re)`) |
-| Spin decay for long batted-ball flights | should improve before batted-ball work (additive, in `Step`) |
+| Batted-ball drag/lift: Nathan 2017 fly-ball pair (spin-dependent C_D) added as `AerodynamicModel.BattedBall`, spin decay τ = 30 s added; **2024 Statcast distances are ≈ 30 ft shorter than the model** (Docs/VALIDATION_TASK004.md) | **blocker before distance-dependent gameplay** (home runs, fielding); research next |
 | C_L provenance (fly-ball fit used for pitches) | accepted approximation (native fit for batted balls) |
 | Fixed spin axis, no decay for pitches | accepted approximation |
 | Movement metric vs Savant pfx (≈ 1 in z) | accepted approximation |
 | Validity range only in `PitchMetrics`, thresholds chosen for pitches | should improve later (flight-level helper for batted balls) |
+
+## Batted balls (TASK-004)
+
+`AerodynamicModel.BattedBall`: C_D = 0.297 + 0.0292·(ω/1000 rpm) with the same C_L — Nathan (2017) Eqs. 10–11, the pair jointly fitted to 2016 Statcast fly balls at Tropicana Field (no further speed dependence for 60–110 mph) **[Fact, fit]** — plus spin decay ω₀·e^(−t/τ), τ = 30 s **[Approx]** (TrackMan figure quoted by Nathan; Nathan 2008: decay barely changes fly-ball distance). Spin keeps its direction. Pitches keep `AerodynamicModel.Baseball` (constant C_D 0.35, no decay), which the pitch validation supports. A drag crisis is not expected for spinning batted balls (Kensrud & Smith); below ~60 mph the fit is extrapolated.
+
+`BattedBallLaunch` converts Statcast-style exit speed, launch angle, spray (+ = right field), backspin and sidespin (+ curves toward right field) to a state; `BattedBallSimulation` flies to the first ground contact; `BattedBallMetrics` reports apex, hang time, landing point and distance from the rear point of the plate.
+
+Validation against 2024 Statcast fails the pre-registered criteria: the model carries balls ≈ 30 ft (≈ 8 %) too far, nearly uniformly over launch angle and exit speed; cause unresolved (see `Docs/VALIDATION_TASK004.md`). Sensitivities to exit speed, temperature, elevation and optimal launch angle match Nathan's Statcast analyses.
