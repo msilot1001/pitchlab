@@ -46,5 +46,16 @@ namespace Pitchlab.Simulation.BallFlight
             if (!LiftEnabled || spinParameter <= 0.0) return 0.0;
             return 1.120 * spinParameter / (0.583 + 2.333 * spinParameter);
         }
+
+        /// <summary>
+        /// Inverse of <see cref="LiftCoefficient"/>: S = 0.583·C_L / (1.120 − 2.333·C_L). Returns +∞ at or above the
+        /// fit's saturation value 1.120/2.333 ≈ 0.480 (no spin can produce that much lift in this model).
+        /// </summary>
+        public static double SpinParameterForLift(double liftCoefficient)
+        {
+            if (liftCoefficient <= 0.0) return 0.0;
+            double denominator = 1.120 - 2.333 * liftCoefficient;
+            return denominator > 0.0 ? 0.583 * liftCoefficient / denominator : double.PositiveInfinity;
+        }
     }
 }

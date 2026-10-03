@@ -43,6 +43,13 @@ namespace Pitchlab.Simulation.BallFlight
             new EnvironmentState(MoistAirDensity(temperatureCelsius, stationPressurePascals, relativeHumidity), StandardGravity, wind);
 
         /// <summary>
+        /// International Standard Atmosphere pressure (Pa) at an elevation (m), sea-level 101 325 Pa:
+        /// p = 101325·(1 − 2.25577e-5·h)^5.25588. Used when only a park's elevation is known.
+        /// </summary>
+        public static double StandardAtmospherePressure(double elevationMeters) =>
+            101325.0 * Math.Pow(1.0 - 2.25577e-5 * elevationMeters, 5.25588);
+
+        /// <summary>
         /// Moist-air density (kg/m³) as an ideal mixture of dry air and water vapour. Saturation vapour pressure
         /// uses the Buck (1996) equation. <paramref name="relativeHumidity"/> is a 0–1 fraction.
         /// </summary>
