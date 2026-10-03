@@ -19,6 +19,14 @@ namespace Pitchlab.Simulation.BallFlight
             LiftEnabled = liftEnabled;
         }
 
+        /// <summary>
+        /// Lowest Reynolds number (ρ·v·2r/μ) for which constant C_D = 0.35 is supported: pitch-speed free-flight data
+        /// (Lyu et al. 2022) put the drag crisis at Re ≈ 0.75–1.75 × 10⁵. ≈ 69 mph at standard density.
+        /// </summary>
+        public const double MinSupportedReynolds = 1.5e5;
+        /// <summary>Highest spin parameter for which the C_L fit agrees with measured data (S ≈ 0.1–0.3 well, sparse to ≈ 0.6).</summary>
+        public const double MaxSupportedSpinParameter = 0.4;
+
         /// <summary>C_D = 0.35 (pitch-speed free-flight measurements, Lyu et al. 2022) with Nathan (2017) lift.</summary>
         public static AerodynamicModel Baseball => new AerodynamicModel(0.35, true);
 

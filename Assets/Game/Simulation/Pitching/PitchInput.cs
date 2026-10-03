@@ -29,20 +29,26 @@ namespace Pitchlab.Simulation.Pitching
 
         public double SpinRateRpm;
         /// <summary>
-        /// Statcast spin axis, degrees, for the transverse spin: 180 = pure backspin, 0 = pure topspin,
-        /// 90 = Magnus push toward +X (first base), 270 = toward −X (third base).
+        /// Statcast spin axis, degrees: direction of the spin vector's projection onto the fixed X–Z plane
+        /// (catcher's view), 180 = pure backspin, 0 = pure topspin, 90 = Magnus push toward +X (first base),
+        /// 270 = toward −X (third base).
         /// </summary>
         public double SpinAxisDegrees;
         /// <summary>
-        /// Gyro angle, degrees, −90..90: tilt of the spin vector out of the transverse plane toward the
-        /// direction of motion (positive) or against it (negative). Spin efficiency = cos(gyro angle).
+        /// Gyro angle, degrees, −90..90: tilt of the spin vector out of the X–Z plane toward the plate (positive,
+        /// along −Y, the direction of motion) or toward the pitcher (negative). For a pitch released along −Y the spin
+        /// efficiency is cos(gyro angle); <see cref="PitchMetrics.SpinEfficiency"/> reports the exact value.
         /// </summary>
         public double GyroAngleDegrees;
 
-        public double SpinEfficiency => Math.Cos(Units.DegreesToRadians(GyroAngleDegrees));
-
         public BallState ToInitialState()
         {
+            if (!IsFinite(ReleaseSideFeet) || !IsFinite(ReleaseHeightFeet) || !IsFinite(ExtensionFeet) || !IsFinite(VerticalAngleDegrees) ||
+                !IsFinite(HorizontalAngleDegrees) || !IsFinite(SpinAxisDegrees) || !IsFinite(GyroAngleDegrees))
+                throw new ArgumentException("Pitch input must be finite.");
+            if (!(SpeedMph > 0.0) || double.IsInfinity(SpeedMph)) throw new ArgumentOutOfRangeException(nameof(SpeedMph));
+            if (!(SpinRateRpm >= 0.0) || double.IsInfinity(SpinRateRpm)) throw new ArgumentOutOfRangeException(nameof(SpinRateRpm));
+
             var position = new Vector3d(
                 Units.FeetToMeters(ReleaseSideFeet),
                 PitchingGeometry.RubberFrontY - Units.FeetToMeters(ExtensionFeet),
@@ -57,24 +63,20 @@ namespace Pitchlab.Simulation.Pitching
                 Math.Sin(elevation));
 
             Vector3d spin = Units.RpmToRadiansPerSecond(SpinRateRpm) *
-                SpinDirection(velocity, Units.DegreesToRadians(SpinAxisDegrees), Units.DegreesToRadians(GyroAngleDegrees));
+                SpinDirection(Units.DegreesToRadians(SpinAxisDegrees), Units.DegreesToRadians(GyroAngleDegrees));
             return new BallState(0.0, position, velocity, spin);
         }
 
         /// <summary>
-        /// Unit spin vector for a ball moving along <paramref name="velocity"/>. Transverse basis (right-hand rule):
-        /// e_h = normalize(Z × v̂), e_v = v̂ × e_h; for a pitch moving along −Y, e_h = +X and e_v = +Z.
-        /// Transverse direction = cos θ·e_h + sin θ·e_v, so θ = 180° gives −X (backspin: Magnus lift +Z).
+        /// Unit spin vector from the Statcast spin axis θ and gyro angle γ, in the fixed simulation frame:
+        /// ω̂ = cos γ·(cos θ·X + sin θ·Z) + sin γ·(−Y). Its X–Z projection has exactly Statcast's spin-axis angle.
+        /// Right-hand rule: θ = 180° gives −X, i.e. backspin (Magnus +Z) for a pitch moving along −Y.
         /// </summary>
-        public static Vector3d SpinDirection(Vector3d velocity, double spinAxisRadians, double gyroRadians)
-        {
-            if (velocity.LengthSquared == 0.0) throw new ArgumentException("Spin axis angle is undefined for zero velocity.", nameof(velocity));
-            Vector3d forward = velocity.Normalized;
-            Vector3d horizontal = Vector3d.Cross(new Vector3d(0.0, 0.0, 1.0), forward).Normalized;
-            if (horizontal.LengthSquared == 0.0) throw new ArgumentException("Spin axis angle is undefined for vertical velocity.", nameof(velocity));
-            Vector3d vertical = Vector3d.Cross(forward, horizontal);
-            Vector3d transverse = Math.Cos(spinAxisRadians) * horizontal + Math.Sin(spinAxisRadians) * vertical;
-            return Math.Cos(gyroRadians) * transverse + Math.Sin(gyroRadians) * forward;
-        }
+        public static Vector3d SpinDirection(double spinAxisRadians, double gyroRadians) => new Vector3d(
+            Math.Cos(gyroRadians) * Math.Cos(spinAxisRadians),
+            -Math.Sin(gyroRadians),
+            Math.Cos(gyroRadians) * Math.Sin(spinAxisRadians));
+
+        private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
     }
 }

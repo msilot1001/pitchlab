@@ -16,10 +16,17 @@ namespace Pitchlab.Simulation.BallFlight
         /// <summary>Air velocity relative to the ground, m/s, in the simulation frame.</summary>
         public readonly Vector3d Wind;
 
+        /// <summary>
+        /// Dynamic viscosity of air, Pa·s, at about 20 °C (varies ≈ ±5 % over playable temperatures). Used only to
+        /// report Reynolds numbers for the model's validity range, not in the forces.
+        /// </summary>
+        public const double AirDynamicViscosity = 1.81e-5;
+
         public EnvironmentState(double airDensity, double gravity, Vector3d wind)
         {
-            if (!(airDensity >= 0.0)) throw new ArgumentOutOfRangeException(nameof(airDensity));
-            if (double.IsNaN(gravity)) throw new ArgumentOutOfRangeException(nameof(gravity));
+            if (!(airDensity >= 0.0) || double.IsInfinity(airDensity)) throw new ArgumentOutOfRangeException(nameof(airDensity));
+            if (double.IsNaN(gravity) || double.IsInfinity(gravity)) throw new ArgumentOutOfRangeException(nameof(gravity));
+            if (double.IsNaN(wind.Length) || double.IsInfinity(wind.Length)) throw new ArgumentOutOfRangeException(nameof(wind));
             AirDensity = airDensity;
             Gravity = gravity;
             Wind = wind;
@@ -41,6 +48,10 @@ namespace Pitchlab.Simulation.BallFlight
         /// </summary>
         public static double MoistAirDensity(double temperatureCelsius, double stationPressurePascals, double relativeHumidity)
         {
+            // Buck's fit is for roughly −80..+50 °C; the playable range is far narrower.
+            if (!(temperatureCelsius >= -80.0 && temperatureCelsius <= 60.0)) throw new ArgumentOutOfRangeException(nameof(temperatureCelsius));
+            if (!(stationPressurePascals > 0.0) || double.IsInfinity(stationPressurePascals)) throw new ArgumentOutOfRangeException(nameof(stationPressurePascals));
+            if (!(relativeHumidity >= 0.0 && relativeHumidity <= 1.0)) throw new ArgumentOutOfRangeException(nameof(relativeHumidity));
             const double dryAirGasConstant = 287.058;     // J/(kg·K)
             const double waterVapourGasConstant = 461.495; // J/(kg·K)
             double t = temperatureCelsius;

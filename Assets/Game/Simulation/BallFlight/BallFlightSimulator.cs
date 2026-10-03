@@ -33,7 +33,8 @@ namespace Pitchlab.Simulation.BallFlight
 
         public BallFlightSimulator(BallProperties ball, EnvironmentState environment, AerodynamicModel aerodynamics, double timeStep = DefaultTimeStep)
         {
-            if (!(timeStep > 0.0)) throw new ArgumentOutOfRangeException(nameof(timeStep), "Time step must be positive.");
+            if (!(timeStep > 0.0) || double.IsInfinity(timeStep)) throw new ArgumentOutOfRangeException(nameof(timeStep), "Time step must be positive and finite.");
+            if (!(ball.Mass > 0.0)) throw new ArgumentException("Ball properties are uninitialized.", nameof(ball));
             Ball = ball;
             Environment = environment;
             Aerodynamics = aerodynamics;
@@ -113,21 +114,32 @@ namespace Pitchlab.Simulation.BallFlight
         /// </summary>
         public TrajectoryResult Simulate(BallState initial, FlightLimits limits)
         {
-            if (!(limits.MaxDuration > 0.0)) throw new ArgumentOutOfRangeException(nameof(limits), "MaxDuration must be positive.");
+            if (!(limits.MaxDuration > 0.0) || double.IsInfinity(limits.MaxDuration))
+                throw new ArgumentOutOfRangeException(nameof(limits), "MaxDuration must be positive and finite.");
+            if (!IsFinite(initial.Position) || !IsFinite(initial.Velocity) || !IsFinite(initial.Spin) || !IsFinite(initial.Time))
+                throw new ArgumentException("Initial state must be finite.", nameof(initial));
+
             var samples = new List<BallState>((int)Math.Min(limits.MaxDuration / TimeStep + 2, 100000)) { initial };
+            // A ball that starts on or below the ground has already ended. (A start at or behind the stop plane never
+            // crosses it; such a flight ends at the ground or MaxDuration.)
+            if (BelowGround(initial, limits)) return new TrajectoryResult(samples.ToArray(), FlightEnd.ReachedGround);
+
             double endTime = initial.Time + limits.MaxDuration;
             BallState current = initial;
 
-            while (true)
+            for (long stepIndex = 1; ; stepIndex++)
             {
-                double dt = Math.Min(TimeStep, endTime - current.Time);
-                BallState next = Step(current, dt);
+                // Times come from the step index, not a running sum, so they do not drift.
+                double nextTime = Math.Min(initial.Time + stepIndex * TimeStep, endTime);
+                double dt = nextTime - current.Time;
+                BallState stepped = Step(current, dt);
+                var next = new BallState(nextTime, stepped.Position, stepped.Velocity, stepped.Spin);
 
                 bool crossed = CrossedPlane(current, next, limits);
                 bool grounded = BelowGround(next, limits);
                 if (crossed || grounded)
                 {
-                    // Both can happen inside one step; the earlier event ends the flight.
+                    // Both can happen inside one step; the earlier event ends the flight (an exact tie counts as the plane).
                     BallState plane = crossed ? LocateEvent(current, dt, FlightEnd.CrossedStopPlane, limits) : default;
                     BallState ground = grounded ? LocateEvent(current, dt, FlightEnd.ReachedGround, limits) : default;
                     bool groundFirst = grounded && (!crossed || ground.Time < plane.Time);
@@ -141,12 +153,19 @@ namespace Pitchlab.Simulation.BallFlight
             }
         }
 
+        private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+        private static bool IsFinite(Vector3d v) => IsFinite(v.X) && IsFinite(v.Y) && IsFinite(v.Z);
+
         private static bool CrossedPlane(BallState before, BallState after, FlightLimits limits) =>
             before.Position.Y > limits.StopPlaneY && after.Position.Y <= limits.StopPlaneY;
 
         private bool BelowGround(BallState state, FlightLimits limits) =>
             state.Position.Z - Ball.Radius <= limits.GroundZ;
 
+        /// <summary>
+        /// Finds the event inside a step by bisection. Ground contact is checked at step ends only: a ball dipping below
+        /// the ground and rising again within one 5 ms step would need upward acceleration far above any pitch's.
+        /// </summary>
         private BallState LocateEvent(BallState before, double dt, FlightEnd end, FlightLimits limits)
         {
             // Invariant: event not reached at lo, reached at hi. 60 halvings resolve far below double time precision.

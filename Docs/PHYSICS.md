@@ -24,9 +24,9 @@ Spin is the angular-velocity vector ω (rad/s), right-hand rule. For a pitch mov
 `PitchInput` specifies spin as rate (rpm), **spin axis θ** and **gyro angle γ**:
 
 - θ follows Statcast `spin_axis` **[Fact]** ([Savant CSV docs](https://baseballsavant.mlb.com/csv-docs)): 180° = pure backspin, 0° = pure topspin. In our frame θ = 90° pushes toward +X (first base), 270° toward −X. A right-hander's four-seamer is ≈ 200–215°.
-- Transverse basis for velocity direction v̂: e_h = normalize(Z × v̂), e_v = v̂ × e_h (for v̂ = −Y: e_h = +X, e_v = +Z). Transverse spin direction = cos θ·e_h + sin θ·e_v **[Derived]**.
-- γ tilts the spin vector toward (+) or against (−) the direction of motion: ω̂ = cos γ·(transverse) + sin γ·v̂. Spin efficiency = cos γ **at release**. The spin vector then stays fixed (no torque modeled) while the velocity turns downward, so part of the gyro component becomes transverse spin during flight. At release the sign of γ is irrelevant; over the flight it changes movement slightly (≈ 1 in for a 60° gyro slider, tested). Presets use negative γ (Nathan: gyro spin is generally negative for a right-hander), but its exact sign convention is not verified.
-- θ and γ are defined relative to the **release velocity**, not the fixed X–Z plane Statcast uses for `spin_axis`; the difference is second order for release angles of a few degrees.
+- The spin vector is built in the **fixed** frame: ω̂ = cos γ·(cos θ·X + sin θ·Z) + sin γ·(−Y). Its projection onto the X–Z plane therefore has exactly Statcast's `spin_axis` angle θ (θ = 180° → −X → Magnus +Z for a pitch moving along −Y). **[Derived]**
+- γ tilts the spin vector out of the X–Z plane toward the plate (+, along −Y, the direction of motion) or toward the pitcher (−). For a release exactly along −Y the spin efficiency is cos γ; with the usual 1–3° release angles the exact efficiency (reported by `PitchMetrics`) differs slightly, and ±γ are then not exactly symmetric. Presets use negative γ; Nathan notes gyro spin is generally negative for a right-hander, but the sign convention behind that statement is not verified.
+- **Fixed spin axis during flight [Approx, justified]:** ω is held constant in world space. Nathan assumes constant spin rate and axis and notes no precession studies exist (TrajectoryAnalysis.pdf §II.D); a decay time of 20–30 s implies ≈ 2 % spin loss and, at most, ≈ 1° of precession per pitch, versus a 5–8° turn of the velocity. Consequently gyro spin partly becomes sidespin as the pitch drops, so the gyro sign changes movement slightly (≈ 1.4 in for a ±60° gyro slider, tested) — an effect described by Nathan ([gyroball note](https://baseball.physics.illinois.edu/gyro.pdf)), Kagan ([THT](https://tht.fangraphs.com/the-physics-of-the-gyro-pitch/), ≈ 0.5 in per 1500 rpm of gyro) and Barton Smith (baseballaero post 39).
 - Pitcher-view clock: hour = (θ/30 + 6) mod 12, with 0 read as 12:00 (θ = 180° → 12:00, θ = 210° → 1:00); the catcher-view clock is mirrored.
 
 ## Force model
@@ -38,6 +38,7 @@ a = g + (F_D + F_M)/m with air-relative velocity v_r = v − wind.
 - **Magnus** F_M = ½ρA·C_L(S)·|v_r|²·(ω × v_r)/|ω × v_r| **[Fact]** form. Only spin perpendicular to the airflow counts: ω⊥ = |ω × v_r|/|v_r|, spin parameter **S = r·ω⊥/|v_r|**, recomputed every step since v̂ rotates as the pitch drops **[Approx]** (Nathan, [THT on spin efficiency](https://tht.fangraphs.com/pitch-movement-spin-efficiency-and-all-that/)).
 - **C_L = 1.120·S / (0.583 + 2.333·S) [Fact, fit]** (Nathan 2017 fit to Statcast). Versus the Sawicki et al. (2003) parametrization (1.5S below S = 0.1, 0.09 + 0.6S above), which Nathan (2008, [AJP](https://baseball.physics.illinois.edu/ajpfeb08.pdf)) found consistent with data for S ≲ 0.3: −8.5 % at S = 0.10, −4 % at 0.12, +1.6 % at 0.20, −3 % at 0.30. Uncertainty ±10–15 %.
 - Coefficients are isolated in `BallFlight/AerodynamicModel.cs`.
+- **Supported range [Approx]:** C_D = 0.35 is supported above the drag crisis, Re = ρ·v·2r/μ ≥ 1.5 × 10⁵ (≈ 69 mph at standard density; μ = 1.81 × 10⁻⁵ Pa·s), and the C_L fit up to S ≈ 0.4. `PitchMetrics` reports the flight's minimum Re and maximum S and `WithinSupportedAerodynamicRange`; PitchLab shows a warning outside it. Slow (< ~70 mph) or very high-spin pitches still simulate, but are extrapolations.
 
 ### Ball **[Fact]**
 
@@ -74,8 +75,11 @@ Events (plate plane, ground) are located inside the last step by bisection on a 
 - Vacuum flight equals the analytic parabola (1e-9 m).
 - Drag-only 1D flight equals the analytic quadratic-drag solution.
 - Magnus deflection after 55 ft vs Nathan (2008) Table I (90/75 mph, 1000/1800 rpm → 14/19, 16/21 in; Adair C_D, Sawicki C_L): within 15 %.
-- Four-seam preset: flight time 0.38–0.45 s, IVB 14–19 in, 6–10 mph lost to drag.
+- Uniform wind equals a Galilean frame shift of a still-air flight (model-independent, 1e-9 m).
+- C_L pinned to hand-evaluated values of the Nathan fit; ball constants pinned to the documented values.
+- Presets: **regression bands** (±1.5 in around current model output, not external validation).
+- External validation against tracked Statcast pitches: see `Docs/VALIDATION_TASK002.md`.
 
 ## Presets **[Tune]**
 
-`PitchPresets` holds approximate MLB-average right-handed values (speed, spin, axis, efficiency; release ≈ 5.7–6.0 ft high, 6.0–6.4 ft extension, −1.8 to −1.9 ft side). Release angles are tuned to cross mid-zone. Model results vs published averages: four-seam 17 in IVB / 8 in arm side (≈ 16 / 7–8); sinker 9 / 16 (7–9 / 15); slider +1 / 9 glove (+1–2 / 5–6); curveball −14 / 10 (≈ −10 / 8–10); changeup 7 / 15 (6 / 14). The curveball overshoot is a known calibration question (C_L at high S, efficiency, measurement window).
+`PitchPresets` holds approximate MLB-average right-handed values (speed, spin, axis, efficiency; release ≈ 5.7–6.0 ft high, 6.0–6.4 ft extension, −1.8 to −1.9 ft side). Release angles are tuned to cross mid-zone. Model results (IVB / HB in) vs published averages: four-seam 17.0 / 8.6 arm side (≈ 16 / 7–8); sinker 8.7 / 16.1 (7–9 / 15); slider +0.2 / 9.2 glove (+1–2 / 5–6); curveball −14.6 / 10.8 (≈ −10 / 8–10); changeup 6.4 / 15.0 (6 / 14). The curveball overshoot is a known calibration question (C_L at high S, efficiency, measurement window).

@@ -19,7 +19,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private PitchInput _input = PitchPresets.FourSeam;
 
         [Header("Environment")]
-        [SerializeField] private double _temperatureCelsius = 21.0;
+        [SerializeField, Range(-20f, 50f)] private double _temperatureCelsius = 21.0;
         [SerializeField, Range(50000f, 110000f)] private double _stationPressurePascals = 101325.0;
         [SerializeField, Range(0f, 1f)] private double _relativeHumidity = 0.5;
 
@@ -188,6 +188,8 @@ namespace Pitchlab.Sandbox
                 $"Spin: {Units.RadiansPerSecondToRpm(m.SpinRate):0} rpm, efficiency {m.SpinEfficiency:0.00}\n" +
                 $"Spin axis (unit, sim frame): ({spin.X:+0.00;-0.00}, {spin.Y:+0.00;-0.00}, {spin.Z:+0.00;-0.00})\n" +
                 $"Flight time: {(m.ReachedPlate ? $"{m.FlightTime:0.000} s" : "-")}\n" +
+                (m.WithinSupportedAerodynamicRange ? "" :
+                    $"WARNING: outside data-supported aero range (min Re {m.MinReynolds:0.0e0}, max S {m.MaxSpinParameter:0.00})\n") +
                 plate;
         }
 

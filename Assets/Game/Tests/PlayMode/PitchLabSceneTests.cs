@@ -28,6 +28,15 @@ namespace Pitchlab.Tests
             Assert.IsNotNull(_controller.LastResult, "scene throws a pitch on start");
             Assert.IsTrue(_controller.LastResult.Metrics.ReachedPlate);
 
+            // Mid-flight the ball is shown at the authoritative state for the current playback time.
+            _controller.Throw();
+            yield return null;
+            yield return null;
+            double t = _controller.PlaybackTime;
+            Assert.That(t, Is.GreaterThan(0.0).And.LessThan(_controller.LastResult.Flight.Duration), "still in flight after two frames");
+            Vector3 expected = SimulationSpace.ToUnity(_controller.LastResult.Flight.StateAt(t).Position);
+            Assert.Less(Vector3.Distance(expected, _controller.Ball.position), 1e-4f);
+
             float timeout = Time.realtimeSinceStartup + 5f;
             while (!_controller.PlaybackFinished && Time.realtimeSinceStartup < timeout) yield return null;
 
@@ -42,6 +51,10 @@ namespace Pitchlab.Tests
         [UnityTest]
         public IEnumerator RethrowingWithNewInputsChangesTheFlight()
         {
+            yield return null;
+            yield return null;
+            Assert.Greater(_controller.PlaybackTime, 0.0, "playback advanced before the rethrow");
+
             PitchInput input = PitchPresets.FourSeam;
             input.SpinRateRpm = 0.0;
             _controller.CurrentInput = input;
@@ -52,7 +65,6 @@ namespace Pitchlab.Tests
             _controller.ApplyPreset(Array.FindIndex(PitchPresets.All, p => p.Label == PitchPresets.Curveball.Label));
             Assert.AreEqual(0.0, _controller.PlaybackTime, "rethrow restarts playback");
             Assert.Less(_controller.LastResult.Metrics.VerticalMovement, 0.0, "curveball topspin breaks down");
-            yield return null;
         }
     }
 }

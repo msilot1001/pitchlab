@@ -33,7 +33,7 @@ namespace Pitchlab.Simulation.Pitching
 
             TrajectoryResult flight = new BallFlightSimulator(ball, environment, aerodynamics, timeStep).Simulate(release, flightLimits);
             TrajectoryResult reference = new BallFlightSimulator(ball, environment, aerodynamics.WithoutLift, timeStep).Simulate(release, referenceLimits);
-            return new PitchResult(flight, reference, PitchMetrics.From(flight, reference));
+            return new PitchResult(flight, reference, PitchMetrics.From(flight, reference, ball, environment));
         }
 
         public static PitchResult Run(PitchInput input, EnvironmentState environment) =>
