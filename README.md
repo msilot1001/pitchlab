@@ -1,5 +1,5 @@
 # Pitchlab
 
-Bootstrap repository for a Unity 6.3 LTS, URP, physics-driven 3D baseball game. Gameplay is not implemented yet.
+Unity 6.3 LTS (6000.3.25f1), URP, physics-driven 3D baseball game. Gameplay is not implemented yet; the first task is **TASK-001 — Pitch Physics Sandbox**.
 
-Read [setup status](Docs/SETUP.md) before opening this directory in Unity. The first gameplay task will be **TASK-001 — Pitch Physics Sandbox**.
+See [setup](Docs/SETUP.md) to open the project and run verification, and [AGENTS.md](AGENTS.md) for agent rules.

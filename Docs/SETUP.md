@@ -1,13 +1,14 @@
-# Setup status and next actions
+# Setup and verification
 
-This checkout contains the repository and agent harness, but **not yet a Unity project**. The installed Editor is 6000.6.4f1; the requested Unity 6.3 LTS line is 6000.3. Do not open or generate this project with 6000.6.4f1.
+The Unity project lives at the repository root (`Assets`, `Packages`, `ProjectSettings`) and requires Editor **6000.3.25f1** (3D URP template). Tooling: the `unity` CLI, `jq`, and Git LFS.
 
-1. In Unity Hub, install a **Unity 6.3 LTS (6000.3.x) macOS ARM64** Editor. Record the exact patch version. The Unity CLI can confirm it with `unity editors --installed --format json`.
-2. Create a **3D URP** project using that exact Editor. Since this repository already contains docs and harness files, create the Unity template in a temporary directory, then copy its `Assets`, `Packages`, and `ProjectSettings` contents into this checkout without replacing `Assets/Game` or repository files. Inspect the template ID using `unity templates list --editor <exact-version> --installed`; do not guess it. Open this checkout in Unity 6.3 and let it generate `.meta` files.
-3. Keep the template's URP packages. Verify Input System and Unity Test Framework, then add Cinemachine and Unity Mathematics only if absent and needed. Use Unity Package Manager or its `Client` API so compatible versions resolve. Do not add DOTS, Netcode, cloud services, or other speculative packages.
-4. For Unity CLI MCP, sign in with `unity auth login` if needed, then install the official `com.unity.pipeline` package using `unity pipeline install --project-path /Users/sojak/pitchlab`. Open this project and confirm `unity pipeline list` sees it. The repository's `.codex/config.toml` and `.mcp.json` point both clients at this checkout. On another machine or path, update both paths. Codex must trust the repository to load project configuration; Claude Code requires project MCP approval on first use.
-5. Run `Scripts/check.sh`. Then follow the read-only MCP procedure in `Docs/AGENT_WORKFLOW.md`. Record the exact Editor/package versions and the verification result.
+On a new machine:
 
-Git LFS is enabled locally. Large source assets matching `.gitattributes` should be added only on machines with Git LFS installed. No hook or cloud CI runs automatically; `Scripts/check.sh` is the normal verification entry point. `Scripts/format.sh` currently checks Git whitespace only because no C# formatter is configured.
+1. Install Editor 6000.3.25f1 (`unity editors --installed` to confirm) and open the project with `unity open .` or Unity Hub.
+2. `com.unity.pipeline` is already in the manifest. Sign in with `unity auth login` if needed; `unity status` should list this project as `ready`.
+3. `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex) start `unity mcp --project-path /Users/sojak/pitchlab`. On another path or worktree, update both. Claude Code asks for project MCP approval on first use; Codex must trust the repository.
+4. Run `Scripts/check.sh`.
 
-Tool references: [Unity 6.3 LTS](https://docs.unity.com/en-us/engine/6000.3/manual/whats-new/unity63), [Unity CLI MCP transition](https://docs.unity.com/en-us/unity-cli/replace-mcp-server-unity-cli), [Unity Pipeline setup](https://docs.unity.com/en-us/unity-cli/unity-pipeline/unity-pipeline-package), [Codex repository skills](https://learn.chatgpt.com/docs/build-skills), and [Claude project subagents](https://code.claude.com/docs/en/sub-agents).
+`Scripts/check.sh` runs Git whitespace checks (`Scripts/format.sh`; no C# formatter yet) and `Scripts/test.sh EditMode` / `PlayMode`. When an Editor has this project open, `test.sh` recompiles and runs tests inside it through the Pipeline (PlayMode tests briefly enter Play Mode there); otherwise it runs Unity in batch mode. Either way it fails on compile errors or failed tests and prints failing test names.
+
+Packages are the URP template defaults plus Unity Pipeline. Add Cinemachine and Unity Mathematics only when code needs them. Large binary sources matching `.gitattributes` go through Git LFS.
