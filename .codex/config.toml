@@ -1,0 +1,3 @@
+[mcp_servers.unity]
+command = "unity"
+args = ["mcp", "--project-path", "/Users/sojak/pitchlab"]
