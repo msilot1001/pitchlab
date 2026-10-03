@@ -95,5 +95,5 @@ Model: `AerodynamicModel.BattedBall` = Nathan (2017) Eqs. 10–11 jointly fitted
 - B: Statcast boundary = `Pitchlab.Simulation.Tracking` (StatcastPitch, StatcastNinePointFit, StatcastAdapter); simulator untouched. CSV parsing and analysis live in the EditMode test assembly.
 
 ## Remaining risks
-- Batted-ball distances ≈ 30 ft long vs 2024 Statcast; cause unresolved (exit-speed definition, drag/ball lot, spin model, hit_distance_sc semantics). Blocks distance-dependent gameplay.
+- Batted-ball distances ≈ 30 ft long vs 2024 Statcast; cause unresolved (exit-speed definition, drag/ball lot, spin model; hit_distance_sc catch-height semantics ruled out — home runs show the same bias). Blocks distance-dependent gameplay.
 - Breaking-ball lift vs measured active spin (accepted via effective-spin inputs, ADR 0003); mechanism unresolved.
