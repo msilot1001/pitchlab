@@ -25,3 +25,5 @@
 .idea/
 .DS_Store
 *.tmp
+# Temporary scene created by in-Editor PlayMode test runs
+/[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
