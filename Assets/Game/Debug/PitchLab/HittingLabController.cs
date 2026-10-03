@@ -1,5 +1,6 @@
 using System;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Simulation.Batting;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Pitching;
@@ -55,6 +56,8 @@ namespace Pitchlab.Sandbox
 
         public HittingPitch CurrentPitch { get; private set; }
         public ContactResult? LastResult { get; private set; }
+        /// <summary>Flight of the last batted ball (first landing), or null after a miss.</summary>
+        public BattedBallResult LastBattedBall { get; private set; }
         public SwingInput? LastSwing { get; private set; }
         public int PitchesThrown { get; private set; }
         public SwingParameters Swing => _swing;
@@ -160,6 +163,7 @@ namespace Pitchlab.Sandbox
             _swung = false;
             LastResult = null;
             LastSwing = null;
+            LastBattedBall = null;
             PitchesThrown++;
             _pitchPath.enabled = false;
             _exitRay.enabled = false;
@@ -224,7 +228,7 @@ namespace Pitchlab.Sandbox
             double t = ToSimTime(now);
             if (_swung && LastResult.HasValue && LastResult.Value.IsContact && t >= LastResult.Value.BattedBall.Time)
             {
-                // Freeze at the contact point; the exit ray shows the batted-ball direction.
+                // Freeze the pitch at the contact point; the batted-ball flight is drawn as a path (no fielding yet).
                 _ball.position = SimulationSpace.ToUnity(LastResult.Value.BattedBall.Position);
                 return;
             }
@@ -238,18 +242,20 @@ namespace Pitchlab.Sandbox
             string timing = double.IsNaN(r.TimingError) ? "-" : $"{r.TimingError * 1000.0:+0;-0} ms ({r.Timing})";
             if (r.IsContact)
             {
+                LastBattedBall = BattedBallSimulation.Run(r.BattedBall, Environment);
+                BattedBallMetrics flight = LastBattedBall.Metrics;
                 _readout =
                     $"{_pitchLabel}  timing {timing}\n" +
                     $"PCI offset: barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in (+ = under ball)\n" +
                     $"Exit velocity {Units.MetersPerSecondToMph(r.ExitSpeed):0.0} mph   launch {r.LaunchAngleDegrees:+0;-0}°   spray {r.SprayAngleDegrees:+0;-0}° (+ = RF)\n" +
                     $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm   q {r.CollisionEfficiency:0.00}" +
-                    (Math.Abs(r.SprayAngleDegrees) > 45.0 ? "   FOUL" : "");
+                    (Math.Abs(r.SprayAngleDegrees) > 45.0 ? "   FOUL" : "") +
+                    $"\nFlight: {Units.MetersToFeet(flight.Distance):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft" +
+                    " (model carries ≈ 30 ft long vs 2024 Statcast)";
                 Vector3 contact = SimulationSpace.ToUnity(r.BattedBall.Position);
                 _contactMarker.position = contact;
                 _contactMarker.gameObject.SetActive(true);
-                _exitRay.positionCount = 2;
-                _exitRay.SetPosition(0, contact);
-                _exitRay.SetPosition(1, contact + SimulationSpace.ToUnity(r.BattedBall.Velocity.Normalized * 6.0));
+                SetPath(_exitRay, LastBattedBall.Flight);
                 _exitRay.enabled = true;
             }
             else
@@ -258,7 +264,7 @@ namespace Pitchlab.Sandbox
                            (double.IsNaN(r.VerticalOffset) ? "" : $" (barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in)");
             }
 
-            SetPath(CurrentPitch.Flight);
+            SetPath(_pitchPath, CurrentPitch.Flight);
             _pitchPath.enabled = true;
         }
 
@@ -279,13 +285,13 @@ namespace Pitchlab.Sandbox
             _pci.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(x - hx, y, z + hz)));
         }
 
-        private void SetPath(TrajectoryResult trajectory)
+        private void SetPath(LineRenderer line, TrajectoryResult trajectory)
         {
             int count = trajectory.Samples.Count;
             if (_pathBuffer.Length < count) _pathBuffer = new Vector3[count];
             for (int i = 0; i < count; i++) _pathBuffer[i] = SimulationSpace.ToUnity(trajectory.Samples[i].Position);
-            _pitchPath.positionCount = count;
-            _pitchPath.SetPositions(_pathBuffer);
+            line.positionCount = count;
+            line.SetPositions(_pathBuffer);
         }
 
         private void PlaceField()
@@ -312,7 +318,7 @@ namespace Pitchlab.Sandbox
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 430, 200), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(10, 10, 470, 220), GUI.skin.box);
             GUILayout.Label($"HittingLab — pitch: {Presets[_presetIndex].Label}   playback {_playbackSpeed:0.0}×   pitches {PitchesThrown}");
             GUILayout.Label(_readout);
             GUILayout.Label("Space/A: throw or swing · WASD/stick: PCI · ←/→: pitch type · 1/2: speed 1×/0.5×");

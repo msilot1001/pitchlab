@@ -46,13 +46,16 @@ namespace Pitchlab.Simulation.BallFlight
         public AerodynamicModel Aerodynamics { get; }
         public double TimeStep { get; }
 
-        /// <summary>Drag force (N) for a ball moving at <paramref name="velocity"/> relative to the ground.</summary>
-        public Vector3d DragForce(Vector3d velocity)
+        /// <summary>Drag force (N) for a non-spinning ball moving at <paramref name="velocity"/> relative to the ground.</summary>
+        public Vector3d DragForce(Vector3d velocity) => DragForce(velocity, Vector3d.Zero);
+
+        /// <summary>Drag force (N); C_D may depend on the spin rate (<see cref="AerodynamicModel.DragCoefficientAt"/>).</summary>
+        public Vector3d DragForce(Vector3d velocity, Vector3d spin)
         {
             Vector3d air = velocity - Environment.Wind;
             double speed = air.Length;
             double q = 0.5 * Environment.AirDensity * Ball.CrossSectionArea;
-            return -q * Aerodynamics.DragCoefficient * speed * air;
+            return -q * Aerodynamics.DragCoefficientAt(spin.Length) * speed * air;
         }
 
         /// <summary>
@@ -77,34 +80,38 @@ namespace Pitchlab.Simulation.BallFlight
         public Vector3d Acceleration(Vector3d velocity, Vector3d spin)
         {
             Vector3d gravity = new Vector3d(0.0, 0.0, -Environment.Gravity);
-            return gravity + (DragForce(velocity) + MagnusForce(velocity, spin)) / Ball.Mass;
+            return gravity + (DragForce(velocity, spin) + MagnusForce(velocity, spin)) / Ball.Mass;
         }
 
         /// <summary>
-        /// Advances one classic RK4 step of length <paramref name="dt"/>. Spin is held constant (no decay).
+        /// Advances one classic RK4 step of length <paramref name="dt"/>. Spin keeps its direction and decays with
+        /// <see cref="AerodynamicModel.SpinDecayTime"/> (no decay for the pitch model).
         /// The position stages are exact only because acceleration does not depend on position (uniform air and
         /// gravity). Position-dependent wind or density would need p + ½dt·k1p etc. passed into Acceleration.
         /// </summary>
         public BallState Step(BallState state, double dt)
         {
+            // Spin decays exactly (ω₀·e^(−t/τ)), evaluated at each RK4 stage time; with τ = ∞ the factors are exactly 1.
             Vector3d spin = state.Spin;
+            Vector3d spinHalf = spin * Math.Exp(-0.5 * dt / Aerodynamics.SpinDecayTime);
+            Vector3d spinEnd = spin * Math.Exp(-dt / Aerodynamics.SpinDecayTime);
             Vector3d p = state.Position;
             Vector3d v = state.Velocity;
 
             Vector3d k1v = Acceleration(v, spin);
             Vector3d k1p = v;
-            Vector3d k2v = Acceleration(v + 0.5 * dt * k1v, spin);
+            Vector3d k2v = Acceleration(v + 0.5 * dt * k1v, spinHalf);
             Vector3d k2p = v + 0.5 * dt * k1v;
-            Vector3d k3v = Acceleration(v + 0.5 * dt * k2v, spin);
+            Vector3d k3v = Acceleration(v + 0.5 * dt * k2v, spinHalf);
             Vector3d k3p = v + 0.5 * dt * k2v;
-            Vector3d k4v = Acceleration(v + dt * k3v, spin);
+            Vector3d k4v = Acceleration(v + dt * k3v, spinEnd);
             Vector3d k4p = v + dt * k3v;
 
             return new BallState(
                 state.Time + dt,
                 p + dt / 6.0 * (k1p + 2.0 * k2p + 2.0 * k3p + k4p),
                 v + dt / 6.0 * (k1v + 2.0 * k2v + 2.0 * k3v + k4v),
-                spin);
+                spinEnd);
         }
 
         /// <summary>
