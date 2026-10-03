@@ -21,7 +21,7 @@ No push, no merge to main, no history rewrite, no broad process termination (exa
 ## Milestones
 - A [x] Audit: A1 physics, A2 RK4, A3 spin model, A4 coordinates, A5 tests, A6 fixes, A7 Unity verification + check.sh
 - B [x] TASK-002: B1 field research, B2 fixture, B3 adapter, B4 replay, B5 report, B6 systematic errors, B7 evidence-based changes, B8 holdout, B9 tests
-- C [ ] Baseline decision (physics-reviewer), classification, PHYSICS.md, ADR only if warranted
+- C [x] Baseline decision (physics-reviewer), classification, PHYSICS.md, ADR only if warranted
 - D [ ] TASK-003 Hitting Sandbox
 - E [ ] TASK-004 Batted-ball physics (optional)
 
@@ -48,6 +48,12 @@ Dataset split: one game = development, a different game = holdout.
 - Pre-registered: #1 pass (fit reproduces plate ≤ 0.01 ft), #2 pass (dt 0.73/2.62 ms, C_D 0.34/0.31), #3 FAIL (FF eff median 0.86 but 17 % > 1.05), #4a FAIL (2.66/3.02 in), #4b FAIL (5.73 in), #5 FAIL narrowly (0.21/1.12 in). Kept as [Ignore] tests with reasons.
 - Diagnostics: observed-direction replay 0.32/0.57 in; spin_axis deviation mirrors by hand (measured axis, SSW-like); reported holdout wind makes results worse (rejected); implied/active-spin ratio FF 0.90, SI 1.09, CH 0.86 vs SL 0.56, CU 0.62, FC 0.38; vs Savant observed efficiency FF 1.02, SI 1.04, CH 0.94 (pipeline confirmed).
 - `Scripts/test.sh EditMode` 68 total, 63 passed, 0 failed (5 ignored pre-registered); report via explicit `WriteValidationReport`.
+
+### C
+- physics-reviewer (baseline): no API rewrite needed; one trivial hitting blocker (use own FlightLimits past the plate front). Found reporting flaws in TASK-002, all confirmed and fixed: observed-direction replay is partly circular (validates drag/frame/integrator, not C_L); active-spin ratios pooled games (now per game: FF 0.92/0.90); Median sorted NaN first (fixed, NaN counts reported; the 12 NaN replays are exactly the 5+7 tracked pitches crossing below ball height); mirror claim cherry-picked (sliders/curves do not mirror — doc corrected); "not monotonic in S⊥" overstated (now "underdetermined; low-S lift reduction a leading candidate"); S⊥/observed-efficiency comparisons now produced by committed code (observed leaderboard added to fixture); lift ratio in force terms 1.4–2.6×.
+- Presets retuned to movement (slider +5.5/+1.5, curveball +9/−10 HB/IVB) with effective efficiency 0.19 / 0.42.
+- ADR 0003 written; PHYSICS.md baseline table.
+- `Scripts/test.sh EditMode` 70 total, 65 passed, 0 failed (5 ignored pre-registered).
 
 ## Discoveries
 - Savant `plate_x/plate_z` are at the plate front (y = 17/12 ft); 9P constant-acceleration fit with t = 0 at y = 50 ft reproduces plate_x/z exactly (researcher, one row). Savant pfx (feet) on 2 rows matched Nathan's drag-corrected Magnus deviation over release→plate, not the old 40 ft window — to confirm on a larger sample in B.

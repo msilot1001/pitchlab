@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using NUnit.Framework;
 using Pitchlab.Simulation.BallFlight;
+using Pitchlab.Simulation.Core;
 using static Pitchlab.Tests.Statcast.StatcastValidation;
 
 namespace Pitchlab.Tests.Statcast
@@ -83,11 +84,17 @@ namespace Pitchlab.Tests.Statcast
         // values; they protect what TASK-002 established and are not acceptance criteria).
 
         [TestCase(StatcastFixture.Development), TestCase(StatcastFixture.Holdout)]
-        public void ReplayWithObservedMagnusDirectionReproducesPlateLocation(string role)
+        public void ReplayWithObservedMagnusReproducesPlateLocation(string role)
         {
-            // Observed: 0.32 in (development), 0.57 in (holdout). Shows the integrator, drag and lift magnitude are
-            // consistent with the tracked flights once the Magnus direction is right.
-            Assert.LessOrEqual(Median(Role(role).Select(r => r.ObservedDirectionError2D)), 0.75);
+            // Observed: 0.32 in (development), 0.57 in (holdout). Lift magnitude and direction are taken from the data
+            // here (the C_L inversion is undone by the same C_L), so this checks drag, frame, units, the integrator and
+            // how Magnus scales along the flight — not C_L itself.
+            PitchResult[] rs = Role(role);
+            // Replays that end at the ground are exactly the pitches Statcast tracks crossing below ball height (bounced;
+            // the fit extrapolates them underground): 5 + 7 in this fixture.
+            double ballRadiusFeet = Units.MetersToFeet(BallProperties.Baseball.Radius);
+            Assert.AreEqual(rs.Count(r => r.TrackedPlateZFeet < ballRadiusFeet), NonFinite(rs.Select(r => r.ObservedDirectionError2D)));
+            Assert.LessOrEqual(Median(rs.Select(r => r.ObservedDirectionError2D)), 0.75);
         }
 
         [TestCase("Four-seam"), TestCase("Sinker"), TestCase("Changeup/splitter"), TestCase("Cutter")]
@@ -100,25 +107,40 @@ namespace Pitchlab.Tests.Statcast
             Assert.Less(right * left, 0.0, $"R {right:0.0}°, L {left:0.0}°");
         }
 
+        private static readonly string[] HighEfficiency = { "FF", "SI", "CH" };
+        private static readonly string[] Breaking = { "SL", "ST", "FC", "CU", "KC" };
+
         [Test]
-        public void LiftMatchesMeasuredActiveSpinForHighEfficiencyPitches()
+        public void PipelineMatchesSavantMovementBasedEfficiencyForHighEfficiencyPitches()
         {
-            // Observed median ratio (implied efficiency / Hawk-Eye active spin): four-seam 0.90, sinker 1.09, changeup 0.86.
-            var ratios = ActiveSpinRatios().Where(x => x.PitchType == "FF" || x.PitchType == "SI" || x.PitchType == "CH").Select(x => x.Ratio).ToArray();
-            Assert.GreaterOrEqual(ratios.Length, 20);
-            Assert.That(Median(ratios), Is.InRange(0.8, 1.2));
+            // Savant's "observed" efficiency is a movement-based inversion like ours; agreement checks our pipeline
+            // (units, frame, density, decomposition), not the physics. Closed-roof game only (cleanest conditions).
+            var ratios = ActiveSpinGroups().Where(g => g.Role == StatcastFixture.Development && HighEfficiency.Contains(g.PitchType))
+                .Select(g => g.RatioToObserved).ToArray();
+            Assert.GreaterOrEqual(ratios.Length, 8);
+            Assert.That(Median(ratios), Is.InRange(0.85, 1.15));
         }
 
         [Test]
-        public void KnownLimitationBreakingBallsGetLessLiftThanMeasuredActiveSpinImplies()
+        public void LiftMatchesMeasuredActiveSpinForHighEfficiencyPitchesInTheClosedRoofGame()
         {
-            // Documents a known model limitation (Docs/VALIDATION_TASK002.md §Lift): for low-transverse-spin pitches the
-            // C_L fit turns Hawk-Eye active spin into ~1.6–2.6× too much transverse-spin effect. If a model change
-            // fixes this, this test fails — update the docs and replace it with an acceptance check.
-            var ratios = ActiveSpinRatios().Where(x => x.PitchType == "SL" || x.PitchType == "FC" || x.PitchType == "CU" || x.PitchType == "KC")
-                .Select(x => x.Ratio).ToArray();
-            Assert.GreaterOrEqual(ratios.Length, 15);
-            Assert.Less(Median(ratios), 0.8);
+            // The only external check of C_L magnitude: lift implied by the flight vs our C_L at the Hawk-Eye-measured
+            // transverse spin. Season-level active spin, ±20 % C_L data scatter, SSW in sinkers/changeups. See report.
+            var ratios = ActiveSpinGroups().Where(g => g.Role == StatcastFixture.Development && HighEfficiency.Contains(g.PitchType))
+                .Select(g => g.RatioToMeasured).ToArray();
+            Assert.GreaterOrEqual(ratios.Length, 8);
+            Assert.That(Median(ratios), Is.InRange(0.8, 1.2));
+        }
+
+        [TestCase(StatcastFixture.Development), TestCase(StatcastFixture.Holdout)]
+        public void KnownLimitationBreakingBallsGetTooMuchLiftForTheirMeasuredActiveSpin(string role)
+        {
+            // Documents a known model limitation (Docs/VALIDATION_TASK002.md): at the Hawk-Eye transverse spin, our model
+            // gives breaking balls clearly more lift than their flights show. If a model change fixes this, this test
+            // fails — update the docs and turn it into an acceptance check.
+            var groups = ActiveSpinGroups().Where(g => g.Role == role && Breaking.Contains(g.PitchType)).ToArray();
+            Assert.GreaterOrEqual(groups.Length, 6);
+            Assert.Greater(Median(groups.Select(g => g.LiftRatio)), 1.25);
         }
 
         [Test, Explicit("Writes TestResults/statcast_validation_*.{csv,md}; run on demand to regenerate the TASK-002 report.")]
@@ -146,7 +168,7 @@ namespace Pitchlab.Tests.Statcast
             md.AppendLine("|---|---|---|---|---|---|");
             for (int k = 0; k < PfxDefinitions.Length; k++)
             foreach (var g in Results.GroupBy(r => r.Role))
-                md.AppendLine($"| {PfxDefinitions[k]} | {g.Key} | {F2(Median(g.Select(r => Math.Abs(r.PfxErrorX[k]))))} | {F2(Median(g.Select(r => Math.Abs(r.PfxErrorZ[k]))))} | {F2(g.Average(r => r.PfxErrorX[k]))} | {F2(g.Average(r => r.PfxErrorZ[k]))} |");
+                md.AppendLine($"| {PfxDefinitions[k]} | {g.Key} | {F2(Median(g.Select(r => Math.Abs(r.PfxErrorX[k]))))} | {F2(Median(g.Select(r => Math.Abs(r.PfxErrorZ[k]))))} | {F2(g.Select(r => r.PfxErrorX[k]).Where(IsFinite).Average())} | {F2(g.Select(r => r.PfxErrorZ[k]).Where(IsFinite).Average())} |");
             md.AppendLine();
             md.AppendLine("Diagnostics: signed Magnus-vs-spin_axis deviation (deg, + = observed movement rotated clockwise from the spin_axis direction in the catcher's view), observed-direction replay, holdout wind sensitivity.");
             md.AppendLine();
@@ -162,10 +184,17 @@ namespace Pitchlab.Tests.Statcast
             foreach (var g in Results.GroupBy(r => r.Role))
                 md.AppendLine($"| {g.Key} | ALL | - | {g.Count()} | {F2(g.Average(r => r.MagnusAxisDeviationDegrees))} | {F2(Median(g.Select(r => r.MagnusAxisDeviationDegrees)))} | {F2(Median(g.Select(r => r.ObservedDirectionError2D)))} | {F2(Percentile(g.Select(r => r.ObservedDirectionError2D), 0.9))} | {F2(Median(g.Select(r => r.WindImpliedDragCoefficient)))} | {F2(Median(g.Select(r => r.WindImpliedEfficiency)))} | {F2(Median(g.Select(r => Math.Abs(r.WindAxisDeviation))))} | {F2(Median(g.Select(r => r.WindObservedDirectionError2D)))} |");
             md.AppendLine();
-            md.AppendLine("| pitch type | pitcher-game groups | median implied eff / Savant active spin | min | max |");
-            md.AppendLine("|---|---|---|---|---|");
-            foreach (var g in ActiveSpinRatios().GroupBy(x => x.PitchType).OrderBy(g => g.Key))
-                md.AppendLine($"| {g.Key} | {g.Count()} | {F2(Median(g.Select(x => x.Ratio)))} | {F2(g.Min(x => x.Ratio))} | {F2(g.Max(x => x.Ratio))} |");
+            md.AppendLine("Per (game, pitcher, pitch type) groups with ≥ 3 pitches; medians over groups.");
+            md.AppendLine();
+            md.AppendLine("| game | pitch type | groups | implied eff ÷ Hawk-Eye active spin (min–max) | implied eff ÷ Savant observed eff | measured S⊥ | model lift ÷ flight lift |");
+            md.AppendLine("|---|---|---|---|---|---|---|");
+            foreach (var g in ActiveSpinGroups().GroupBy(x => (x.Role, x.PitchType)).OrderBy(g => g.Key.Role).ThenBy(g => g.Key.PitchType))
+                md.AppendLine($"| {g.Key.Role} | {g.Key.PitchType} | {g.Count()} | {F2(Median(g.Select(x => x.RatioToMeasured)))} ({F2(g.Min(x => x.RatioToMeasured))}–{F2(g.Max(x => x.RatioToMeasured))}) | " +
+                              $"{F2(Median(g.Select(x => x.RatioToObserved)))} | {F2(Median(g.Select(x => x.MeasuredSpinParameter)))} | {F2(Median(g.Select(x => x.LiftRatio)))} |");
+            md.AppendLine();
+            md.AppendLine($"Non-finite values dropped from medians: observed-direction replay {NonFinite(Results.Select(r => r.ObservedDirectionError2D))}, " +
+                          $"consistency replay {NonFinite(Results.Select(r => r.ConsistencyError2D))}, Pitchlab pfx metric {NonFinite(Results.Select(r => r.PfxErrorZ[4]))}, " +
+                          $"implied efficiency {NonFinite(Results.Select(r => r.ImpliedEfficiency))}.");
             var ffDev = Results.Where(r => r.Role == StatcastFixture.Development && r.Family == "Four-seam").Select(r => r.ImpliedEfficiency).OrderBy(v => v).ToArray();
             md.AppendLine();
             md.AppendLine("Development four-seam implied efficiency deciles: " + string.Join(", ", Enumerable.Range(1, 9).Select(k => F2(ffDev[k * ffDev.Length / 10]))) + $"; max {F2(ffDev.Last())}");

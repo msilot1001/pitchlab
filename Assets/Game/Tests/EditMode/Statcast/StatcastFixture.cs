@@ -15,6 +15,7 @@ namespace Pitchlab.Tests.Statcast
         public const string Holdout = "holdout";
         public const string Path = "Assets/Game/Tests/Fixtures/Statcast/statcast_validation.csv";
         public const string ActiveSpinPath = "Assets/Game/Tests/Fixtures/Statcast/active_spin_2024.csv";
+        public const string ObservedActiveSpinPath = "Assets/Game/Tests/Fixtures/Statcast/active_spin_observed_2024.csv";
 
         public readonly struct Row
         {
@@ -71,26 +72,18 @@ namespace Pitchlab.Tests.Statcast
             }
         }
 
-        private static Dictionary<(string, string), double> _activeSpin;
+        private static Dictionary<(string, string), double> _activeSpin, _observedActiveSpin;
 
         /// <summary>
-        /// Savant 2024 Hawk-Eye spin-based active spin (fraction of spin that is transverse) for this pitcher and pitch
-        /// type, or NaN when the leaderboard has no value.
+        /// Savant 2024 active spin (fraction of spin that is transverse) for this pitcher and pitch type, or NaN when the
+        /// leaderboard has no value. <paramref name="observed"/> false = Hawk-Eye measured ("spin-based"); true =
+        /// Savant's movement-based estimate ("observed", assumes Magnus only).
         /// </summary>
-        public static double ActiveSpin(string pitcherId, string pitchType)
+        public static double ActiveSpin(string pitcherId, string pitchType, bool observed = false)
         {
-            if (_activeSpin == null)
-            {
-                _activeSpin = new Dictionary<(string, string), double>();
-                string[] lines = File.ReadAllLines(ActiveSpinPath);
-                string[] header = SplitQuoted(lines[0]);
-                for (int line = 1; line < lines.Length; line++)
-                {
-                    string[] f = SplitQuoted(lines[line]);
-                    for (int c = 3; c < header.Length && c < f.Length; c++)
-                        if (f[c].Length > 0) _activeSpin[(f[1], header[c])] = double.Parse(f[c], CultureInfo.InvariantCulture) / 100.0;
-                }
-            }
+            Dictionary<(string, string), double> table = observed
+                ? (_observedActiveSpin ??= LoadActiveSpin(ObservedActiveSpinPath))
+                : (_activeSpin ??= LoadActiveSpin(ActiveSpinPath));
 
             string column;
             switch (pitchType)
@@ -107,7 +100,22 @@ namespace Pitchlab.Tests.Statcast
                 default: return double.NaN;
             }
 
-            return _activeSpin.TryGetValue((pitcherId, column), out double value) ? value : double.NaN;
+            return table.TryGetValue((pitcherId, column), out double value) ? value : double.NaN;
+        }
+
+        private static Dictionary<(string, string), double> LoadActiveSpin(string path)
+        {
+            var table = new Dictionary<(string, string), double>();
+            string[] lines = File.ReadAllLines(path);
+            string[] header = SplitQuoted(lines[0]);
+            for (int line = 1; line < lines.Length; line++)
+            {
+                string[] f = SplitQuoted(lines[line]);
+                for (int c = 3; c < header.Length && c < f.Length; c++)
+                    if (f[c].Length > 0) table[(f[1], header[c])] = double.Parse(f[c], CultureInfo.InvariantCulture) / 100.0;
+            }
+
+            return table;
         }
 
         // Minimal CSV split for the leaderboard export (quoted names contain commas).

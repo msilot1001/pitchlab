@@ -67,7 +67,7 @@ Events (plate plane, ground) are located inside the last step by bisection on a 
 
 - **Plate X/Z**: where the ball centre crosses that plane.
 - **Movement (HB, IVB)**: (actual crossing) − (crossing of a reference flight with the same release state, gravity and drag but C_L = 0), catcher's view: +HB toward first base, +IVB up. It is the Magnus displacement accumulated over the **full flight from release**.
-- Statcast `pfx_x/pfx_z` (feet) are best matched by the drag-corrected spin-induced deviation over **release → plate** (TASK-002: median 0.2 in x, 1.1–1.3 in z), not the PITCHf/x 40 ft window — the same concept as this metric. Our earlier "curveball overshoot" was therefore not a definition mismatch but the breaking-ball lift limitation above combined with the preset's active-spin-like efficiency.
+- Statcast `pfx_x/pfx_z` (feet) are best matched by the drag-corrected spin-induced deviation over **release → plate** (TASK-002: median 0.2 in x, 1.1–1.3 in z), not the PITCHf/x 40 ft window — the same concept as this metric. Our earlier "curveball overshoot" was therefore not a definition mismatch but the breaking-ball lift limitation (see Validation below) combined with the preset's active-spin-like efficiency.
 - Flight time is release → plate front. If the ball reaches the ground first, plate values, flight time and movement are NaN (and the UI says so). Movement is also NaN if the no-lift reference never reaches the plate.
 
 ## Validation in tests
@@ -78,8 +78,26 @@ Events (plate plane, ground) are located inside the last step by bisection on a 
 - Uniform wind equals a Galilean frame shift of a still-air flight (model-independent, 1e-9 m).
 - C_L pinned to hand-evaluated values of the Nathan fit; ball constants pinned to the documented values.
 - Presets: **regression bands** (±1.5 in around current model output, not external validation).
-- External validation against 649 tracked Statcast pitches (`Docs/VALIDATION_TASK002.md`): drag confirmed (implied C_D 0.34–0.35 in a closed-roof game), plate location reproduced to ≈ 0.3–0.6 in when the observed Magnus direction is used, lift magnitude consistent with measured active spin for four-seamers/sinkers/changeups; **known limitation**: breaking balls (slider, cutter, curveball) get ≈ 1.6–2.6× too much transverse-spin effect for their measured active spin, and Statcast's measured spin axis differs from the movement direction by family-dependent angles (seam-shifted wake, not modelled).
+- External validation against 649 tracked Statcast pitches (`Docs/VALIDATION_TASK002.md`): drag consistent with C_D 0.35 in a closed-roof game (0.34; four-seam 0.35; an open-air game 11 % lower, conditions uncertain); plate location reproduced to ≈ 0.3–0.6 in when the observed Magnus acceleration is used (checks drag, frame, integrator — not C_L); at the Hawk-Eye-measured transverse spin our lift is 0.95–1.08 of the tracked lift for four-seamers, sinkers and changeups. **Known limitation**: breaking balls (curveball, slider, cutter) get ≈ 1.4–2.6× too much lift for their measured active spin, and Statcast's measured spin axis differs from the movement direction by family-dependent angles (seam-shifted wake and unexplained breaking-ball offsets, not modelled). Spin inputs are therefore *effective* (movement-equivalent) transverse spin — ADR 0003.
 
 ## Presets **[Tune]**
 
-`PitchPresets` holds approximate MLB-average right-handed values (speed, spin, axis, efficiency; release ≈ 5.7–6.0 ft high, 6.0–6.4 ft extension, −1.8 to −1.9 ft side). Release angles are tuned to cross mid-zone. Model results (IVB / HB in) vs published averages: four-seam 17.0 / 8.6 arm side (≈ 16 / 7–8); sinker 8.7 / 16.1 (7–9 / 15); slider +0.2 / 9.2 glove (+1–2 / 5–6); curveball −14.6 / 10.8 (≈ −10 / 8–10); changeup 6.4 / 15.0 (6 / 14). The curveball overshoot is a known calibration question (C_L at high S, efficiency, measurement window).
+`PitchPresets` holds approximate MLB-average right-handed values (speed, spin, axis, efficiency; release ≈ 5.7–6.0 ft high, 6.0–6.4 ft extension, −1.8 to −1.9 ft side). Release angles are tuned to cross mid-zone. Model results (IVB / HB in) vs published averages: four-seam 17.0 / 8.6 arm side (≈ 16 / 7–8); sinker 8.7 / 16.1 (7–9 / 15); slider +1.5 / 5.5 glove (+1–2 / 5–6, tuned); curveball −10.0 / 9.0 (≈ −10 / 8–10, tuned); changeup 6.4 / 15.0 (6 / 14). Breaking-ball presets use *effective* (movement-equivalent) efficiency, which is lower than Hawk-Eye active spin (ADR 0003).
+
+## Baseline status (milestone C, ADR 0003)
+
+The simulator is the baseline for gameplay work. Outstanding items:
+
+| item | class |
+|---|---|
+| Hitting needs pitch states at and behind the plate front: use `BallFlightSimulator.Simulate` with hitting-specific `FlightLimits` (not `PitchSimulation`, which stops at the plate front) | blocker before hitting — handled in TASK-003 |
+| Breaking-ball lift vs measured active spin (1.4–2.6×) | accepted approximation (effective spin inputs); mechanism: research later |
+| No seam-shifted wake | accepted approximation |
+| Constant C_D at pitch speeds; game-to-game environment uncertainty | accepted approximation |
+| Drag crisis below ~70 mph (slow curves, eephus) | research later (flagged by the validity range) |
+| C_D at batted-ball speeds/spins (spin-dependent, low-Re apex) | should improve before batted-ball work (additive `C_D(S, Re)`) |
+| Spin decay for long batted-ball flights | should improve before batted-ball work (additive, in `Step`) |
+| C_L provenance (fly-ball fit used for pitches) | accepted approximation (native fit for batted balls) |
+| Fixed spin axis, no decay for pitches | accepted approximation |
+| Movement metric vs Savant pfx (≈ 1 in z) | accepted approximation |
+| Validity range only in `PitchMetrics`, thresholds chosen for pitches | should improve later (flight-level helper for batted balls) |

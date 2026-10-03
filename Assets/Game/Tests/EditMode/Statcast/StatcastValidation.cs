@@ -17,9 +17,14 @@ namespace Pitchlab.Tests.Statcast
         public sealed class PitchResult
         {
             public string Role, Family, PitchType, Throws, PitcherId;
-            /// <summary>Savant Hawk-Eye active spin for this pitcher and pitch type (season), or NaN.</summary>
-            public double ActiveSpin;
-            public double SpinRateRpm, SpinAxis, ReleaseSpeedMph;
+            /// <summary>Savant Hawk-Eye (spin-based) and movement-based (observed) active spin, season values, or NaN.</summary>
+            public double ActiveSpin, ObservedActiveSpin;
+            /// <summary>
+            /// Transverse spin parameter from the measured spin (rate × Hawk-Eye active spin) at mid-flight air speed, and
+            /// our model's lift at that S divided by the lift implied by the tracked flight (> 1 = model lifts too much).
+            /// </summary>
+            public double MeasuredSpinParameter = double.NaN, LiftRatio = double.NaN;
+            public double SpinRateRpm, SpinAxis, ReleaseSpeedMph, TrackedPlateZFeet;
             // 1. Interpretation check (fit vs CSV)
             public double FitPlateErrorFeet, FitReleaseSpeedErrorMph;
             // 2. Drag
@@ -74,7 +79,8 @@ namespace Pitchlab.Tests.Statcast
                 {
                     Role = row.Role, Family = row.Family, PitchType = p.PitchType, Throws = p.Throws, PitcherId = row.PitcherId,
                     ActiveSpin = StatcastFixture.ActiveSpin(row.PitcherId, p.PitchType),
-                    SpinRateRpm = p.SpinRateRpm, SpinAxis = p.SpinAxisDegrees, ReleaseSpeedMph = p.ReleaseSpeedMph,
+                    ObservedActiveSpin = StatcastFixture.ActiveSpin(row.PitcherId, p.PitchType, observed: true),
+                    SpinRateRpm = p.SpinRateRpm, SpinAxis = p.SpinAxisDegrees, ReleaseSpeedMph = p.ReleaseSpeedMph, TrackedPlateZFeet = p.PlateZ,
                 };
 
                 // 1. Interpretation: the reconstructed fit must reproduce Statcast's own derived fields.
@@ -90,6 +96,11 @@ namespace Pitchlab.Tests.Statcast
                 double s = AerodynamicModel.SpinParameterForLift(d.ImpliedLiftCoefficient);
                 r.ImpliedTransverseRpm = Units.RadiansPerSecondToRpm(s * d.AirSpeed / ball.Radius);
                 r.ImpliedEfficiency = r.ImpliedTransverseRpm / p.SpinRateRpm;
+                if (IsFinite(r.ActiveSpin))
+                {
+                    r.MeasuredSpinParameter = ball.Radius * Units.RpmToRadiansPerSecond(p.SpinRateRpm * r.ActiveSpin) / d.AirSpeed;
+                    r.LiftRatio = AerodynamicModel.Baseball.LiftCoefficient(r.MeasuredSpinParameter) / d.ImpliedLiftCoefficient;
+                }
                 // Magnus direction in the catcher's X–Z view vs the direction implied by spin_axis: (sin θ, −cos θ).
                 double magnusAngle = Math.Atan2(d.MagnusAcceleration.X, d.MagnusAcceleration.Z);
                 double axisAngle = Math.Atan2(Math.Sin(Units.DegreesToRadians(p.SpinAxisDegrees)), -Math.Cos(Units.DegreesToRadians(p.SpinAxisDegrees)));
@@ -184,23 +195,46 @@ namespace Pitchlab.Tests.Statcast
             r.PfxErrorZ[index] = (zFeet - p.PfxZ) * 12.0;
         }
 
-        /// <summary>
-        /// Per (pitcher, pitch type, game) group with ≥ 3 pitches and a Savant value: median implied efficiency divided by
-        /// Savant's measured active spin. ≈ 1 means our C_L turns the measured transverse spin into the observed lift.
-        /// </summary>
-        public static IEnumerable<(string Family, string PitchType, string PitcherId, int Count, double Ratio)> ActiveSpinRatios() =>
-            Results.Where(r => IsFinite(r.ActiveSpin) && IsFinite(r.ImpliedEfficiency))
-                .GroupBy(r => (r.PitcherId, r.PitchType, r.Role))
-                .Where(g => g.Count() >= 3)
-                .Select(g => (g.First().Family, g.Key.PitchType, g.Key.PitcherId, g.Count(), Median(g.Select(r => r.ImpliedEfficiency)) / g.First().ActiveSpin));
+        public readonly struct SpinGroup
+        {
+            public readonly string Role, PitchType, PitcherId;
+            public readonly int Count;
+            /// <summary>Median implied efficiency ÷ Savant Hawk-Eye active spin (≈ 1: our C_L turns measured spin into the observed lift).</summary>
+            public readonly double RatioToMeasured;
+            /// <summary>Median implied efficiency ÷ Savant movement-based efficiency (pipeline cross-check).</summary>
+            public readonly double RatioToObserved;
+            public readonly double MeasuredSpinParameter;
+            /// <summary>Median model lift at the measured transverse spin ÷ lift implied by the flight.</summary>
+            public readonly double LiftRatio;
 
+            public SpinGroup(string role, string pitchType, string pitcherId, int count, double toMeasured, double toObserved, double s, double lift)
+            {
+                Role = role; PitchType = pitchType; PitcherId = pitcherId; Count = count;
+                RatioToMeasured = toMeasured; RatioToObserved = toObserved; MeasuredSpinParameter = s; LiftRatio = lift;
+            }
+        }
+
+        /// <summary>Per (game, pitcher, pitch type) groups with ≥ 3 pitches and a Hawk-Eye active spin value.</summary>
+        public static IEnumerable<SpinGroup> ActiveSpinGroups() =>
+            Results.Where(r => IsFinite(r.ActiveSpin) && IsFinite(r.ImpliedEfficiency))
+                .GroupBy(r => (r.Role, r.PitcherId, r.PitchType))
+                .Where(g => g.Count() >= 3)
+                .Select(g => new SpinGroup(g.Key.Role, g.Key.PitchType, g.Key.PitcherId, g.Count(),
+                    Median(g.Select(r => r.ImpliedEfficiency)) / g.First().ActiveSpin,
+                    Median(g.Select(r => r.ImpliedEfficiency)) / g.First().ObservedActiveSpin,
+                    Median(g.Select(r => r.MeasuredSpinParameter)),
+                    Median(g.Select(r => r.LiftRatio))));
+
+        /// <summary>Median of the finite values (NaN/∞ dropped; report <see cref="NonFinite"/> alongside).</summary>
         public static double Median(IEnumerable<double> values)
         {
-            double[] sorted = values.OrderBy(v => v).ToArray();
+            double[] sorted = values.Where(IsFinite).OrderBy(v => v).ToArray();
             if (sorted.Length == 0) return double.NaN;
             int mid = sorted.Length / 2;
             return sorted.Length % 2 == 1 ? sorted[mid] : 0.5 * (sorted[mid - 1] + sorted[mid]);
         }
+
+        public static int NonFinite(IEnumerable<double> values) => values.Count(v => !IsFinite(v));
 
         public static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
         private static double Sq(double v) => v * v;

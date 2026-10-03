@@ -296,8 +296,8 @@ namespace Pitchlab.Tests
         // slider +1..2/+5..6, curveball ≈ −10/+8..10, changeup +6/−14 (IVB/HB in; Docs/PHYSICS.md).
         [TestCase("Four-Seam-like", -8.56, 16.99)]
         [TestCase("Sinker-like", -16.13, 8.72)]
-        [TestCase("Slider-like", 9.21, 0.24)]
-        [TestCase("Curveball-like", 10.76, -14.59)]
+        [TestCase("Slider-like", 5.5, 1.5)]
+        [TestCase("Curveball-like", 9.0, -10.0)]
         [TestCase("Changeup-like", -15.04, 6.38)]
         public void PresetMovementRegression(string label, double horizontalInches, double verticalInches)
         {

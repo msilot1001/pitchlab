@@ -26,10 +26,12 @@ COLUMNS = [
 ]
 URL = "https://baseballsavant.mlb.com/statcast_search/csv?all=true&type=details&game_pk={}"
 # Hawk-Eye spin-based active spin (%), per pitcher and pitch type, 2024 season.
-ACTIVE_SPIN_URL = "https://baseballsavant.mlb.com/leaderboard/active-spin?year=2024_spin-based&min=10&hand=&csv=true"
+ACTIVE_SPIN_URL = "https://baseballsavant.mlb.com/leaderboard/active-spin?year=2024_{}&min=10&hand=&csv=true"
 FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "Assets", "Game", "Tests", "Fixtures", "Statcast")
 OUT = os.path.join(FIXTURES, "statcast_validation.csv")
-ACTIVE_SPIN_OUT = os.path.join(FIXTURES, "active_spin_2024.csv")
+# spin-based = Hawk-Eye measured spin axis; observed = movement-based (Magnus-only assumption).
+ACTIVE_SPIN_OUT = {"spin-based": os.path.join(FIXTURES, "active_spin_2024.csv"),
+                   "observed": os.path.join(FIXTURES, "active_spin_observed_2024.csv")}
 
 
 def fetch(url):
@@ -53,12 +55,13 @@ def main():
     print(f"wrote {len(rows)} pitches to {os.path.normpath(OUT)}")
 
     pitchers = {row[COLUMNS.index("pitcher") + 1] for row in rows}
-    spin = [r for r in csv.DictReader(io.StringIO(fetch(ACTIVE_SPIN_URL))) if r["entity_id"] in pitchers]
-    with open(ACTIVE_SPIN_OUT, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(spin[0].keys()), lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(spin)
-    print(f"wrote active spin for {len(spin)} of {len(pitchers)} pitchers to {os.path.normpath(ACTIVE_SPIN_OUT)}")
+    for method, path in ACTIVE_SPIN_OUT.items():
+        spin = [r for r in csv.DictReader(io.StringIO(fetch(ACTIVE_SPIN_URL.format(method)))) if r["entity_id"] in pitchers]
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(spin[0].keys()), lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(spin)
+        print(f"wrote {method} active spin for {len(spin)} of {len(pitchers)} pitchers to {os.path.normpath(path)}")
 
 
 if __name__ == "__main__":
