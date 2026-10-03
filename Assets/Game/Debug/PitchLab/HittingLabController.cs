@@ -9,15 +9,18 @@ using UnityEngine.InputSystem;
 namespace Pitchlab.Sandbox
 {
     /// <summary>
-    /// Hitting Sandbox. A pitch is simulated once and played back on a real-time clock; the swing time comes from the
-    /// input event's own timestamp on the same clock, so frame rate never changes timing. Contact is resolved by the
+    /// Hitting Sandbox. A pitch is simulated once and played back on a real-time clock. Everything authoritative —
+    /// the throw, the swing, and the PCI position at the swing — is taken from Input System event timestamps on that
+    /// same clock (PCI movement is an exact function of timestamped aim events, <see cref="PciTrack"/>), so the
+    /// contact result does not depend on when frames happen. Frames only render. Contact is resolved by the
     /// deterministic <see cref="ContactResolver"/> (no colliders).
     /// Controls: Space / gamepad South = throw (when idle) or swing (during a pitch); WASD / left stick = move PCI;
     /// Left/Right or D-pad = previous/next pitch type; 1/2 = playback speed 1×/0.5×.
     /// </summary>
     public sealed class HittingLabController : MonoBehaviour
     {
-        private const float PciSpeed = 1.2f; // m/s
+        private const double PciSpeed = 1.2; // m/s at full stick / key
+        private const double PciMinX = -0.6, PciMaxX = 0.6, PciMinZ = 0.2, PciMaxZ = 1.4;
 
         [SerializeField] private SwingParameters _swing = SwingParameters.Default;
         [SerializeField, Range(0.1f, 1f)] private float _playbackSpeed = 1f;
@@ -34,29 +37,37 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction;
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction;
         private int _presetIndex;
-        private double _pciX, _pciZ;
+        private PciTrack _pciTrack;
         private double _pitchStartRealtime = double.NaN;
         private float _pitchPlaybackSpeed = 1f; // latched at throw; speed changes apply to the next pitch
         private bool _swung;
+        private string _pitchLabel = string.Empty; // latched at throw; the preset selection may change mid-pitch
         private string _readout = "Press Space / A to throw.";
         private Vector3[] _pathBuffer = new Vector3[256];
+
+        /// <summary>
+        /// The real-time clock shared with Input System event timestamps (Time.realtimeSinceStartupAsDouble). Tests replace
+        /// it to drive a scripted input trace under chosen frame schedules.
+        /// </summary>
+        public Func<double> Clock { get; set; } = () => Time.realtimeSinceStartupAsDouble;
 
         public HittingPitch CurrentPitch { get; private set; }
         public ContactResult? LastResult { get; private set; }
         public SwingInput? LastSwing { get; private set; }
         public int PitchesThrown { get; private set; }
-        public double PciX => _pciX;
-        public double PciZ => _pciZ;
         public SwingParameters Swing => _swing;
         public EnvironmentState Environment => EnvironmentState.Standard;
         public bool PitchInFlight => CurrentPitch != null && !_swung && SimTime < CurrentPitch.Flight.Duration;
-        public double SimTime => ToSimTime(Time.realtimeSinceStartupAsDouble);
+        public double SimTime => ToSimTime(Clock());
         public Transform BallTransform => _ball;
 
         /// <summary>Simulation time (s after release) of a moment on the real-time clock shared with input events.</summary>
         public double ToSimTime(double realtime) => double.IsNaN(_pitchStartRealtime) ? 0.0 : (realtime - _pitchStartRealtime) * _pitchPlaybackSpeed;
+
+        /// <summary>PCI position at a moment on the real-time clock (exact, from timestamped aim input).</summary>
+        public (double X, double Z) PciAt(double realtime) => _pciTrack.PositionAt(realtime);
 
         private void Awake()
         {
@@ -68,31 +79,83 @@ namespace Pitchlab.Sandbox
                 return;
             }
 
+            _pciTrack = new PciTrack(PciMinX, PciMaxX, PciMinZ, PciMaxZ, Clock(), 0.0,
+                0.5 * (PitchingGeometry.DefaultZoneBottom + PitchingGeometry.DefaultZoneTop));
+
             _swingAction = new InputAction("Swing", InputActionType.Button);
             _swingAction.AddBinding("<Keyboard>/space");
             _swingAction.AddBinding("<Gamepad>/buttonSouth");
-            _swingAction.performed += OnSwingPressed;
+            _swingAction.performed += context => PressSwingButton(context.time);
+
+            // Digital (un-normalised) WASD keeps the previous per-axis key speed; the stick is analogue.
+            _aimAction = new InputAction("Aim", InputActionType.Value, expectedControlType: "Vector2");
+            _aimAction.AddCompositeBinding("2DVector(mode=1)")
+                .With("Up", "<Keyboard>/w").With("Down", "<Keyboard>/s").With("Left", "<Keyboard>/a").With("Right", "<Keyboard>/d");
+            _aimAction.AddBinding("<Gamepad>/leftStick");
+            _aimAction.performed += OnAim;
+            _aimAction.canceled += OnAim;
+
+            _nextPresetAction = Button("<Keyboard>/rightArrow", "<Gamepad>/dpad/right", _ => _presetIndex = (_presetIndex + 1) % Presets.Length);
+            _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", _ => _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length);
+            _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
+            _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
         }
 
-        private void OnEnable() => _swingAction?.Enable();
-        private void OnDisable() => _swingAction?.Disable();
-        private void OnDestroy() => _swingAction?.Dispose();
+        private static InputAction Button(string binding, string secondBinding, Action<InputAction.CallbackContext> onPress)
+        {
+            var action = new InputAction(type: InputActionType.Button, binding: binding);
+            if (secondBinding != null) action.AddBinding(secondBinding);
+            action.performed += onPress;
+            return action;
+        }
+
+        private void OnEnable()
+        {
+            _swingAction?.Enable();
+            _aimAction?.Enable();
+            _nextPresetAction?.Enable();
+            _previousPresetAction?.Enable();
+            _normalSpeedAction?.Enable();
+            _slowSpeedAction?.Enable();
+        }
+
+        private void OnDisable()
+        {
+            _swingAction?.Disable();
+            _aimAction?.Disable();
+            _nextPresetAction?.Disable();
+            _previousPresetAction?.Disable();
+            _normalSpeedAction?.Disable();
+            _slowSpeedAction?.Disable();
+        }
+
+        private void OnDestroy()
+        {
+            _swingAction?.Dispose();
+            _aimAction?.Dispose();
+            _nextPresetAction?.Dispose();
+            _previousPresetAction?.Dispose();
+            _normalSpeedAction?.Dispose();
+            _slowSpeedAction?.Dispose();
+        }
 
         private void Start()
         {
             PlaceField();
-            ResetPci();
             _camera.transform.SetPositionAndRotation(new Vector3(0f, 1.1f, -2.5f), Quaternion.Euler(-1f, 0f, 0f));
             _camera.fieldOfView = 40f;
             ShowIdle();
         }
 
         /// <summary>Simulates the selected pitch and starts its playback now.</summary>
-        public void ThrowPitch(int presetIndex)
+        public void ThrowPitch(int presetIndex) => ThrowPitch(presetIndex, Clock());
+
+        /// <summary>Simulates the selected pitch; it is released at <paramref name="releaseRealtime"/> on the shared clock.</summary>
+        public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
-            CurrentPitch = HittingPitch.Create(Presets[_presetIndex], Environment, _swing.ContactPlaneY);
-            _pitchStartRealtime = Time.realtimeSinceStartupAsDouble;
+            CurrentPitch = HittingPitch.Create(Presets[_presetIndex], Environment);
+            _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             _swung = false;
             LastResult = null;
@@ -101,20 +164,21 @@ namespace Pitchlab.Sandbox
             _pitchPath.enabled = false;
             _exitRay.enabled = false;
             _contactMarker.gameObject.SetActive(false);
-            _readout = $"{Presets[_presetIndex].Label}: swing (Space / A)!";
+            _pitchLabel = Presets[_presetIndex].Label;
+            _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 
-        public void SetPci(double x, double z)
-        {
-            _pciX = Math.Max(-0.6, Math.Min(0.6, x));
-            _pciZ = Math.Max(0.2, Math.Min(1.4, z));
-            DrawPci();
-        }
+        /// <summary>Places the PCI at the current clock time, keeping any aim motion (debug/test entry point, not input).</summary>
+        public void SetPci(double x, double z) => _pciTrack.Place(Clock(), x, z);
 
-        /// <summary>Swing that started at simulation time <paramref name="startTime"/> (s after release), PCI as now.</summary>
+        /// <summary>
+        /// Swing that started at simulation time <paramref name="startTime"/> (s after release), with the PCI where it was
+        /// at that moment.
+        /// </summary>
         public ContactResult SwingAtSimTime(double startTime)
         {
-            var swing = new SwingInput(startTime, _pciX, _pciZ);
+            (double x, double z) = PciAt(_pitchStartRealtime + startTime / _pitchPlaybackSpeed);
+            var swing = new SwingInput(startTime, x, z);
             ContactResult result = ContactResolver.Resolve(CurrentPitch, swing, _swing);
             _swung = true;
             LastSwing = swing;
@@ -123,63 +187,49 @@ namespace Pitchlab.Sandbox
             return result;
         }
 
-        // Event timestamp (same timeline as Time.realtimeSinceStartupAsDouble), not the frame time.
-        private void OnSwingPressed(InputAction.CallbackContext context) => PressSwingButton(context.time);
-
         /// <summary>
-        /// The swing button at real time <paramref name="eventRealtime"/>: throws when no pitch is live, otherwise swings
-        /// at exactly that moment, however many frames have passed since.
+        /// The swing button at real time <paramref name="eventRealtime"/> (the input event's timestamp): throws when no
+        /// pitch is live (released at that moment), otherwise swings at exactly that moment with the PCI where it was
+        /// then, however many frames have passed since.
         /// </summary>
         public void PressSwingButton(double eventRealtime)
         {
             if (CurrentPitch == null || _swung || ToSimTime(eventRealtime) >= CurrentPitch.Flight.Duration)
             {
-                ThrowPitch(_presetIndex);
+                ThrowPitch(_presetIndex, eventRealtime);
                 return;
             }
 
             SwingAtSimTime(ToSimTime(eventRealtime));
         }
 
-        private void Update()
+        // Known limit: the Input System merges consecutive DualSense stick reports within one update (IEventMerger),
+        // so with that pad the sampled stick path can depend on how reports group into frames (≈ mm). Keyboard and
+        // other gamepads deliver every report. Button presses (swing) are never merged.
+        private void OnAim(InputAction.CallbackContext context)
         {
-            HandleFrameInput();
+            Vector2 aim = context.ReadValue<Vector2>();
+            _pciTrack.SetVelocity(context.time, aim.x * PciSpeed, aim.y * PciSpeed);
+        }
+
+        private void Update() => FrameUpdate(Clock());
+
+        /// <summary>Renders the state at real time <paramref name="now"/>. Nothing authoritative happens here.</summary>
+        public void FrameUpdate(double now)
+        {
+            if (_pciTrack == null) return; // disabled in Awake (missing scene reference)
+            DrawPci(now);
             if (CurrentPitch == null) return;
 
-            double t = SimTime;
+            double t = ToSimTime(now);
             if (_swung && LastResult.HasValue && LastResult.Value.IsContact && t >= LastResult.Value.BattedBall.Time)
             {
-                // Freeze at the contact point; the exit ray shows the batted-ball direction (flight comes in TASK-004).
+                // Freeze at the contact point; the exit ray shows the batted-ball direction.
                 _ball.position = SimulationSpace.ToUnity(LastResult.Value.BattedBall.Position);
                 return;
             }
 
             _ball.position = SimulationSpace.ToUnity(CurrentPitch.Flight.StateAt(t).Position);
-        }
-
-        private void HandleFrameInput()
-        {
-            Keyboard keyboard = Keyboard.current;
-            Gamepad gamepad = Gamepad.current;
-            Vector2 move = Vector2.zero;
-            if (keyboard != null)
-            {
-                move.x += (keyboard.dKey.isPressed ? 1f : 0f) - (keyboard.aKey.isPressed ? 1f : 0f);
-                move.y += (keyboard.wKey.isPressed ? 1f : 0f) - (keyboard.sKey.isPressed ? 1f : 0f);
-                if (keyboard.rightArrowKey.wasPressedThisFrame) _presetIndex = (_presetIndex + 1) % Presets.Length;
-                if (keyboard.leftArrowKey.wasPressedThisFrame) _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length;
-                if (keyboard.digit1Key.wasPressedThisFrame) _playbackSpeed = 1f;
-                if (keyboard.digit2Key.wasPressedThisFrame) _playbackSpeed = 0.5f;
-            }
-
-            if (gamepad != null)
-            {
-                move += gamepad.leftStick.ReadValue();
-                if (gamepad.dpad.right.wasPressedThisFrame) _presetIndex = (_presetIndex + 1) % Presets.Length;
-                if (gamepad.dpad.left.wasPressedThisFrame) _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length;
-            }
-
-            if (move != Vector2.zero) SetPci(_pciX + move.x * PciSpeed * Time.deltaTime, _pciZ + move.y * PciSpeed * Time.deltaTime);
         }
 
         private void ShowResult(ContactResult r)
@@ -189,7 +239,7 @@ namespace Pitchlab.Sandbox
             if (r.IsContact)
             {
                 _readout =
-                    $"{Presets[_presetIndex].Label}  timing {timing}\n" +
+                    $"{_pitchLabel}  timing {timing}\n" +
                     $"PCI offset: barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in (+ = under ball)\n" +
                     $"Exit velocity {Units.MetersPerSecondToMph(r.ExitSpeed):0.0} mph   launch {r.LaunchAngleDegrees:+0;-0}°   spray {r.SprayAngleDegrees:+0;-0}° (+ = RF)\n" +
                     $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm   q {r.CollisionEfficiency:0.00}" +
@@ -204,7 +254,7 @@ namespace Pitchlab.Sandbox
             }
             else
             {
-                _readout = $"{Presets[_presetIndex].Label}  timing {timing}\nMISS: {r.Outcome}" +
+                _readout = $"{_pitchLabel}  timing {timing}\nMISS: {r.Outcome}" +
                            (double.IsNaN(r.VerticalOffset) ? "" : $" (barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in)");
             }
 
@@ -214,20 +264,19 @@ namespace Pitchlab.Sandbox
 
         private void ShowIdle() => _readout = $"Next: {Presets[_presetIndex].Label}. Press Space / A to throw.";
 
-        private void ResetPci() => SetPci(0.0, 0.5 * (PitchingGeometry.DefaultZoneBottom + PitchingGeometry.DefaultZoneTop));
-
-        private void DrawPci()
+        private void DrawPci(double now)
         {
             // PCI drawn at the contact plane: width = barrel contact range, height = bat–ball centre distance.
+            (double x, double z) = PciAt(now);
             double hx = _swing.BarrelHalfLength;
             double hz = BallProperties.Baseball.Radius + _swing.BarrelRadius;
-            double y = _swing.ContactPlaneY;
+            double y = CurrentPitch?.ContactPlaneY ?? HittingPitch.DefaultContactPlaneY;
             _pci.loop = true;
             _pci.positionCount = 4;
-            _pci.SetPosition(0, SimulationSpace.ToUnity(new Vector3d(_pciX - hx, y, _pciZ - hz)));
-            _pci.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(_pciX + hx, y, _pciZ - hz)));
-            _pci.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(_pciX + hx, y, _pciZ + hz)));
-            _pci.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(_pciX - hx, y, _pciZ + hz)));
+            _pci.SetPosition(0, SimulationSpace.ToUnity(new Vector3d(x - hx, y, z - hz)));
+            _pci.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(x + hx, y, z - hz)));
+            _pci.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(x + hx, y, z + hz)));
+            _pci.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(x - hx, y, z + hz)));
         }
 
         private void SetPath(TrajectoryResult trajectory)

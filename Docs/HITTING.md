@@ -9,8 +9,9 @@ pitch input → `HittingPitch` (full flight to 1 m behind the plate, plus the ex
 ## Timing
 
 - The swing reaches the contact plane `SwingDuration` (150 ms **[Tune]**; forward-swing durations of 130–280 ms are reported) after it starts. **Timing error** = bat arrival − ball arrival at the contact plane (Y = plate front + 0.25 m **[Tune]**); negative = early. This number is authoritative; labels (Good within ±7 ms, Early/Late within ±20 ms, Very early/late beyond) are display only. Collegiate hitters' sweet-spot window averages 9.4 ± 6.3 ms (Higuchi et al. 2025) **[Fact]**.
+- The contact plane has one source: `HittingPitch.ContactPlaneY` (default `HittingPitch.DefaultContactPlaneY`), set when the pitch is prepared and read by `ContactResolver`.
 - Contact uses the ball state at the bat's arrival time (cubic Hermite between 5 ms RK4 samples, sub-µm), so early contact happens out front and late contact deeper.
-- The swing time comes from the input event's timestamp on the same real-time clock as pitch playback, never from a frame, so frame rate cannot change outcomes.
+- The throw, the swing time and the PCI position at the swing all come from input-event timestamps on the same real-time clock as pitch playback. PCI motion is an exact function of timestamped aim events (`PciTrack`), so frame rate cannot change outcomes (regression test: `HittingInputFrameRateTests`, 30/60/144 fps and jittered frames). Frames only render.
 - Beyond ±35 ms **[Tune]** the bat is not in the zone: miss.
 
 ## PCI (spatial error)

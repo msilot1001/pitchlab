@@ -1,6 +1,5 @@
 using System;
 using Pitchlab.Simulation.Core;
-using Pitchlab.Simulation.Pitching;
 
 namespace Pitchlab.Gameplay.Hitting
 {
@@ -24,8 +23,6 @@ namespace Pitchlab.Gameplay.Hitting
         public double AttackAngle;
         /// <summary>Time from swing start (button) to the bat reaching the contact plane, s.</summary>
         public double SwingDuration;
-        /// <summary>Plane (simulation Y, m) where on-time contact happens.</summary>
-        public double ContactPlaneY;
         /// <summary>Barrel radius, m.</summary>
         public double BarrelRadius;
         /// <summary>Collision efficiency q at the sweet spot (Nathan's e_A).</summary>
@@ -56,7 +53,6 @@ namespace Pitchlab.Gameplay.Hitting
             Require(BatSpeed > 0.0 && Finite(BatSpeed), nameof(BatSpeed));
             Require(Math.Abs(AttackAngle) < 0.5 * Math.PI, nameof(AttackAngle));
             Require(SwingDuration >= 0.0 && Finite(SwingDuration), nameof(SwingDuration));
-            Require(Finite(ContactPlaneY), nameof(ContactPlaneY));
             Require(BarrelRadius > 0.0 && Finite(BarrelRadius), nameof(BarrelRadius));
             Require(SweetSpotEfficiency >= 0.0 && SweetSpotEfficiency <= 1.0, nameof(SweetSpotEfficiency));
             Require(EfficiencyFalloffTip >= 0.0 && Finite(EfficiencyFalloffTip), nameof(EfficiencyFalloffTip));
@@ -84,7 +80,6 @@ namespace Pitchlab.Gameplay.Hitting
             BatSpeed = Units.MphToMetersPerSecond(72.0),
             AttackAngle = Units.DegreesToRadians(10.0),
             SwingDuration = 0.150,
-            ContactPlaneY = PitchingGeometry.PlateFrontY + 0.25,
             BarrelRadius = Units.InchesToMeters(2.61) / 2.0,
             SweetSpotEfficiency = 0.21,
             EfficiencyFalloffTip = 0.012 / (Units.MetersPerInch * Units.MetersPerInch),

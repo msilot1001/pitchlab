@@ -117,7 +117,7 @@ namespace Pitchlab.Gameplay.Hitting
             // The bat's sweet spot travels along its swing plane, through the PCI point at the contact plane: early
             // contact happens further out front and, with an upward attack angle, higher. Offsets are measured in the
             // bat's frame (barrel axis, and perpendicular to barrel and swing).
-            var sweetSpot = new Vector3d(swing.PciX, ball.Position.Y, swing.PciZ + (ball.Position.Y - p.ContactPlaneY) * Math.Tan(p.AttackAngle));
+            var sweetSpot = new Vector3d(swing.PciX, ball.Position.Y, swing.PciZ + (ball.Position.Y - pitch.ContactPlaneY) * Math.Tan(p.AttackAngle));
             Vector3d offset = ball.Position - sweetSpot;
             double alongBarrel = Vector3d.Dot(offset, barrelAxis);
             double vertical = Vector3d.Dot(offset, up);

@@ -11,7 +11,7 @@ namespace Pitchlab.Tests
     {
         private static readonly SwingParameters Params = SwingParameters.Default;
 
-        private static HittingPitch Pitch(PitchInput input) => HittingPitch.Create(input, EnvironmentState.Standard, Params.ContactPlaneY);
+        private static HittingPitch Pitch(PitchInput input) => HittingPitch.Create(input, EnvironmentState.Standard);
 
         /// <summary>Swing timed <paramref name="timingError"/> s late, PCI at the ball's on-time position shifted by (dx, dz).</summary>
         private static ContactResult Swing(HittingPitch pitch, double timingError = 0.0, double pciDx = 0.0, double pciDz = 0.0, SwingParameters? p = null)
@@ -32,7 +32,7 @@ namespace Pitchlab.Tests
             SwingParameters level = Params;
             level.AttackAngle = 0.0;
             var release = new BallState(0.0, new Vector3d(0.0, 18.0, 0.8), new Vector3d(0.0, -40.0, 0.0), Vector3d.Zero);
-            HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero), level.ContactPlaneY);
+            HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero));
             ContactResult r = Swing(pitch, p: level);
 
             Assert.IsTrue(r.IsContact);
@@ -41,7 +41,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(0.0, r.LaunchAngleDegrees, 1e-6);
             Assert.AreEqual(0.0, r.SprayAngleDegrees, 1e-6);
             Assert.AreEqual(0.0, r.BattedBall.Spin.Length, 1e-9);
-            Assert.AreEqual(Params.ContactPlaneY, r.BattedBall.Position.Y, 1e-6, "contact at the contact plane when on time");
+            Assert.AreEqual(pitch.ContactPlaneY, r.BattedBall.Position.Y, 1e-6, "contact at the contact plane when on time");
         }
 
         [Test]
@@ -126,7 +126,7 @@ namespace Pitchlab.Tests
         {
             // Crosses the contact plane but lands before 1 m behind the plate: a late swing must not hit the resting ball.
             var release = new BallState(0.0, new Vector3d(0.0, 3.0, 0.25), new Vector3d(0.0, -38.0, -3.0), Vector3d.Zero);
-            HittingPitch pitch = HittingPitch.Create(release, EnvironmentState.Standard, Params.ContactPlaneY);
+            HittingPitch pitch = HittingPitch.Create(release, EnvironmentState.Standard);
             Assert.IsTrue(pitch.ReachesContactPlane);
             Assert.AreEqual(FlightEnd.ReachedGround, pitch.Flight.End);
             double afterLanding = pitch.Flight.Final.Time + 0.002 - pitch.IdealContactTime;
@@ -217,7 +217,7 @@ namespace Pitchlab.Tests
             p.AttackAngle = 0.0;
             p.Friction = friction;
             var release = new BallState(0.0, new Vector3d(0.0, 18.0, 0.8), new Vector3d(0.0, -40.0, 0.0), Vector3d.Zero);
-            HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero), p.ContactPlaneY);
+            HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero));
             double centres = BallProperties.Baseball.Radius + p.BarrelRadius;
             ContactResult r = Swing(pitch, pciDz: -0.5 * centres, p: p);
 
@@ -243,7 +243,7 @@ namespace Pitchlab.Tests
             SwingParameters level = Params;
             level.AttackAngle = 0.0;
             var release = new BallState(0.0, new Vector3d(0.0, 18.0, 0.8), new Vector3d(0.0, -40.0, 0.0), Vector3d.Zero);
-            HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero), level.ContactPlaneY);
+            HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero));
             double previous = double.NegativeInfinity;
             for (int ms = -30; ms <= 30; ms += 2)
             {
@@ -306,6 +306,26 @@ namespace Pitchlab.Tests
                 if (!double.IsNaN(previous)) Assert.Less(Math.Abs(exit - previous), 0.05, $"jump at {i * 0.1} ms");
                 previous = exit;
             }
+        }
+
+        [Test]
+        public void ContactPlaneComesFromThePitch()
+        {
+            // The pitch is the single source of the contact plane: an on-time swing meets the ball on that plane, and the
+            // bat height follows the swing plane relative to it.
+            var release = new BallState(0.0, new Vector3d(0.0, 18.0, 0.8), new Vector3d(0.0, -40.0, 0.0), Vector3d.Zero);
+            var still = new EnvironmentState(0.0, 0.0, Vector3d.Zero);
+            HittingPitch near = HittingPitch.Create(release, still);
+            HittingPitch farther = HittingPitch.Create(release, still, HittingPitch.DefaultContactPlaneY + 0.3);
+            Assert.AreEqual(HittingPitch.DefaultContactPlaneY, near.ContactPlaneY);
+            ContactResult a = Swing(near);
+            ContactResult b = Swing(farther);
+            Assert.AreEqual(near.ContactPlaneY, a.BattedBall.Position.Y, 1e-9);
+            Assert.AreEqual(farther.ContactPlaneY, b.BattedBall.Position.Y, 1e-9);
+            Assert.AreEqual(a.LaunchAngleDegrees, b.LaunchAngleDegrees, 1e-9, "same geometry relative to each pitch's own plane");
+            Assert.Throws<ArgumentOutOfRangeException>(() => HittingPitch.Create(release, still, double.NaN));
+            Assert.Throws<ArgumentOutOfRangeException>(() => HittingPitch.Create(release, still, HittingPitch.StopBehindPlateY - 0.1), "behind the stop plane");
+            Assert.Throws<ArgumentOutOfRangeException>(() => HittingPitch.Create(release, still, release.Position.Y + 0.1), "beyond the release point");
         }
 
         [Test]

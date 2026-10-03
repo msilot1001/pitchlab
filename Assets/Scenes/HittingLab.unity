@@ -418,7 +418,6 @@ MonoBehaviour:
     BatSpeed: 32.18688
     AttackAngle: 0.17453292519943295
     SwingDuration: 0.15
-    ContactPlaneY: 0.6818
     BarrelRadius: 0.033146999999999996
     SweetSpotEfficiency: 0.21
     EfficiencyFalloffTip: 18.6000372000744

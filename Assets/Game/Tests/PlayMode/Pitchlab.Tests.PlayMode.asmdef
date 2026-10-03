@@ -4,6 +4,7 @@
     "references": [
         "Pitchlab.Simulation",
         "Pitchlab.Gameplay",
+        "Unity.InputSystem",
         "Pitchlab.Sandbox",
         "UnityEngine.TestRunner"
     ],
