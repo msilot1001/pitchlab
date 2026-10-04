@@ -125,7 +125,7 @@ namespace Pitchlab.Gameplay.Hitting
             // The bat's sweet spot travels along its swing plane, through the PCI point at the contact plane: early
             // contact happens further out front and, with an upward attack angle, higher. Offsets are measured in the
             // bat's frame (barrel axis, and perpendicular to barrel and swing).
-            var sweetSpot = new Vector3d(swing.PciX, ball.Position.Y, swing.PciZ + (ball.Position.Y - pitch.ContactPlaneY) * Math.Tan(p.AttackAngle));
+            Vector3d sweetSpot = SweetSpot(pitch, swing, p, ball.Position);
             Vector3d offset = ball.Position - sweetSpot;
             double alongBarrel = Vector3d.Dot(offset, barrelAxis);
             double vertical = Vector3d.Dot(offset, up);
@@ -169,6 +169,17 @@ namespace Pitchlab.Gameplay.Hitting
             var batted = new BallState(contactTime, ball.Position, outVelocity, spin);
             return new ContactResult(ContactOutcome.Contact, timingError, alongBarrel, vertical, q, batted);
         }
+
+        /// <summary>
+        /// Where the bat's sweet spot is at the swing's contact time (start + SwingDuration): on its swing plane through
+        /// the PCI at the contact plane, at the ball's depth then. Exactly the point the contact offsets are measured
+        /// from; presentation aims the visual bat here (hit or miss). Defined for any swing time within the pitch flight.
+        /// </summary>
+        public static Vector3d SweetSpotAtContact(HittingPitch pitch, SwingInput swing, SwingParameters p) =>
+            SweetSpot(pitch, swing, p, pitch.Flight.StateAt(swing.StartTime + p.SwingDuration).Position);
+
+        private static Vector3d SweetSpot(HittingPitch pitch, SwingInput swing, SwingParameters p, Vector3d ball) =>
+            new Vector3d(swing.PciX, ball.Y, swing.PciZ + (ball.Y - pitch.ContactPlaneY) * Math.Tan(p.AttackAngle));
 
         private static double Sq(double v) => v * v;
         private static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);

@@ -74,15 +74,25 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator PressDuringTheDeliveryIsAnEarlySwing()
+        public IEnumerator PressDuringTheWindupIsIgnored()
         {
+            // Wind-up policy B: a press before release can never connect (contact is ~0.4 s after release), so it is
+            // ignored instead of spending the pitch on a whiff; a later press still swings at this pitch.
             double now = Time.realtimeSinceStartupAsDouble + 100.0;
             _lab.Clock = () => now;
             _lab.PressSwingButton(now);                 // throw
             now += 0.5 * _lab.DeliveryLead;
-            _lab.PressSwingButton(now);                 // before release: swinging at nothing
-            Assert.AreEqual(ContactOutcome.MissTiming, _lab.LastResult.Value.Outcome);
-            Assert.Less(_lab.LastResult.Value.TimingError, 0.0, "early");
+            HittingPitch pitch = _lab.CurrentPitch;
+            int thrown = _lab.PitchesThrown;
+            _lab.PressSwingButton(now);                 // before release
+            Assert.IsFalse(_lab.LastSwing.HasValue);
+            Assert.IsFalse(_lab.LastResult.HasValue);
+            Assert.AreSame(pitch, _lab.CurrentPitch, "no re-throw");
+            Assert.AreEqual(thrown, _lab.PitchesThrown);
+            now += 0.5 * _lab.DeliveryLead + 0.2;
+            _lab.PressSwingButton(now);                 // after release
+            Assert.IsTrue(_lab.LastSwing.HasValue);
+            Assert.AreEqual(_lab.ToSimTime(now), _lab.LastSwing.Value.StartTime, 1e-12);
             yield return null;
         }
 

@@ -37,8 +37,10 @@ namespace Pitchlab.Sandbox
         private MotionClip _swingClip, _deliveryClip;
         private readonly MotionTimeline _deliveryTime = new MotionTimeline();
         private float _uStance, _uLaunch, _uContact, _uSwingEnd;
-        private Vector3 _gripShift;         // figure-frame hand shift that puts the bat on the contact point (or PCI)
-        private float _swingYaw, _finishTilt;
+        private SwingAdjustment _adjust;    // procedural deformation that puts the sweet spot on the contact point (or PCI)
+        private float _finishTilt, _targetResidual;
+        private Vector3 _target;            // world point the sweet spot aims at, at the contact time
+        private TrailRenderer _sweetTrail;  // debug: sweet-spot path
         private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
         // Last shown poses: a new pitch thrown before a figure has returned to its start blends from here (no snapping).
         private readonly MannequinPose _pitcherShown = new MannequinPose(), _batterShown = new MannequinPose();
@@ -56,6 +58,9 @@ namespace Pitchlab.Sandbox
         public PlayerMannequin Batter => _batter;
         public bool LandingShown => _landingShown;
         public bool ContactShown => _contactShown;
+        /// <summary>Deformation of the reference swing for the current swing, and the sweet spot's miss of its target at contact (m).</summary>
+        public SwingAdjustment SwingAdjustment => _adjust;
+        public float TargetResidual => _targetResidual;
         public TrailRenderer BallTrail => _trail;
 
         private void Awake()
@@ -81,6 +86,12 @@ namespace Pitchlab.Sandbox
             _batter.name = "Batter";
             _batter.Build();
             _sweetSpot = Equipment.AttachBat(_batter.BatAnchor);
+            _sweetTrail = _sweetSpot.gameObject.AddComponent<TrailRenderer>();
+            _sweetTrail.time = 0.4f;
+            _sweetTrail.widthMultiplier = 0.015f;
+            _sweetTrail.minVertexDistance = 0.01f;
+            _sweetTrail.sharedMaterial = PresentationMaterials.Get(new Color(1f, 0.85f, 0.2f), unlit: true);
+            _sweetTrail.emitting = false;
 
             var cues = new GameObject("ContactCue");
             cues.transform.SetParent(transform, false);
@@ -137,6 +148,9 @@ namespace Pitchlab.Sandbox
 
             AnimatePitcher(t);
             AnimateBatter(t);
+            bool swinging = _swing.HasValue && t >= _swing.Value.StartTime && t <= _swing.Value.StartTime + _lab.Swing.SwingDuration + 0.3;
+            _sweetTrail.emitting = _lab.DebugView && swinging;
+            if (!_lab.DebugView) _sweetTrail.Clear();
 
             // Before release the ball is in the pitcher's hand; from release on the controller renders the authoritative
             // trajectory (pitch, then batted ball).
@@ -176,8 +190,9 @@ namespace Pitchlab.Sandbox
             _swing = null;
             _contactShown = false;
             _landingShown = false;
-            _gripShift = Vector3.zero;
-            _swingYaw = _finishTilt = 0f;
+            _adjust = default;
+            _finishTilt = _targetResidual = 0f;
+            _sweetTrail.Clear();
             _banner = string.Empty;
             _landing.Hide();
             _cue.Hide();
@@ -237,8 +252,8 @@ namespace Pitchlab.Sandbox
             _batter.LeftHanded = left;
             // Stance position (Baseball Savant batter positioning, reference hitter 2024): hips 24.7 in behind the front of
             // the plate and 27.7 in off its inside edge; the figure faces the pitcher, plate on its right (mirrored for lefties).
-            float off = (float)Units.InchesToMeters(8.5 + 27.7);
-            _batterRoot = new Vector3(left ? off : -off, 0f, (float)(PitchingGeometry.PlateFrontY - Units.InchesToMeters(24.7)));
+            float off = (float)(PitchingGeometry.PlateHalfWidth + Units.InchesToMeters(ReferenceMotions.StanceOffPlateEdgeInches));
+            _batterRoot = new Vector3(left ? off : -off, 0f, (float)(PitchingGeometry.PlateFrontY - Units.InchesToMeters(ReferenceMotions.StanceBehindPlateFrontInches)));
             _batter.transform.SetPositionAndRotation(_batterRoot, Quaternion.identity);
         }
 
@@ -276,25 +291,26 @@ namespace Pitchlab.Sandbox
             // Presentation reflects the authoritative swing: timing turns the body (early = more open, pulled), the vertical
             // offset tilts the finish (undercut = higher, topped = lower).
             double timing = double.IsNaN(result.TimingError) ? 0.0 : result.TimingError;
-            _swingYaw = Mathf.Clamp((float)(timing * _lab.Swing.SprayRate * Mathf.Rad2Deg), -30f, 30f);   // early (−) opens the hips further
+            float swingYaw = Mathf.Clamp((float)(timing * _lab.Swing.SprayRate * Mathf.Rad2Deg), -30f, 30f);   // early (−) opens the hips further
             double vertical = double.IsNaN(result.VerticalOffset) ? 0.0 : result.VerticalOffset;
             _finishTilt = Mathf.Clamp((float)(vertical * 600.0), -20f, 20f);
 
-            // Where the bat should be at contact time: on the ball for a hit; where the player aimed (the PCI, at the contact
-            // plane) for a miss, so the bat visibly passes under, over or beside the ball. Reached by moving the hands (the
-            // feet stay planted), relative to the reference contact pose.
-            Vector3 target = SimulationSpace.ToUnity(result.IsContact ? result.BattedBall.Position : new Vector3d(swing.PciX, _pitch.ContactPlaneY, swing.PciZ));
+            // Where the sweet spot should be at contact time: where gameplay says it was — on the swing plane through the
+            // PCI, at the ball's depth then (ContactResolver.SweetSpotAtContact). A flush hit puts it on the ball, an
+            // off-barrel or under/over hit shows the offset, a miss passes where the player aimed; never snapped to the ball.
+            // Reached by a bounded deformation of the reference contact pose (feet stay planted; see SwingTargeting).
+            // Outside the timing window (MissTiming) the ball can be metres away; the bat then swings through the PCI at the
+            // contact plane.
+            Vector3 target = SimulationSpace.ToUnity(result.Outcome == ContactOutcome.MissTiming
+                ? new Vector3d(swing.PciX, _pitch.ContactPlaneY, swing.PciZ)
+                : ContactResolver.SweetSpotAtContact(_pitch, swing, _lab.Swing));
             _batter.transform.position = _batterRoot;
-            _swingClip.Sample(_uContact, _pose);
-            _pose.Pelvis.y += _swingYaw;
-            _pose.Chest.y += 0.5f * _swingYaw;   // exactly the pose shown at contact (see AnimateBatter)
-            _batter.ApplyPose(_pose);
-            _gripShift = Vector3.ClampMagnitude(_batter.WorldToFigure(target - _sweetSpot.position), 0.25f);
+            _target = target;
+            _adjust = SwingTargeting.Solve(_batter, _sweetSpot, _swingClip, _uContact, target, swingYaw, _pose, out _targetResidual);
         }
 
         private void AnimateBatter(double t)
         {
-            float weight = 0f;
             if (_pitch == null || double.IsNegativeInfinity(t))
             {
                 _swingClip.Sample(_uStance, _pose);
@@ -317,10 +333,9 @@ namespace Pitchlab.Sandbox
                     _swingClip.Sample(u, _pose);
                     // Timing turn and finish tilt fade in with the swing and out with the return to stance.
                     float back = t > c + 2.5 ? Ease((t - c - 2.5) / 1.0) : 0f;
-                    weight = (float)(t < c ? (t - s) / (c - s) : Math.Max(0.0, 1.0 - (t - c) / 0.5));
+                    float weight = (float)(t < c ? (t - s) / (c - s) : Math.Max(0.0, 1.0 - (t - c) / 0.5));
                     float turn = (t < c ? weight : 1f) * (1f - back);
-                    _pose.Pelvis.y += _swingYaw * turn;
-                    _pose.Chest.y += 0.5f * _swingYaw * turn;
+                    SwingTargeting.Apply(_adjust, Mathf.SmoothStep(0f, 1f, weight), turn, _pose);
                     if (t > c) _pose.GripDirection = Quaternion.AngleAxis(-_finishTilt * Mathf.Clamp01((float)(t - c) / 0.3f) * (1f - back), Vector3.right) * _pose.GripDirection;
                     if (back > 0f)
                     {
@@ -330,7 +345,6 @@ namespace Pitchlab.Sandbox
                 }
             }
 
-            _pose.GripPoint += _gripShift * Mathf.SmoothStep(0f, 1f, weight);
             if (_batterTransition && !double.IsNegativeInfinity(t)) Transition(_batterFrom, t, 0.35);
             _batter.transform.position = _batterRoot;
             _batter.ApplyPose(_pose);
@@ -376,6 +390,15 @@ namespace Pitchlab.Sandbox
 
         private void OnGUI()
         {
+            if (_lab.DebugView && _swing.HasValue)
+            {
+                // Debug (T): where the visual bat aims (contact point on a hit, the PCI on a miss) and how close it gets.
+                GUI.Label(new Rect(Screen.width - 430f, 10f, 420f, 60f),
+                    $"Visual target ({_target.x:+0.000;-0.000}, {_target.y:0.000}, {_target.z:0.000}) world m\n" +
+                    $"Sweet spot at contact: {_targetResidual * 100f:0.0} cm off   turn {_adjust.BodyYaw:+0;-0}°  barrel {_adjust.BatYaw:+0;-0}°/{_adjust.BatPitch:+0;-0}°  hands {_adjust.HandShift.magnitude * 100f:0} cm",
+                    GUI.skin.box);
+            }
+
             if (string.IsNullOrEmpty(_banner)) return;
             _bannerStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
             GUI.Label(new Rect(0f, Screen.height - 70f, Screen.width, 40f), _banner, _bannerStyle);

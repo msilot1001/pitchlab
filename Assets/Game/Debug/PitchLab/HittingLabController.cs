@@ -6,6 +6,7 @@ using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Pitching;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 namespace Pitchlab.Sandbox
 {
@@ -18,12 +19,15 @@ namespace Pitchlab.Sandbox
     /// Controls: Space / gamepad South = throw (when idle) or swing (during a pitch); WASD / left stick = move PCI;
     /// Left/Right or D-pad = previous/next pitch type; 1/2 = playback speed 1×/0.5×; T = trajectory lines; H = panel.
     /// A throw press starts the pitcher's delivery; the authoritative release follows <see cref="DeliveryLead"/> later
-    /// (presentation fits the wind-up into that time). A press during the delivery is an (early) swing.
+    /// (presentation fits the wind-up into that time). Swing input is accepted from the release on; a press during the
+    /// wind-up is ignored (it could never make contact, and ignoring it removes an accidental-whiff trap).
+    /// Mouse: left click = throw/swing; mouse movement aims (relative deltas, timestamped per input event, exactly like
+    /// the stick/keys). The first click into the game captures the cursor; Escape releases it.
     /// </summary>
     public sealed class HittingLabController : MonoBehaviour
     {
         private const double PciSpeed = 1.2; // m/s at full stick / key
-        private const double PciMinX = -0.6, PciMaxX = 0.6, PciMinZ = 0.2, PciMaxZ = 1.4;
+        private static readonly PciFrame Pci = PciFrame.Default;
 
         [SerializeField] private SwingParameters _swing = SwingParameters.Default;
         [SerializeField, Range(0.1f, 1f)] private float _playbackSpeed = 1f;
@@ -31,6 +35,11 @@ namespace Pitchlab.Sandbox
         [SerializeField, Min(0.5f)] private float _deliveryLead = 1.1f;
         [SerializeField] private bool _showDebugPaths;
         [SerializeField] private bool _showPanel = true;
+        [Header("Mouse aim")]
+        /// <summary>Normalized PCI units per mouse count (the PCI spans 2 units across).</summary>
+        [SerializeField, Range(0.0005f, 0.02f)] private float _mouseSensitivity = 0.004f;
+        /// <summary>Clicks first capture the cursor (normal play). Off for scripted input (tests).</summary>
+        [SerializeField] private bool _requireMouseCapture = true;
 
         [Header("Scene references")]
         [SerializeField] private Transform _ball;
@@ -38,13 +47,16 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Transform _plate;
         [SerializeField] private LineRenderer _strikeZone;
         [SerializeField] private LineRenderer _pci;
+        private LineRenderer _pciRange;
+        private bool _mergingWasDisabled;
         [SerializeField] private Transform _contactMarker;
         [SerializeField] private LineRenderer _exitRay;
         [SerializeField] private LineRenderer _pitchPath;
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction, _pathsAction, _panelAction;
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction, _pathsAction, _panelAction,
+            _clickAction, _releaseCursorAction;
         private int _presetIndex;
         private PciTrack _pciTrack;
         private double _pitchStartRealtime = double.NaN;
@@ -81,7 +93,27 @@ namespace Pitchlab.Sandbox
         public double ToSimTime(double realtime) => double.IsNaN(_pitchStartRealtime) ? 0.0 : (realtime - _pitchStartRealtime) * _pitchPlaybackSpeed;
 
         /// <summary>PCI position at a moment on the real-time clock (exact, from timestamped aim input).</summary>
-        public (double X, double Z) PciAt(double realtime) => _pciTrack.PositionAt(realtime);
+        public (double X, double Z) PciAt(double realtime)
+        {
+            (double u, double v) = _pciTrack.PositionAt(realtime);
+            return Pci.ToMeters(u, v);
+        }
+
+        /// <summary>Normalized PCI (<see cref="PciFrame"/>) at a moment on the shared real-time clock.</summary>
+        public (double U, double V) PciNormalizedAt(double realtime) => _pciTrack.PositionAt(realtime);
+
+        public PciFrame PciArea => Pci;
+
+        /// <summary>Mouse sensitivity (normalized PCI units per mouse count).</summary>
+        public float MouseSensitivity { get => _mouseSensitivity; set => _mouseSensitivity = value; }
+
+        /// <summary>Whether clicks must first capture the cursor (normal play) before they throw or swing.</summary>
+        public bool RequireMouseCapture { get => _requireMouseCapture; set => _requireMouseCapture = value; }
+
+        public bool MouseCaptured => Cursor.lockState == CursorLockMode.Locked;
+
+        /// <summary>Debug view (T): paths, contact marker, PCI range and the contact overlay.</summary>
+        public bool DebugView => _showDebugPaths;
 
         private void Awake()
         {
@@ -93,8 +125,13 @@ namespace Pitchlab.Sandbox
                 return;
             }
 
-            _pciTrack = new PciTrack(PciMinX, PciMaxX, PciMinZ, PciMaxZ, Clock(), 0.0,
-                0.5 * (PitchingGeometry.DefaultZoneBottom + PitchingGeometry.DefaultZoneTop));
+            _pciRange = Instantiate(_pci, _pci.transform.parent);
+            _pciRange.name = "PciRange";
+            _pciRange.widthMultiplier = 0.5f * _pci.widthMultiplier;
+            _pciRange.enabled = false;
+
+            (double u0, double v0) = Pci.ToNormalized(0.0, 0.5 * (PitchingGeometry.DefaultZoneBottom + PitchingGeometry.DefaultZoneTop));
+            _pciTrack = new PciTrack(-1.0, 1.0, -1.0, 1.0, Clock(), u0, v0);
 
             _swingAction = new InputAction("Swing", InputActionType.Button);
             _swingAction.AddBinding("<Keyboard>/space");
@@ -115,6 +152,43 @@ namespace Pitchlab.Sandbox
             _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
             _pathsAction = Button("<Keyboard>/t", null, _ => SetDebugPaths(!_showDebugPaths));
             _panelAction = Button("<Keyboard>/h", null, _ => _showPanel = !_showPanel);
+            _clickAction = Button("<Mouse>/leftButton", null, context =>
+            {
+                if (_requireMouseCapture && !MouseCaptured)
+                {
+                    // The capturing click never throws; but during a live pitch (the lock was lost mid at-bat) it still swings.
+                    CaptureMouse();
+                    if (!PitchLive(context.time)) return;
+                }
+
+                PressSwingButton(context.time);
+            });
+            _releaseCursorAction = Button("<Keyboard>/escape", null, _ => ReleaseMouse());
+        }
+
+        private static void CaptureMouse()
+        {
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
+
+        private static void ReleaseMouse()
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+        }
+
+        /// <summary>
+        /// Mouse aim: every mouse state event's delta moves the PCI at that event's timestamp (exact, frame-independent,
+        /// like the stick's timestamped velocity). Read per event, not per frame, so frames never decide the path.
+        /// </summary>
+        private void OnInputEvent(InputEventPtr eventPtr, InputDevice device)
+        {
+            if (!(device is Mouse mouse) || _pciTrack == null) return;
+            if (_requireMouseCapture && !MouseCaptured) return;
+            if (!eventPtr.IsA<StateEvent>() && !eventPtr.IsA<DeltaStateEvent>()) return;
+            if (!mouse.delta.ReadValueFromEvent(eventPtr, out Vector2 delta) || delta == Vector2.zero) return;
+            _pciTrack.Move(eventPtr.time, delta.x * _mouseSensitivity, delta.y * _mouseSensitivity);
         }
 
         private static InputAction Button(string binding, string secondBinding, Action<InputAction.CallbackContext> onPress)
@@ -135,6 +209,16 @@ namespace Pitchlab.Sandbox
             _slowSpeedAction?.Enable();
             _pathsAction?.Enable();
             _panelAction?.Enable();
+            _clickAction?.Enable();
+            _releaseCursorAction?.Enable();
+            if (_pciTrack == null) return;
+            InputSystem.onEvent += OnInputEvent;
+            // The Input System merges consecutive mouse events within an update and keeps the later timestamp; with it
+            // on, a click took the next mouse report's time (3 ms late in HittingInputFrameRateTests) and aim deltas
+            // shift in time. Timing and aim are read per event here, so every event must keep its own timestamp.
+            // Global setting: restored in OnDisable.
+            _mergingWasDisabled = InputSystem.settings.disableRedundantEventsMerging;
+            InputSystem.settings.disableRedundantEventsMerging = true;
         }
 
         private void OnDisable()
@@ -147,6 +231,11 @@ namespace Pitchlab.Sandbox
             _slowSpeedAction?.Disable();
             _pathsAction?.Disable();
             _panelAction?.Disable();
+            _clickAction?.Disable();
+            _releaseCursorAction?.Disable();
+            InputSystem.onEvent -= OnInputEvent;
+            if (_pciTrack != null) InputSystem.settings.disableRedundantEventsMerging = _mergingWasDisabled;
+            ReleaseMouse();
         }
 
         private void OnDestroy()
@@ -159,6 +248,8 @@ namespace Pitchlab.Sandbox
             _slowSpeedAction?.Dispose();
             _pathsAction?.Dispose();
             _panelAction?.Dispose();
+            _clickAction?.Dispose();
+            _releaseCursorAction?.Dispose();
         }
 
         private void Start()
@@ -190,8 +281,12 @@ namespace Pitchlab.Sandbox
             _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 
-        /// <summary>Places the PCI at the current clock time, keeping any aim motion (debug/test entry point, not input).</summary>
-        public void SetPci(double x, double z) => _pciTrack.Place(Clock(), x, z);
+        /// <summary>Places the PCI (contact-plane metres) at the current clock time, keeping any aim motion (debug/test entry point).</summary>
+        public void SetPci(double x, double z)
+        {
+            (double u, double v) = Pci.ToNormalized(x, z);
+            _pciTrack.Place(Clock(), u, v);
+        }
 
         /// <summary>
         /// Swing that started at simulation time <paramref name="startTime"/> (s after release), with the PCI where it was
@@ -211,17 +306,20 @@ namespace Pitchlab.Sandbox
 
         /// <summary>
         /// The swing button at real time <paramref name="eventRealtime"/> (the input event's timestamp): throws when no
-        /// pitch is live (released at that moment), otherwise swings at exactly that moment with the PCI where it was
-        /// then, however many frames have passed since.
+        /// pitch is live (released <see cref="DeliveryLead"/> later), ignores presses during the wind-up, otherwise swings
+        /// at exactly that moment with the PCI where it was then, however many frames have passed since.
         /// </summary>
+        private bool PitchLive(double realtime) => CurrentPitch != null && !_swung && ToSimTime(realtime) < CurrentPitch.Flight.Duration;
+
         public void PressSwingButton(double eventRealtime)
         {
-            if (CurrentPitch == null || _swung || ToSimTime(eventRealtime) >= CurrentPitch.Flight.Duration)
+            if (!PitchLive(eventRealtime))
             {
                 ThrowPitch(_presetIndex, eventRealtime + _deliveryLead / _playbackSpeed);
                 return;
             }
 
+            if (ToSimTime(eventRealtime) < 0.0) return;   // wind-up: no swing before the ball is released
             SwingAtSimTime(ToSimTime(eventRealtime));
         }
 
@@ -231,7 +329,7 @@ namespace Pitchlab.Sandbox
         private void OnAim(InputAction.CallbackContext context)
         {
             Vector2 aim = context.ReadValue<Vector2>();
-            _pciTrack.SetVelocity(context.time, aim.x * PciSpeed, aim.y * PciSpeed);
+            _pciTrack.SetVelocity(context.time, aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
         }
 
         private void Update() => FrameUpdate(Clock());
@@ -297,18 +395,36 @@ namespace Pitchlab.Sandbox
 
         private void DrawPci(double now)
         {
-            // PCI drawn at the contact plane: width = barrel contact range, height = bat–ball centre distance.
+            // PCI drawn at the contact plane: width = barrel contact range, height = bat–ball centre distance, with a
+            // centre cross (one polyline; retraced edges are invisible): the aim point the swing resolves against.
             (double x, double z) = PciAt(now);
             double hx = _swing.BarrelHalfLength;
             double hz = BallProperties.Baseball.Radius + _swing.BarrelRadius;
             double y = CurrentPitch?.ContactPlaneY ?? HittingPitch.DefaultContactPlaneY;
-            _pci.loop = true;
-            _pci.positionCount = 4;
-            _pci.SetPosition(0, SimulationSpace.ToUnity(new Vector3d(x - hx, y, z - hz)));
-            _pci.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(x + hx, y, z - hz)));
-            _pci.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(x + hx, y, z + hz)));
-            _pci.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(x - hx, y, z + hz)));
+            Vector3 P(double dx, double dz) => SimulationSpace.ToUnity(new Vector3d(x + dx * hx, y, z + dz * hz));
+            _pci.loop = false;
+            _pci.positionCount = PciOutline.Length;
+            for (int i = 0; i < PciOutline.Length; i++) _pci.SetPosition(i, P(PciOutline[i].x, PciOutline[i].y));
+
+            // Debug (T): the area the PCI can move in.
+            _pciRange.enabled = _showDebugPaths;
+            if (!_showDebugPaths) return;
+            (double x0, double z0) = Pci.ToMeters(-1.0, -1.0);
+            (double x1, double z1) = Pci.ToMeters(1.0, 1.0);
+            _pciRange.loop = true;
+            _pciRange.positionCount = 4;
+            _pciRange.SetPosition(0, SimulationSpace.ToUnity(new Vector3d(x0, y, z0)));
+            _pciRange.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(x1, y, z0)));
+            _pciRange.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(x1, y, z1)));
+            _pciRange.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(x0, y, z1)));
         }
+
+        // Box corners and centre cross in half-extent units: ML TL TR BR BL ML MR BR BM TM.
+        private static readonly Vector2[] PciOutline =
+        {
+            new Vector2(-1, 0), new Vector2(-1, 1), new Vector2(1, 1), new Vector2(1, -1), new Vector2(-1, -1),
+            new Vector2(-1, 0), new Vector2(1, 0), new Vector2(1, -1), new Vector2(0, -1), new Vector2(0, 1),
+        };
 
         private void SetPath(LineRenderer line, TrajectoryResult trajectory)
         {
@@ -340,6 +456,25 @@ namespace Pitchlab.Sandbox
             _ball.position = SimulationSpace.ToUnity(Presets[0].ToInitialState().Position);
         }
 
+        /// <summary>Contact debug overlay: the one PCI conversion chain and the resolved contact.</summary>
+        private string DebugOverlay()
+        {
+            double now = Clock();
+            (double u, double v) = PciNormalizedAt(now);
+            (double x, double z) = PciAt(now);
+            string text = $"PCI now: normalized ({u:+0.000;-0.000}, {v:+0.000;-0.000}) → contact plane ({x:+0.000;-0.000}, {z:0.000}) m";
+            if (LastSwing is SwingInput swing && LastResult is ContactResult r && CurrentPitch != null)
+            {
+                (double su, double sv) = Pci.ToNormalized(swing.PciX, swing.PciZ);
+                var ball = CurrentPitch.Flight.StateAt(swing.StartTime + _swing.SwingDuration).Position;
+                text += $"\nSwing @ {swing.StartTime:0.0000} s: PCI ({su:+0.000;-0.000}, {sv:+0.000;-0.000}) = ({swing.PciX:+0.000;-0.000}, {swing.PciZ:0.000}) m" +
+                        $"\nBall at contact time ({ball.X:+0.000;-0.000}, {ball.Y:0.000}, {ball.Z:0.000}) m   timing {(double.IsNaN(r.TimingError) ? "-" : $"{r.TimingError * 1000.0:+0.0;-0.0} ms")}" +
+                        (r.IsContact ? $"\nContact point ({r.BattedBall.Position.X:+0.000;-0.000}, {r.BattedBall.Position.Y:0.000}, {r.BattedBall.Position.Z:0.000}) m" : $"\nMiss: {r.Outcome}");
+            }
+
+            return text;
+        }
+
         private void OnGUI()
         {
             if (!_showPanel)
@@ -348,10 +483,12 @@ namespace Pitchlab.Sandbox
                 return;
             }
 
-            GUILayout.BeginArea(new Rect(10, 10, 440, 175), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(10, 10, 440, _showDebugPaths ? 290 : 175), GUI.skin.box);
             GUILayout.Label($"Pitch: {Presets[_presetIndex].Label}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
             GUILayout.Label(_readout);
-            GUILayout.Label("Space/A throw·swing  WASD/stick PCI  ←/→ pitch  1/2 speed  T paths  H panel");
+            GUILayout.Label((_requireMouseCapture && !MouseCaptured ? "Click to capture the mouse.  " : "Mouse PCI · click throw/swing · Esc release.  ") +
+                            "Space/A throw·swing  WASD/stick PCI  ←/→ pitch  1/2 speed  T debug  H panel");
+            if (_showDebugPaths) GUILayout.Label(DebugOverlay());
             GUILayout.EndArea();
         }
     }

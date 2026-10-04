@@ -23,6 +23,10 @@ namespace Pitchlab.Presentation
         private static readonly Vector3 FrontStance = new Vector3(0.02f, PlayerMannequin.AnkleHeight, 0.37f);
         private static readonly Vector3 FrontPlant = new Vector3(0.07f, PlayerMannequin.AnkleHeight, 0.62f);
 
+        /// <summary>Stance position (Baseball Savant batter positioning, reference hitter 2024; MEASURED): hips this far
+        /// behind the front of the plate and off its inside edge (inches).</summary>
+        public const float StanceBehindPlateFrontInches = 24.7f, StanceOffPlateEdgeInches = 27.7f;
+
         // ---- Bat-path constraints (Baseball Savant bat tracking, MLB reference hitter, 2024 season averages; MEASURED).
         public const float RefBatSpeedMph = 68.93f, RefSwingLengthFeet = 6.91f, RefSwingPathTilt = 34.0f, RefAttackAngle = 8.86f;
         /// <summary>Attack direction, + = toward first base (opposite field for a right-handed hitter). Savant: −4.18° with

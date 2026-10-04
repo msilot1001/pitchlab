@@ -96,11 +96,61 @@ Times run from −1.1 s to +1.0 s relative to release: foot plant at −0.15 s, 
   - Stands at the measured stance position. The reference contact point then falls on the gameplay contact plane: (0.92, 0.78, 0.88) in the batter frame is (0.00, 0.78, 0.68) in world space; the plane is at 0.682.
   - Before the swing, the clip follows the expected contact time and holds at launch-ready.
   - When the player swings (at s, from the authoritative swing time), launch → contact maps onto [s, s + SwingDuration], starting from wherever the pre-swing motion was.
-  - Hitting a different contact point, or the aim point on a miss, moves the hands, not the feet: up to 0.25 m, ramping in over the swing.
+  - Hitting a different contact point, or the aim point on a miss, deforms the reference swing (TASK-004.6B-1, see *Procedural swing targeting*). The feet stay planted and the root never moves.
 - **Swing path tilt ≠ `VerticalBatAngle`.**
   - Statcast swing path tilt is the angle of the sweet spot's *path plane* over the last 40 ms (34°).
   - `SwingParameters.VerticalBatAngle` (32°, TASK-004.5) is the *bat's own* tilt at contact. It is a collision parameter that tilts the line of centres.
   - They are related but not the same quantity. Neither one was changed to fit the other, and gameplay (ContactResolver, e_x, r_x, VBA) is untouched.
+
+## Procedural swing targeting (TASK-004.6B-1)
+FinalSwing = reference swing + a bounded deformation (`SwingTargeting`, presentation only). It is solved once per swing and ramps in over launch → contact.
+
+- **Target.** Gameplay's sweet spot at the contact time, from `ContactResolver.SweetSpotAtContact`: on the swing plane through the PCI, at the ball's depth then. The visual follows from this:
+  - a flush hit puts the bat on the ball;
+  - an off-barrel or under/over hit shows the offset;
+  - a miss passes where the player aimed;
+  - a swing outside the timing window aims at the PCI on the contact plane.
+- **Parameters, figure frame, with bounds:**
+
+  | Parameter | Bounds |
+  |---|---|
+  | Barrel azimuth | ±60° |
+  | Barrel elevation | −45°/+25° |
+  | Hand shift | ≤ 0.4 m (soft limit 0.35 m) |
+  | Side bend | −25°/+20° |
+  | Trunk flexion | −12°/+22° |
+  | Hip drop | −0.15/+0.03 m (knees bend) |
+  | Hip lean toward the plate | ±0.1 m |
+
+  The timing turn (SprayRate × timing error, clamped to ±30°) is fixed, not solved.
+- **Solver.** A damped least-squares fit: finite-difference Jacobian, at most 20 iterations, stopping early once no step improves. It weighs:
+  - the sweet-spot error;
+  - hands on the bat (6×);
+  - planted ankles on their targets (6×);
+  - a small preference for the undeformed reference.
+
+  Limb IK cannot overreach, so an unreachable grip, or a hip shift the legs cannot follow, shows up as a gap and is penalised. Cost: about 2 ms once per swing (Editor, Apple Silicon).
+- **Measured reach** (`SwingTargetingTests`; the targets are the strike zone ±1 ball):
+  - **Within ±10 ms** of timing (contact up to 0.4 m out front or deep), the visual sweet spot is within 5 cm of the target, except:
+    - early and low or away: ≤ 7 cm;
+    - the low-away corner (plate x ≥ +0.125 m, knee height): ≤ 9 cm on time or late, ≤ 14 cm early.
+  - **Beyond reach:** at ±20 ms gameplay contact is about 0.8 m out front or deep, and 1.4 m at the ±35 ms window edge. That is beyond what a planted batter can reach. The bat closes more than half the gap at ±20 ms and about 45 % at the edge.
+  - The timing windows are gameplay and were not changed; a contact-depth model would be a gameplay decision.
+- **Invariants checked under deformation** (PCI-area corners, ±35 ms):
+  - feet planted (< 1 cm);
+  - top hand within 6 cm of the grip;
+  - bottom hand within 15 cm;
+  - elbows ≥ 20°, and no NaN;
+  - hands and bat outside a 12 cm torso core;
+  - zero weight gives the reference swing exactly.
+- **PlayMode check.** Every preset × timing −34/−20/−10/0/+10/+20/+34 ms, against gameplay's sweet spot:
+  - within ±10 ms: < 5 cm;
+  - ±20 ms: < 20 cm;
+  - ±34 ms: < 90 cm (measured 0.5–0.8 m; contact there is about 1.4 m from the stance hips).
+
+  Further checks:
+  - an off-barrel hit shows the offset;
+  - misses (early, on time, late) aim at the PCI and are never snapped to the ball.
 
 ## Bat-path validation
 Measured with `SwingPathMetrics` on the visual bat's sweet spot (1 ms samples, launch −0.15 s to contact). Tolerances were set before final tuning: bat speed ±10 %, swing length ±15 %, attack angle ±4°, attack direction ±6°, tilt ±6°.
@@ -127,7 +177,7 @@ The test `ReferenceMotionTests.PresentationBatPathMatchesTheStatcastReference` g
 - Knees never bend backward, elbows never fold through themselves (≥ 20°), and no joint position is NaN.
 - No joint moves more than 5 cm per 1 ms of game time.
 - Left-handed mirroring is exact.
-- PlayMode: the visual bat's sweet spot is within 3 cm of the authoritative contact point at the contact time, and the pitcher's ball is within 5 cm of the release point at release.
+- PlayMode: the visual bat's sweet spot is within 3 cm of the authoritative contact point at the contact time (on time, PCI on the ball), and the pitcher's ball is within 5 cm of the release point at release. Targeting checks: see *Procedural swing targeting*.
 
 ## Transitions
 These are not reference motion. They avoid snapping between pitches.

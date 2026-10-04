@@ -76,5 +76,69 @@ namespace Pitchlab.Tests
             track.SetVelocity(10.1, 0.0, 0.0);          // older timestamp: applied at 10.2
             Assert.AreEqual(0.0, track.PositionAt(10.5).X, 1e-12);
         }
+
+        [Test]
+        public void MouseDisplacementsApplyAtTheirTimestamps()
+        {
+            PciTrack track = Track();
+            track.Move(10.10, 0.05, 0.0);
+            track.Move(10.20, 0.05, -0.02);
+            track.Move(10.30, -0.03, 0.0);
+            Assert.AreEqual(0.0, track.PositionAt(10.09).X, 1e-12, "before the first delta");
+            Assert.AreEqual(0.05, track.PositionAt(10.15).X, 1e-12);
+            (double x, double z) = track.PositionAt(10.25);
+            Assert.AreEqual(0.10, x, 1e-12);
+            Assert.AreEqual(0.78, z, 1e-12);
+            Assert.AreEqual(0.07, track.PositionAt(10.40).X, 1e-12);
+        }
+
+        [Test]
+        public void MouseDisplacementsClampAtTheEdgeAndComeStraightBack()
+        {
+            PciTrack track = Track();
+            track.Move(10.1, 5.0, 0.0);                 // far past the edge
+            Assert.AreEqual(0.6, track.PositionAt(10.1).X, 1e-12);
+            track.Move(10.2, -0.1, 0.0);                // no "debt" to work off at the edge
+            Assert.AreEqual(0.5, track.PositionAt(10.2).X, 1e-12);
+        }
+
+        [Test]
+        public void MouseDisplacementsCombineWithVelocity()
+        {
+            PciTrack track = Track();
+            track.SetVelocity(10.0, 1.0, 0.0);
+            track.Move(10.1, 0.0, 0.1);
+            (double x, double z) = track.PositionAt(10.2);
+            Assert.AreEqual(0.2, x, 1e-12);
+            Assert.AreEqual(0.9, z, 1e-12);
+        }
+    }
+
+    public class PciFrameTests
+    {
+        [Test]
+        public void NormalizedPciMapsToTheContactPlaneWithDocumentedAxes()
+        {
+            PciFrame f = PciFrame.Default;
+            (double x, double z) = f.ToMeters(0.0, 0.0);
+            Assert.AreEqual(f.CenterX, x, 1e-12);
+            Assert.AreEqual(f.CenterZ, z, 1e-12);
+            Assert.Greater(f.ToMeters(1.0, 0.0).X, f.CenterX, "+u is toward first base (+X)");
+            Assert.Greater(f.ToMeters(0.0, 1.0).Z, f.CenterZ, "+v is up");
+            Assert.AreEqual(f.CenterX + f.HalfWidth, f.ToMeters(1.0, 0.0).X, 1e-12);
+            Assert.AreEqual(f.CenterZ - f.HalfHeight, f.ToMeters(0.0, -1.0).Z, 1e-12);
+        }
+
+        [Test]
+        public void RoundTripsAndClampsToTheArea()
+        {
+            PciFrame f = PciFrame.Default;
+            (double u, double v) = f.ToNormalized(f.ToMeters(0.3, -0.7).X, f.ToMeters(0.3, -0.7).Z);
+            Assert.AreEqual(0.3, u, 1e-12);
+            Assert.AreEqual(-0.7, v, 1e-12);
+            Assert.AreEqual(f.ToMeters(1.0, 1.0), f.ToMeters(4.0, 9.0));
+            Assert.AreEqual((-1.0, 1.0), f.ToNormalized(-10.0, 10.0));
+            Assert.Catch<ArgumentException>(() => new PciFrame(0.0, 0.0, 0.0, 1.0));
+        }
     }
 }

@@ -3,6 +3,8 @@ using NUnit.Framework;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
+using Pitchlab.Simulation.Core;
+using Pitchlab.Simulation.Pitching;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
@@ -130,6 +132,88 @@ namespace Pitchlab.Tests
             Assert.IsFalse(_landing.Visible);
             Assert.IsFalse(_camera.IsFollowing);
             Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(_lab.CurrentPitch.Flight.Final.Position), _lab.BallTransform.position), 1e-4f, "rests where the pitch ended");
+        }
+
+        private Transform SweetSpot()
+        {
+            foreach (Transform t in _view.Batter.GetComponentsInChildren<Transform>()) if (t.name == "SweetSpot") return t;
+            return null;
+        }
+
+        /// <summary>Where gameplay puts the bat's sweet spot at contact time (the visual target), Unity frame.</summary>
+        private Vector3 GameplaySweetSpot() =>
+            SimulationSpace.ToUnity(ContactResolver.SweetSpotAtContact(_lab.CurrentPitch, _lab.LastSwing.Value, _lab.Swing));
+
+        [UnityTest]
+        public IEnumerator VisualBatMeetsTheBallForEveryPresetAndTiming()
+        {
+            // Pitch locations differ per preset (high/low, inside/outside); timing across the whole hit window (±35 ms)
+            // moves contact out front or deep (≈ 1.4 m at the edge) and turns the body. Within ±10 ms the visual sweet spot
+            // is on gameplay's; beyond, contact is out of a planted batter's reach (Docs/MOTION_REFERENCE.md) and the bounds
+            // are the measured values plus margin (EditMode TargetsBeyondReach checks the relative closure).
+            yield return null;
+            var log = new System.Text.StringBuilder();
+            var failures = new System.Text.StringBuilder();
+            for (int preset = 0; preset < PitchPresets.All.Length; preset++)
+                foreach (double timing in new[] { -0.034, -0.02, -0.01, 0.0, 0.01, 0.02, 0.034 })
+                {
+                    _release = _now + _lab.DeliveryLead;
+                    _lab.ThrowPitch(preset, _release);
+                    At(-0.2);
+                    HittingPitch pitch = _lab.CurrentPitch;
+                    var ball = pitch.Flight.StateAt(pitch.IdealContactTime + timing).Position;
+                    _lab.SetPci(ball.X, ball.Z);
+                    double start = pitch.IdealContactTime - _lab.Swing.SwingDuration + timing;
+                    ContactResult result = _lab.SwingAtSimTime(start);
+                    At(start + _lab.Swing.SwingDuration);
+                    float error = Vector3.Distance(GameplaySweetSpot(), SweetSpot().position);
+                    log.AppendLine($"{PitchPresets.All[preset].Label} {timing * 1000:+0;-0} ms {result.Outcome}: visual error {error * 100f:0.0} cm");
+                    float bound = System.Math.Abs(timing) <= 0.0101 ? 0.05f : System.Math.Abs(timing) <= 0.0201 ? 0.2f : 0.9f;
+                    if (error > bound) failures.AppendLine($"preset {preset}, timing {timing}: {error:0.000} > {bound}");
+                    At(start + _lab.Swing.SwingDuration + 5.0);
+                    _now += 1.0;
+                }
+
+            TestContext.WriteLine(log.ToString());
+            Assert.IsEmpty(failures.ToString(), "visual bat on gameplay's sweet spot");
+        }
+
+        [UnityTest]
+        public IEnumerator OffBarrelHitShowsTheOffset()
+        {
+            // A hit 8 cm toward the barrel's end: the sweet spot is shown 8 cm from the ball, not on it.
+            yield return null;
+            HittingPitch pitch = _lab.CurrentPitch;
+            var ball = pitch.IdealContactState.Position;
+            _lab.SetPci(ball.X - 0.08, ball.Z);
+            double start = pitch.IdealContactTime - _lab.Swing.SwingDuration;
+            ContactResult result = _lab.SwingAtSimTime(start);
+            Assert.IsTrue(result.IsContact);
+            At(start + _lab.Swing.SwingDuration);
+            Vector3 sweet = SweetSpot().position;
+            Assert.Less(Vector3.Distance(GameplaySweetSpot(), sweet), 0.05f, "visual sweet spot where gameplay's was");
+            Assert.Greater(Vector3.Distance(SimulationSpace.ToUnity(result.BattedBall.Position), sweet), 0.05f, "not snapped onto the ball");
+        }
+
+        [UnityTest]
+        public IEnumerator MissAimsWhereThePlayerAimedNotAtTheBall([Values(-0.02, 0.0, 0.02)] double timing)
+        {
+            yield return null;
+            HittingPitch pitch = _lab.CurrentPitch;
+            var ball = pitch.Flight.StateAt(pitch.IdealContactTime + timing).Position;
+            _lab.SetPci(ball.X + 0.12, ball.Z - 0.35);  // under and outside (out front the attack angle raises the bat ~0.14 m)
+            double start = pitch.IdealContactTime - _lab.Swing.SwingDuration + timing;
+            ContactResult result = _lab.SwingAtSimTime(start);
+            Assert.IsFalse(result.IsContact);
+            At(start + _lab.Swing.SwingDuration);
+            Vector3 sweet = SweetSpot().position;
+            Vector3 ballAtContact = SimulationSpace.ToUnity(ball);
+            // On time the bat reaches the aim; ±20 ms out front / deep it approaches it (beyond reach, as for hits).
+            Vector3 aim = GameplaySweetSpot();
+            Assert.Less(Vector3.Distance(aim, sweet), timing == 0.0 ? 0.05f : 0.3f, "bat where the player aimed (at the ball's depth)");
+            Assert.Less(Vector3.Distance(aim, sweet), Vector3.Distance(ballAtContact, sweet), "nearer the aim than the ball");
+            Assert.Greater(Vector3.Distance(ballAtContact, sweet), 0.15f, "not snapped to the ball");
+            Assert.Less(sweet.y, ballAtContact.y - 0.1f, "visibly under it");
         }
     }
 }
