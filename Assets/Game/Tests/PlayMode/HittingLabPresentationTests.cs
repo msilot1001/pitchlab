@@ -4,6 +4,7 @@ using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
 using Pitchlab.Simulation.Core;
+using Pitchlab.Simulation.Field;
 using Pitchlab.Simulation.Pitching;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -36,6 +37,7 @@ namespace Pitchlab.Tests
             _camera = Object.FindFirstObjectByType<BaseballCamera>();
             Assert.AreEqual(0, _view.GetComponentsInChildren<Collider>(true).Length, "presentation objects never collide");
             Assert.AreEqual(0, _lab.BallTransform.GetComponentsInChildren<Collider>(true).Length);
+            Assert.AreEqual(0, _lab.BallTransform.GetComponentsInChildren<Rigidbody>(true).Length, "no Rigidbody: the simulation is authoritative");
             bool right = _lab.Swing.Side == BatterSide.Right;
             Assert.AreEqual(!right, _view.Batter.LeftHanded);
             Assert.AreEqual(right, _view.Batter.transform.position.x < 0f, "right-handed batter on the third-base side");
@@ -101,10 +103,16 @@ namespace Pitchlab.Tests
             Assert.Less(Vector3.Distance(batted, _lab.BallTransform.position), 1e-4f, "ball on the batted-ball trajectory");
             Assert.IsTrue(_camera.IsFollowing);
             Assert.IsFalse(_landing.Visible);
-            At(_lab.LastBattedBall.Flight.Final.Time + 0.1);
+            BallEvent landing = _lab.LastPlay.FirstGroundContact.Value;
+            At(landing.Time + 0.1);
             Assert.IsTrue(_landing.Visible);
-            Vector3 rest = _lab.BallTransform.position;
-            Assert.Less(new Vector2(rest.x - _landing.transform.position.x, rest.z - _landing.transform.position.z).magnitude, 0.05f, "marker where the ball landed");
+            Vector3 landed = SimulationSpace.ToUnity(landing.Before.Position);
+            Assert.Less(new Vector2(landed.x - _landing.transform.position.x, landed.z - _landing.transform.position.z).magnitude, 0.05f, "marker where the ball first landed");
+            Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(_lab.LastPlay.StateAt(_lab.RenderedSimTime).Position), _lab.BallTransform.position), 1e-4f, "bouncing on the ball-in-play trajectory");
+            At(_lab.LastPlay.EndTime + 1.0);
+            Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(_lab.LastPlay.Final.Position), _lab.BallTransform.position), 1e-4f, "rests where the play ended");
+            Assert.IsTrue(_camera.IsFollowing, "the camera stays on the ball to rest");
+            Assert.IsFalse(_view.BallTrail.emitting, "no trail once at rest");
 
             _lab.PressSwingButton(_now);                  // next pitch: presentation resets
             _release = _now + _lab.DeliveryLead;
@@ -214,6 +222,82 @@ namespace Pitchlab.Tests
             Assert.Less(Vector3.Distance(aim, sweet), Vector3.Distance(ballAtContact, sweet), "nearer the aim than the ball");
             Assert.Greater(Vector3.Distance(ballAtContact, sweet), 0.15f, "not snapped to the ball");
             Assert.Less(sweet.y, ballAtContact.y - 0.1f, "visibly under it");
+        }
+
+        /// <summary>Hit the current pitch flush (same PCI and swing time every call) and return the contact time.</summary>
+        private double HitFlush()
+        {
+            HittingPitch pitch = _lab.CurrentPitch;
+            _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z - 0.015);
+            double start = pitch.IdealContactTime - _lab.Swing.SwingDuration;
+            Assert.IsTrue(_lab.SwingAtSimTime(start).IsContact);
+            return start + _lab.Swing.SwingDuration;
+        }
+
+        [UnityTest]
+        public IEnumerator BallInPlayRenderingIsIndependentOfFrameCadence()
+        {
+            // The same hit shown by jumping to T, or by rendering every 1/30 s or 1/240 s up to T: identical ball, landing
+            // marker and phase flags (one-way presentation flags must not depend on which frames happened).
+            yield return null;
+            var results = new System.Collections.Generic.List<(Vector3 Ball, bool Landed, Vector3 Marker)>();
+            foreach (double step in new[] { 0.0, 1.0 / 30.0, 1.0 / 240.0 })
+            {
+                _release = _now + _lab.DeliveryLead;
+                _lab.ThrowPitch(0, _release);
+                At(-0.2);
+                double contact = HitFlush();
+                BallInPlay play = _lab.LastPlay;
+                // No real-time leak: the shown play is exactly the simulation of the authoritative batted ball.
+                BallInPlay fresh = BallInPlaySimulation.Run(_lab.LastResult.Value.BattedBall, _lab.Environment, HittingLabController.Field);
+                Assert.AreEqual(fresh.EndTime, play.EndTime, 0.0);
+                Assert.AreEqual(fresh.Final.Position, play.Final.Position);
+                double target = play.FirstGroundContact.Value.Time + 0.3;
+                if (step > 0.0)
+                    for (double t = contact; t < target; t += step) At(t);
+                At(target);
+                results.Add((_lab.BallTransform.position, _landing.Visible, _landing.transform.position));
+                _now += 30.0;
+            }
+
+            for (int i = 1; i < results.Count; i++)
+            {
+                Assert.Less(Vector3.Distance(results[0].Ball, results[i].Ball), 1e-5f, $"ball, cadence {i}");
+                Assert.AreEqual(results[0].Landed, results[i].Landed, $"landing shown, cadence {i}");
+                Assert.Less(Vector3.Distance(results[0].Marker, results[i].Marker), 1e-5f, $"marker, cadence {i}");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator OutfieldWallAndTrackAreDrawnFromTheSimulationLayout()
+        {
+            yield return null;
+            FieldLayout field = HittingLabController.Field;
+            MeshFilter wall = null, track = null;
+            foreach (MeshFilter f in _view.GetComponentsInChildren<MeshFilter>())
+            {
+                if (f.name == "OutfieldWall") wall = f;
+                if (f.name == "WarningTrack") track = f;
+            }
+
+            Assert.IsNotNull(wall);
+            Assert.IsNotNull(track);
+            Assert.AreEqual((float)field.WallHeight, wall.sharedMesh.bounds.max.y, 1e-4f, "wall height");
+            var vertices = new System.Collections.Generic.List<Vector3>(wall.sharedMesh.vertices);
+            for (int i = 0; i < FieldLayout.FencePointCount; i++)
+            {
+                Vector3 p = SimulationSpace.ToUnity(field.FencePoint(i));
+                Assert.IsTrue(vertices.Exists(v => Vector3.Distance(_view.transform.TransformPoint(v), p) < 1e-3f), $"fence point {i} on the wall's base");
+            }
+
+            // Every track vertex lies in the band the simulation calls warning track: from the fence face inward by its width
+            // (1 m slack for the quads' overlap at the alley corners, where segments meet at an angle).
+            foreach (Vector3 v in track.sharedMesh.vertices)
+            {
+                Vector3 w = _view.transform.TransformPoint(v);
+                double beyond = field.DistanceBeyondFence(w.x, w.z, out _);
+                Assert.That(beyond, Is.InRange(-FieldLayout.WarningTrackWidth - 1.0, 0.01), $"track vertex {w}");
+            }
         }
     }
 }

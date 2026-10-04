@@ -362,8 +362,10 @@ namespace Pitchlab.Tests
                 Assert.AreEqual(reference.Result.TimingError, o.Result.TimingError, 1e-9, $"{name}: timing error");
                 Assert.AreEqual(reference.Result.OffsetAlongBarrel, o.Result.OffsetAlongBarrel, 1e-9, $"{name}: barrel offset");
                 Assert.AreEqual(reference.Result.VerticalOffset, o.Result.VerticalOffset, 1e-9, $"{name}: vertical offset");
-                Assert.AreEqual(0.0, (reference.Result.BattedBall.Velocity - o.Result.BattedBall.Velocity).Length, 1e-9, $"{name}: exit velocity");
-                Assert.AreEqual(0.0, (reference.Result.BattedBall.Spin - o.Result.BattedBall.Spin).Length, 1e-6, $"{name}: spin");
+                // Times are differences of absolute wall-clock timestamps (rounding ≈ 1e-13 s after hours of uptime), which the
+                // contact solve amplifies ~10³×; any frame dependence would be ≥ mm/s.
+                Assert.AreEqual(0.0, (reference.Result.BattedBall.Velocity - o.Result.BattedBall.Velocity).Length, 1e-7, $"{name}: exit velocity");
+                Assert.AreEqual(0.0, (reference.Result.BattedBall.Spin - o.Result.BattedBall.Spin).Length, 1e-5, $"{name}: spin");
             }
         }
 

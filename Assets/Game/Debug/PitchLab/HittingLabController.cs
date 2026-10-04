@@ -3,6 +3,7 @@ using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Simulation.Batting;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
+using Pitchlab.Simulation.Field;
 using Pitchlab.Simulation.Pitching;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -76,6 +77,9 @@ namespace Pitchlab.Sandbox
         public ContactResult? LastResult { get; private set; }
         /// <summary>Flight of the last batted ball (first landing), or null after a miss.</summary>
         public BattedBallResult LastBattedBall { get; private set; }
+        /// <summary>The batted ball played out on the field (bounces, roll, wall, rest); what the ball shows after contact.</summary>
+        public BallInPlay LastPlay { get; private set; }
+        public static readonly FieldLayout Field = FieldLayout.Standard;
         public SwingInput? LastSwing { get; private set; }
         public int PitchesThrown { get; private set; }
         public SwingParameters Swing => _swing;
@@ -272,6 +276,7 @@ namespace Pitchlab.Sandbox
             LastResult = null;
             LastSwing = null;
             LastBattedBall = null;
+            LastPlay = null;
             ResultSummary = string.Empty;
             PitchesThrown++;
             _pitchPath.enabled = false;
@@ -343,9 +348,10 @@ namespace Pitchlab.Sandbox
 
             double t = ToSimTime(now);
             RenderedSimTime = t;
-            // Authoritative samples only: the pitch, then (after contact) the batted ball until it lands and rests there.
-            TrajectoryResult flight = LastBattedBall != null && t >= LastBattedBall.Flight.First.Time ? LastBattedBall.Flight : CurrentPitch.Flight;
-            _ball.position = SimulationSpace.ToUnity(flight.StateAt(t).Position);
+            // Authoritative samples only: the pitch, then (after contact) the ball in play until it rests or leaves play.
+            _ball.position = SimulationSpace.ToUnity(LastPlay != null && t >= LastPlay.First.Time
+                ? LastPlay.StateAt(t).Position
+                : CurrentPitch.Flight.StateAt(t).Position);
         }
 
         private void ShowResult(ContactResult r)
@@ -355,7 +361,10 @@ namespace Pitchlab.Sandbox
             if (r.IsContact)
             {
                 LastBattedBall = BattedBallSimulation.Run(r.BattedBall, Environment);
+                LastPlay = BallInPlaySimulation.Run(r.BattedBall, Environment, Field);
                 BattedBallMetrics flight = LastBattedBall.Metrics;
+                // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.
+                double carry = LastPlay.ReachedFenceInTheAir ? flight.Distance : LastPlay.CarryDistance;
                 BattedBallLaunch launch = BattedBallLaunch.FromState(r.BattedBall);
                 _readout =
                     $"{_pitchLabel}  timing {timing}\n" +
@@ -363,13 +372,14 @@ namespace Pitchlab.Sandbox
                     $"Exit velocity {Units.MetersPerSecondToMph(r.ExitSpeed):0.0} mph   launch {r.LaunchAngleDegrees:+0;-0}°   spray {r.SprayAngleDegrees:+0;-0}° (+ = RF)\n" +
                     $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm (back {launch.BackspinRpm:0}, side {launch.SidespinRpm:+0;-0}, + = curves to RF)   q {r.CollisionEfficiency:0.00}" +
                     (Math.Abs(r.SprayAngleDegrees) > 45.0 ? "   FOUL" : "") +
-                    $"\nFlight: {Units.MetersToFeet(flight.Distance):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft";
+                    $"\nFlight: carry {Units.MetersToFeet(carry):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft" +
+                    (LastPlay.ClearedFence ? "   over the fence" : $", final {Units.MetersToFeet(LastPlay.FinalDistance):0} ft at {LastPlay.EndTime - LastPlay.First.Time:0.0} s");
                 Vector3 contact = SimulationSpace.ToUnity(r.BattedBall.Position);
                 _contactMarker.position = contact;
                 _contactMarker.gameObject.SetActive(_showDebugPaths);
-                SetPath(_exitRay, LastBattedBall.Flight);
+                SetPath(_exitRay, LastBattedBall.Flight);   // debug: the airborne flight (ground play is shown by the ball)
                 _exitRay.enabled = _showDebugPaths;
-                ResultSummary = $"{Units.MetersPerSecondToMph(r.ExitSpeed):0} mph · {r.LaunchAngleDegrees:0}° · {Units.MetersToFeet(flight.Distance):0} ft";
+                ResultSummary = $"{Units.MetersPerSecondToMph(r.ExitSpeed):0} mph · {r.LaunchAngleDegrees:0}° · {Units.MetersToFeet(carry):0} ft";
             }
             else
             {

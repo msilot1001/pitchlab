@@ -4,6 +4,7 @@ using Pitchlab.Presentation;
 using Pitchlab.Simulation.Batting;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
+using Pitchlab.Simulation.Field;
 using Pitchlab.Simulation.Pitching;
 using UnityEngine;
 
@@ -132,6 +133,7 @@ namespace Pitchlab.Sandbox
 
             PlacePitcher(PitchPresets.All[0].ToInitialState().Position);   // idle: the pitcher waits in the set position
             PlaceBatter();
+            BuildOutfield(HittingLabController.Field);
             ResetForPitch(null);
         }
 
@@ -157,14 +159,16 @@ namespace Pitchlab.Sandbox
             bool held = _pitch == null || t < 0.0;
             Transform ball = _lab.BallTransform;
             if (held) ball.position = _pitcher.BallAnchor.position;
-            _trail.emitting = !held && !_landingShown;
+            BallInPlay inPlay = _lab.LastPlay;
+            bool moving = inPlay == null || t < inPlay.EndTime;
+            _trail.emitting = !held && moving;
             // Keep the ball a few pixels wide however far it flies (centre stays on the authoritative trajectory).
             float distance = Vector3.Distance(_view.transform.position, ball.position);
             float d = Mathf.Max(_ballDiameter, 0.005f * distance * _view.fieldOfView / 30f);
             ball.localScale = new Vector3(d, d, d);
             _trail.widthMultiplier = 0.8f * d;
             _trail.time = _contactShown ? 0.6f : 0.18f;
-            bool shadow = _contactShown && !_landingShown && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;
+            bool shadow = _contactShown && ball.position.y > 0.15f && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;   // airborne only
             _shadow.gameObject.SetActive(shadow);
             if (shadow)
             {
@@ -175,8 +179,8 @@ namespace Pitchlab.Sandbox
             if (_lab.LastResult is ContactResult r && r.IsContact)
             {
                 if (!_contactShown && t >= r.BattedBall.Time) ShowContact(r);
-                BattedBallResult flight = _lab.LastBattedBall;
-                if (!_landingShown && flight != null && flight.Metrics.Landed && t >= flight.Flight.Final.Time) ShowLanding(flight);
+                BallInPlay play = _lab.LastPlay;
+                if (!_landingShown && play?.FirstGroundContact is BallEvent landing && t >= landing.Time) ShowLanding(play, landing);
             }
             else if (_lab.LastResult.HasValue && _swing.HasValue && t >= _swing.Value.StartTime + _lab.Swing.SwingDuration)
             {
@@ -245,6 +249,51 @@ namespace Pitchlab.Sandbox
 
         /// <summary>Release fit (presentation only): figure-frame correction of the release wrist target.</summary>
         public Vector3 ReleaseFitOffset { get; private set; }
+
+        /// <summary>
+        /// Warning track and outfield wall drawn from the simulation's field layout (Docs/SURFACE_PHYSICS.md), so what the
+        /// ball bounces off is what the player sees. Visual only: no colliders.
+        /// </summary>
+        private void BuildOutfield(FieldLayout field)
+        {
+            var track = new Mesh { name = "WarningTrack" };
+            var wall = new Mesh { name = "OutfieldWall" };
+            var trackVertices = new System.Collections.Generic.List<Vector3>();
+            var wallVertices = new System.Collections.Generic.List<Vector3>();
+            var trackTriangles = new System.Collections.Generic.List<int>();
+            var wallTriangles = new System.Collections.Generic.List<int>();
+            float height = (float)field.WallHeight, width = (float)FieldLayout.WarningTrackWidth;
+            for (int i = 0; i + 1 < FieldLayout.FencePointCount; i++)
+            {
+                Vector3 a = SimulationSpace.ToUnity(field.FencePoint(i)), b = SimulationSpace.ToUnity(field.FencePoint(i + 1));
+                Vector3 inward = Vector3.Cross(Vector3.up, (b - a).normalized);
+                if (Vector3.Dot(inward, -a) < 0f) inward = -inward;
+                AddQuad(trackVertices, trackTriangles, a + 0.006f * Vector3.up, b + 0.006f * Vector3.up, b + inward * width + 0.006f * Vector3.up, a + inward * width + 0.006f * Vector3.up);
+                AddQuad(wallVertices, wallTriangles, a, b, b + height * Vector3.up, a + height * Vector3.up);
+            }
+
+            Finish(track, trackVertices, trackTriangles, "WarningTrack", new Color(0.47f, 0.32f, 0.22f));
+            Finish(wall, wallVertices, wallTriangles, "OutfieldWall", new Color(0.12f, 0.25f, 0.18f));
+
+            void AddQuad(System.Collections.Generic.List<Vector3> v, System.Collections.Generic.List<int> t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
+            {
+                int k = v.Count;
+                v.Add(p0); v.Add(p1); v.Add(p2); v.Add(p3);
+                // Both faces (the wall is seen from the field, the track from above).
+                t.AddRange(new[] { k, k + 2, k + 1, k, k + 3, k + 2, k, k + 1, k + 2, k, k + 2, k + 3 });
+            }
+
+            void Finish(Mesh mesh, System.Collections.Generic.List<Vector3> v, System.Collections.Generic.List<int> t, string name, Color color)
+            {
+                mesh.SetVertices(v);
+                mesh.SetTriangles(t, 0);
+                mesh.RecalculateNormals();
+                var go = new GameObject(name);
+                go.transform.SetParent(transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                go.AddComponent<MeshRenderer>().sharedMaterial = PresentationMaterials.Get(color, unlit: true);   // flat: double-sided faces have no useful normals
+            }
+        }
 
         private void PlaceBatter()
         {
@@ -378,12 +427,13 @@ namespace Pitchlab.Sandbox
             _banner = _lab.ResultSummary;
         }
 
-        private void ShowLanding(BattedBallResult flight)
+        private void ShowLanding(BallInPlay play, BallEvent landing)
         {
             _landingShown = true;
-            BattedBallMetrics m = flight.Metrics;
-            Vector3 point = SimulationSpace.ToUnity(new Vector3d(m.LandingX, m.LandingY, 0.0));
-            _landing.Show(point, $"{Units.MetersToFeet(m.Distance):0} ft", _view);
+            Vector3d p = landing.Before.Position;
+            Vector3 point = SimulationSpace.ToUnity(new Vector3d(p.X, p.Y, 0.0));
+            double carry = play.ReachedFenceInTheAir ? _lab.LastBattedBall.Metrics.Distance : play.CarryDistance;
+            _landing.Show(point, $"{Units.MetersToFeet(carry):0} ft", _view);
         }
 
         private static float Ease(double u) => Mathf.SmoothStep(0f, 1f, (float)Math.Max(0.0, Math.Min(1.0, u)));

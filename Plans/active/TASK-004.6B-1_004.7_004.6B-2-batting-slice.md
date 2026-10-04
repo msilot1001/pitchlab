@@ -98,7 +98,81 @@ Device-independent aim and swing, with the mouse as the primary input. The PCI i
 ---
 
 ## Milestone 2: TASK-004.7, ball–surface interaction
-Not started. Research is done (physics-researcher). Notes are kept in this session's scratchpad and become `Docs/SURFACE_PHYSICS.md`.
+
+### Goal
+Batted balls play out on the field after their first landing: bounce, skip, slide, roll, rest and outfield-wall impacts. The model is event-driven and deterministic, uses sourced or fitted coefficients, and does not touch the airborne model.
+
+### Relevant files
+- **Simulation:** `Assets/Game/Simulation/Field/`
+  - `SurfaceImpact` (impulse model);
+  - `BallSurfaceProperties` (coefficients);
+  - `FieldLayout` (surfaces and fence);
+  - `BallInPlay` / `BallInPlaySimulation` (phases, events, queries).
+- **Sandbox:**
+  - `HittingLabController` (`LastPlay` drives the ball after contact; carry and final distance in the readout);
+  - `HittingLabPresentation` (landing marker at the first ground contact, trail and shadow through bounces, warning track and wall meshes from the layout);
+  - `BattedBallLabController` (ball-in-play path; carry/final/rest readout; fence drawn; chopper, wall-ball, home-run and gap-roller scenarios).
+- **Tests:**
+  - EditMode `BallSurfaceTests.cs`: SurfaceImpactTests, FieldLayoutTests, BallInPlayTests;
+  - PlayMode `BattedBallLabSceneTests.ScenariosPlayOutOnTheField`;
+  - PlayMode `HittingLabPresentationTests` (landing, bounce on the trajectory, rest, camera stays on the ball).
+- **Docs:** `Docs/SURFACE_PHYSICS.md`.
+
+### Status
+- [x] Research (two physics-researcher runs): impact model, Pennbounce data, rolling evidence.
+- [x] Impulse model, surfaces, layout, event-driven play with queries; carry is bit-identical to the airborne-only flight.
+- [x] Integration in HittingLab and BattedBallLab; the camera follows to rest; the wall and warning track are visible.
+- [x] Game View: a foul chopper, and a fair grounder through the infield, rolling to rest with the camera following.
+- [x] **physics-reviewer.** Fixed:
+  - *Plow over-spin (HIGH):* the plow now applies before friction, so it never reverses and never over-spins.
+  - *Rolling drag (HIGH):* about 2× too high; now F/((1+α)m) with the spin-free C_D.
+  - *κ(v):* clamped to the measured 31–40.2 m/s.
+  - *e_n:* labelled ASSUMED, with κ refit.
+  - *Wall balls:* show the projected distance (`ReachedFenceInTheAir`).
+  - *Docs:* synced with the code.
+- [x] **test-reviewer.** Added:
+  - grass roll against the closed form;
+  - the dirt → grass transition mid-roll;
+  - the wall-height ±5 mm boundary;
+  - foul ground behind the fence line (which exposed a real phantom-wall bug; now guarded);
+  - the time guard;
+  - topspin vs backspin (which exposed a real inconsistency: turf b·v resistance now also applies while sliding);
+  - queries vs events;
+  - roll-out bands;
+  - energy never increasing;
+  - ground speed never rising after the last bounce;
+  - frame-cadence independence of the rendered play;
+  - `LastPlay` equal to a fresh simulation;
+  - no Rigidbody;
+  - outfield meshes against the layout;
+  - scenario distances.
+- [x] `Scripts/check.sh`; commit `feat: simulate bounces rolling and field-surface interaction`.
+
+### Discoveries
+- **Speed dependence in Pennbounce.** A speed-independent rigid impulse model cannot match Pennbounce at both 31 and 40 m/s: grass loses relatively more at speed, dirt less. A plow coefficient linear in impact speed (clamped to the measured 25–45 m/s), fitted per surface, gives RMS 0.007 (dirt) and 0.017 (grass).
+- **Rolling.** A constant rolling deceleration let hard grounders roll 330+ ft. Research found the measured form for turf is a(v) = a₀ + b·v. There are no baseball roll-out data; the values are ASSUMED (football-scaled) and documented as the weakest part.
+- **The slide → roll instant.** It is located exactly inside the 1 ms step; the slip falls linearly. Before that fix the snap came up to 1 ms late and the rolling distance was 1.3 cm short.
+- **Foul territory.** The fence's end segments extended into foul territory; walls now stand only between the poles.
+
+### Decisions
+- The ground phase uses explicit 1 ms steps, with exact event location for slide → roll and an analytic stop.
+- The airborne stretches reuse `BallFlightSimulator.Simulate` unchanged. Wall crossings are located by bisection on partial RK4 steps, as for other events.
+- The fence is generic (330/375/400 ft, 8 ft). The mound is flat for ground physics, and there is no backstop (documented).
+- Carry is the first ground contact. Over the fence, the displayed distance is the airborne-only projected landing, as Statcast does.
+
+### Verification (004.7)
+- **`Scripts/check.sh`:**
+  - whitespace OK;
+  - EditMode 369 total, 363 passed, 0 failed (6 explicit/ignored; includes the not-yet-committed B-2 FairFoul and state-machine tests);
+  - PlayMode 28/28.
+- **Suites:**
+  - SurfaceImpactTests 15;
+  - FieldLayoutTests 2;
+  - BallInPlayTests 23;
+  - BattedBallLabSceneTests 2;
+  - HittingLabPresentationTests 11.
+- **HittingInputFrameRateTests tolerance.** The exit-velocity and spin tolerances are now 1e-7 / 1e-5, up from 1e-9 / 1e-6. Swing times are differences of absolute wall-clock timestamps, which round to about 1e-13 s after hours of Editor uptime; the solve amplifies that about 10³×, and a 144 fps run hit 1.9e-9 m/s. Swing time and PCI stay at 1e-9. A frame dependence would show as at least mm/s.
+- **Game View:** a foul chopper; a fair grounder through the infield to rest near the track, with the camera following; wall and track visible.
 
 ## Milestone 3: TASK-004.6B-2, batting UX, fair/foul, loop polish
 Not started.

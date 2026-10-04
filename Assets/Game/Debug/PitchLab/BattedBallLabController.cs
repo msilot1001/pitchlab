@@ -2,6 +2,7 @@ using System;
 using Pitchlab.Simulation.Batting;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
+using Pitchlab.Simulation.Field;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -9,8 +10,9 @@ namespace Pitchlab.Sandbox
 {
     /// <summary>
     /// Batted-Ball Physics Sandbox: launch a batted ball from exit speed, launch angle, spray and spin, fly it with the
-    /// shared simulator (<see cref="AerodynamicModel.BattedBall"/>) to its first landing, and show the flight and its
-    /// metrics. No fielders, walls or bounces. Controls: panel; Space / gamepad South = relaunch; C / North = camera.
+    /// shared simulator (<see cref="AerodynamicModel.BattedBall"/>) and play it out on the field (<see cref="BallInPlaySimulation"/>:
+    /// bounces, sliding, rolling, the outfield wall, rest). Shows the path and carry (first landing) vs final distance. No
+    /// fielders. Controls: panel; Space / gamepad South = relaunch; C / North = camera.
     /// </summary>
     public sealed class BattedBallLabController : MonoBehaviour
     {
@@ -20,7 +22,13 @@ namespace Pitchlab.Sandbox
             ("Line drive", new BattedBallLaunch(100.0, 14.0, 10.0, 700.0)),
             ("Fly ball", new BattedBallLaunch(95.0, 30.0, -5.0, 2300.0)),
             ("Deep fly ball", new BattedBallLaunch(108.0, 28.0, -20.0, 2100.0)),
+            ("Chopper", new BattedBallLaunch(60.0, -20.0, 5.0, -800.0)),
+            ("Off the wall", new BattedBallLaunch(105.0, 14.0, 0.0, 1500.0)),
+            ("Home run", new BattedBallLaunch(112.0, 28.0, 0.0, 2300.0)),
+            ("Gap roller", new BattedBallLaunch(100.0, 2.0, -25.0, 600.0)),
         };
+
+        private static readonly FieldLayout Field = FieldLayout.Standard;
 
         [SerializeField] private double _exitSpeedMph = 100.0;
         [SerializeField] private double _launchAngle = 28.0;
@@ -44,6 +52,8 @@ namespace Pitchlab.Sandbox
         private string _readout = string.Empty;
 
         public BattedBallResult LastFlight { get; private set; }
+        /// <summary>The same launch played out on the field: bounces, roll, wall, rest.</summary>
+        public BallInPlay LastPlay { get; private set; }
         public static readonly Vector3d ContactPoint = new Vector3d(0.0, 0.7, 0.9);
 
         public BattedBallLaunch CurrentLaunch => new BattedBallLaunch(_exitSpeedMph, _launchAngle, _sprayAngle, _backspinRpm, _sidespinRpm);
@@ -80,26 +90,39 @@ namespace Pitchlab.Sandbox
 
         public void Launch()
         {
-            LastFlight = BattedBallSimulation.Run(CurrentLaunch.ToState(ContactPoint), Environment);
-            int count = LastFlight.Flight.Samples.Count;
+            BallState contact = CurrentLaunch.ToState(ContactPoint);
+            LastFlight = BattedBallSimulation.Run(contact, Environment);
+            LastPlay = BallInPlaySimulation.Run(contact, Environment, Field);
+            // Path: the whole play, sampled every 20 ms plus every event point.
+            int count = (int)(LastPlay.EndTime / 0.02) + 2;
             if (_pathBuffer.Length < count) _pathBuffer = new Vector3[count];
-            for (int i = 0; i < count; i++) _pathBuffer[i] = SimulationSpace.ToUnity(LastFlight.Flight.Samples[i].Position);
+            for (int i = 0; i < count; i++) _pathBuffer[i] = SimulationSpace.ToUnity(LastPlay.StateAt(Math.Min(i * 0.02, LastPlay.EndTime)).Position);
             _flightPath.positionCount = count;
             _flightPath.SetPositions(_pathBuffer);
-            _landingMarker.position = SimulationSpace.ToUnity(LastFlight.Flight.Final.Position);
+            BallEvent? first = LastPlay.FirstGroundContact;
+            _landingMarker.position = SimulationSpace.ToUnity(first?.Before.Position ?? LastPlay.Final.Position);
             _launchRealtime = Time.realtimeSinceStartupAsDouble;
 
             BattedBallMetrics m = LastFlight.Metrics;
             string kind = m.LaunchAngleDegrees < 10.0 ? "ground ball" : m.LaunchAngleDegrees < 25.0 ? "line drive" : m.LaunchAngleDegrees < 50.0 ? "fly ball" : "pop-up";
+            int bounces = 0, walls = 0;
+            foreach (BallEvent e in LastPlay.Events)
+            {
+                if (e.Kind == BallEventKind.GroundImpact) bounces++;
+                if (e.Kind == BallEventKind.WallImpact) walls++;
+            }
+
+            string end = LastPlay.EndPhase == BallPhase.OutOfPlay ? "over the fence" : LastPlay.EndPhase == BallPhase.Rest
+                ? $"rests on {Field.SurfaceAt(LastPlay.Final.Position.X, LastPlay.Final.Position.Y)}" : "still moving at the time limit";
             _readout =
                 $"EV {Units.MetersPerSecondToMph(m.ExitSpeed):0.0} mph   launch {m.LaunchAngleDegrees:+0;-0}°   spray {m.SprayAngleDegrees:+0;-0}° (+ = RF)   ({kind})\n" +
                 $"Spin {Units.RadiansPerSecondToRpm(m.SpinRate):0} rpm   air density {Environment.AirDensity:0.000} kg/m³\n" +
                 (m.Landed
-                    ? $"Distance {Units.MetersToFeet(m.Distance):0} ft   hang time {m.HangTime:0.00} s   apex {Units.MetersToFeet(m.ApexHeight):0} ft\n" +
-                      $"Landing x {Units.MetersToFeet(m.LandingX):+0;-0} ft, y {Units.MetersToFeet(m.LandingY):0} ft" +
-                      (Math.Abs(Math.Atan2(m.LandingX, m.LandingY)) > Math.PI / 4.0 ? "   FOUL" : "")
+                    ? $"Carry {Units.MetersToFeet(LastPlay.CarryDistance):0} ft (airborne-only {Units.MetersToFeet(m.Distance):0} ft)   hang {m.HangTime:0.00} s   apex {Units.MetersToFeet(m.ApexHeight):0} ft\n" +
+                      $"Final {Units.MetersToFeet(LastPlay.FinalDistance):0} ft after {LastPlay.EndTime:0.0} s: {bounces} bounces, {walls} wall, {end}" +
+                      (FieldLayout.IsFair(m.LandingX, m.LandingY) ? "" : "   FOUL (landing)")
                     : "Still in the air at the time limit") +
-                "\nFlight model matches 2024 Statcast with average spin incl. sidespin; presets have no sidespin and carry further (Docs/VALIDATION_TASK004.md).";
+                "\nFlight model matches 2024 Statcast with average spin incl. sidespin; presets have no sidespin and carry further (Docs/VALIDATION_TASK004.md). Ground play: Docs/SURFACE_PHYSICS.md.";
         }
 
         private void Update()
@@ -113,9 +136,9 @@ namespace Pitchlab.Sandbox
                 ApplyCamera();
             }
 
-            if (LastFlight == null) return;
+            if (LastPlay == null) return;
             double t = Time.realtimeSinceStartupAsDouble - _launchRealtime;
-            _ball.position = SimulationSpace.ToUnity(LastFlight.Flight.StateAt(LastFlight.Flight.First.Time + t).Position);
+            _ball.position = SimulationSpace.ToUnity(LastPlay.StateAt(LastPlay.First.Time + t).Position);
         }
 
         private void ApplyCamera()
@@ -141,18 +164,21 @@ namespace Pitchlab.Sandbox
             _foulLines.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(0.0, 0.0, 0.02)));
             _foulLines.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(line * Math.Sqrt(0.5), line * Math.Sqrt(0.5), 0.02)));
 
+            // The 300 ft arc, then the outfield fence (simulation layout, drawn at wall height) walked back from right to left.
             const int segments = 24;
-            _distanceArcs.positionCount = 2 * (segments + 1);
+            _distanceArcs.positionCount = segments + 1 + FieldLayout.FencePointCount;
             int k = 0;
-            foreach (double feet in new[] { 300.0, 400.0 })
+            double r = Units.FeetToMeters(300.0);
+            for (int i = 0; i <= segments; i++)
             {
-                double r = Units.FeetToMeters(feet);
-                for (int i = 0; i <= segments; i++)
-                {
-                    int index = feet < 350.0 ? i : segments - i;   // walk the second arc backwards so the line zig-zags cleanly
-                    double angle = -Math.PI / 4.0 + (Math.PI / 2.0) * index / segments;
-                    _distanceArcs.SetPosition(k++, SimulationSpace.ToUnity(new Vector3d(r * Math.Sin(angle), r * Math.Cos(angle), 0.02)));
-                }
+                double angle = -Math.PI / 4.0 + (Math.PI / 2.0) * i / segments;
+                _distanceArcs.SetPosition(k++, SimulationSpace.ToUnity(new Vector3d(r * Math.Sin(angle), r * Math.Cos(angle), 0.02)));
+            }
+
+            for (int i = FieldLayout.FencePointCount - 1; i >= 0; i--)
+            {
+                Vector3d f = Field.FencePoint(i);
+                _distanceArcs.SetPosition(k++, SimulationSpace.ToUnity(new Vector3d(f.X, f.Y, Field.WallHeight)));
             }
 
             float d = (float)(2.0 * BallProperties.Baseball.Radius) * 8f;   // drawn 8× larger to be visible at field scale
@@ -163,10 +189,13 @@ namespace Pitchlab.Sandbox
         {
             GUILayout.BeginArea(new Rect(10, 10, 380, Screen.height - 20), GUI.skin.box);
             GUILayout.Label("BattedBallLab");
-            GUILayout.BeginHorizontal();
-            for (int i = 0; i < Presets.Length; i++)
-                if (GUILayout.Button(Presets[i].Name)) ApplyPreset(i);
-            GUILayout.EndHorizontal();
+            for (int row = 0; row < Presets.Length; row += 4)
+            {
+                GUILayout.BeginHorizontal();
+                for (int i = row; i < Math.Min(row + 4, Presets.Length); i++)
+                    if (GUILayout.Button(Presets[i].Name)) ApplyPreset(i);
+                GUILayout.EndHorizontal();
+            }
             bool changed = false;
             changed |= Slider("Exit speed (mph)", ref _exitSpeedMph, 40, 120);
             changed |= Slider("Launch angle (°)", ref _launchAngle, -20, 70);
