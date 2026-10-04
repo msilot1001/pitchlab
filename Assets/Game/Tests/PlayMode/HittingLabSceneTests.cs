@@ -70,7 +70,16 @@ namespace Pitchlab.Tests
             yield return null;
 
             _lab.PressSwingButton(now);
-            Assert.AreEqual(before + 2, _lab.PitchesThrown, "after the swing → next pitch");
+            Assert.AreEqual(before + 1, _lab.PitchesThrown, "during the swing (a double click) → ignored");
+            Assert.AreEqual(BattingState.Swinging, _lab.StateAt(now));
+            yield return null;
+
+            now += 1.0;                                    // the outcome is on screen (result, or the ball still in play)
+            BattingState state = _lab.StateAt(now);
+            Assert.IsTrue(state == BattingState.Result || state == BattingState.BallInPlay, state.ToString());
+            _lab.PressSwingButton(now);
+            Assert.AreEqual(before + 2, _lab.PitchesThrown, "after the swing's outcome → next pitch (skipping the rest of a play)");
+            Assert.AreEqual(BattingState.Windup, _lab.StateAt(now));
         }
 
         [UnityTest]
@@ -129,6 +138,25 @@ namespace Pitchlab.Tests
             _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z);
             ContactResult result = _lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration + 0.1);
             Assert.AreEqual(ContactOutcome.MissTiming, result.Outcome);
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator OneSwingPerPitchEvenForAnEarlierStampedSecondPress()
+        {
+            // Space and a click a few ms apart from two devices can be handled out of timestamp order: the second press,
+            // stamped earlier than the first swing, must not swing again (unity-reviewer, TASK-004.6B-2).
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            _lab.PressSwingButton(now);                    // throw
+            double first = now + _lab.DeliveryLead + 0.25;
+            now = first + 0.01;
+            _lab.PressSwingButton(first);
+            SwingInput swing = _lab.LastSwing.Value;
+            ContactResult result = _lab.LastResult.Value;
+            _lab.PressSwingButton(first - 0.004);
+            Assert.AreEqual(swing.StartTime, _lab.LastSwing.Value.StartTime, 0.0, "still the first swing");
+            Assert.AreEqual(result.Outcome, _lab.LastResult.Value.Outcome);
             yield return null;
         }
     }

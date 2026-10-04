@@ -249,11 +249,12 @@ namespace Pitchlab.Simulation.Field
             new BallState(s.Time, new Vector3d(s.Position.X, s.Position.Y, ball.Radius), new Vector3d(s.Velocity.X, s.Velocity.Y, 0.0), s.Spin);
 
         /// <summary>Signed gap between the ball's surface and the fence's inner face (≥ 0: touching or beyond). The fence stands
-        /// between the foul poles only; foul territory has no wall (Docs/SURFACE_PHYSICS.md).</summary>
+        /// between the foul poles (poles and lines included); foul territory has no wall (Docs/SURFACE_PHYSICS.md).</summary>
         private static double WallGap(FieldLayout field, BallState s, BallProperties ball, out Vector3d normal)
         {
             double gap = field.DistanceBeyondFence(s.Position.X, s.Position.Y, out normal) + ball.Radius;
-            return FieldLayout.IsFair(s.Position.X, s.Position.Y) ? gap : double.NegativeInfinity;
+            // The fence and foul pole cover the line too: a ball with any part over the line meets them.
+            return FieldLayout.OutsideFoulLine(s.Position.X, s.Position.Y) <= ball.Radius ? gap : double.NegativeInfinity;
         }
 
         private static bool FirstWallCrossing(BallFlightSimulator sim, FieldLayout field, TrajectoryResult flight, out int before, out BallState atWall, out Vector3d normal)

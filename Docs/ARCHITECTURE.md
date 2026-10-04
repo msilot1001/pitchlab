@@ -39,3 +39,53 @@ There is one conversion chain: device input → normalized PCI → contact-plane
   - `InputSystem.settings.disableRedundantEventsMerging` is set to true. Otherwise the Input System merges mouse reports that differ only in delta, and a click would take the timestamp of the next report.
 - **Keyboard and stick** still set the velocity, converted exactly into normalized units.
 - **Verification.** The PCI at a swing is reconstructed at the swing event's timestamp. `HittingInputFrameRateTests` replays the same keyboard trace, and the same 125 Hz mouse trace, at 30, 60 and 144 fps and with jittered frames. The swing, PCI, timing and batted ball must be identical across all of them.
+
+## Batting loop, fair/foul and feedback (TASK-004.6B-2)
+
+### Batting state machine
+`BattingStateMachine` (Gameplay) defines the loop: Ready → Windup → PitchInFlight → Swinging → BallInPlay (or a miss or a take) → Result → Ready, after a 1.5 s `ResultPause`.
+- **Pure function:** the state is computed from the authoritative pitch, swing, contact result and ball in play at a simulation time. It is therefore identical at any frame rate, and nothing needs per-frame bookkeeping.
+- **The press** (click, Space or gamepad South) acts by state:
+
+  | State | What a press does |
+  |---|---|
+  | Ready, Result, BallInPlay | Throws the next pitch. During a play, this skips the rest of it, except within `DoublePressGrace` (0.3 s) after contact: a double click doesn't throw the hit away. |
+  | Windup, Swinging | Ignored: no swing before release, and no double swing. |
+  | PitchInFlight | Swings at the event timestamp, once per pitch. A second press stamped earlier (another device's event handled later) is ignored. |
+
+- **Clean reset:** the next throw resets the presentation (`ResetForPitch`). When the state reaches Ready, the camera returns to the batting view.
+
+### PCI persistence
+The PCI keeps its position between pitches. With a mouse it is where the hand left it, which matches TASK-003 keyboard behaviour. A reset to the zone middle would fight the player's hand.
+
+### Fair/foul
+`FairFoul.Call(BallInPlay)` (Gameplay) applies the Official Baseball Rules definitions of a fair and a foul ball, for a field with no fielders:
+- **Over the fence on the fly:** judged where the ball leaves the field. Fair means a home run, which includes off the pole.
+- **Bounce over the fence:** a fair ball that bounces over the fence is judged by its landing, so it is a ground-rule double, not a home run.
+- **Off the wall on the fly:** fair. The wall stands only over fair territory and the line.
+- **Beyond first or third base:** judged where it first lands.
+- **Before the bases:** judged where it passes first or third base, or where it settles.
+- **The lines and poles are fair territory.** The ball is judged by its own position: it is fair if any part of it is over the line (its centre within one radius outside the line).
+
+Each call records its basis and the decisive state. `FairFoulTests` covers synthetic plays on and near the lines, plus calls on simulated plays.
+
+### Feedback
+- **Contact feedback:** `ContactFeedback` (Gameplay) turns timing error into words ("on time" inside the resolver's own Good window of ±7 ms, otherwise "early/late N ms"). It turns the authoritative barrel offset into a contact quality ("sweet spot" within 1.5 in, "off the end" toward the tip, "jammed" toward the hands).
+- **Normal UI:** one compact line, which is a pure function of the simulation time:
+  1. timing and quality at contact;
+  2. FAIR / FOUL / HOME RUN at the decisive moment;
+  3. the carry at the first bounce;
+  4. the final distance at rest.
+  - Misses show "Swing and miss · early 12 ms"; takes show "Take"; Ready shows "Click to pitch".
+  - A fair bounce over the fence adds "ground-rule double".
+  - A late miss reads only after the swing ends.
+  - A one-line hint (mouse, H, T) sits at the top left.
+- **Debug UI:**
+  - H opens the details panel (pitch, readout and the fair/foul basis).
+  - T turns on the debug view:
+    - paths, the contact marker and the PCI range;
+    - the PCI conversion chain;
+    - the visual target and error;
+    - the sweet-spot trail;
+    - event markers at every bounce, wall impact, slide → roll and rest.
+- **Sound:** none beyond the existing contact crack (optional, not added).

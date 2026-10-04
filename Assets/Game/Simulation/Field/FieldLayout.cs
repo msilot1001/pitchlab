@@ -44,6 +44,13 @@ namespace Pitchlab.Simulation.Field
 
         public static bool IsFair(double x, double y) => y >= 0.0 && Math.Abs(x) <= y;
 
+        /// <summary>
+        /// Distance (m) from a ground point to fair territory (the wedge between the foul lines, lines included); ≤ 0 inside.
+        /// Behind the plate's rear point the nearest fair point is the apex itself.
+        /// </summary>
+        public static double OutsideFoulLine(double x, double y) =>
+            y + Math.Abs(x) < 0.0 ? Math.Sqrt(x * x + y * y) : (Math.Abs(x) - y) / Math.Sqrt(2.0);
+
         /// <summary>Fence segment between the foul lines that a ray from home at this spray angle meets (clamped to the lines).</summary>
         private int Segment(double spray)
         {

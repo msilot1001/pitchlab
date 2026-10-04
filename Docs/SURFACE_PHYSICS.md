@@ -58,7 +58,7 @@ The trajectory is a chain of event-separated segments: airborne → impact → (
   - The ball impacts the wall when its centre comes within R of a fence segment while moving toward it and below H + R.
     - The impulse is the same formula with n horizontal, pointing toward home.
     - A ball rolling into the fence bounces back along the ground.
-  - The fence stands between the foul poles only, so foul territory has no wall.
+  - The fence stands between the foul poles only, so foul territory has no wall. The fence and poles also cover the line band: a ball with any part over the line (centre within R outside it) meets them, because the line and poles are fair.
   - Above H + R the ball clears the fence: a home run, out of play. The trajectory ends at its first ground contact beyond the fence, with no bounce.
 - **Limits.**
   - At most 40 impacts (a guard; real plays use < 15).

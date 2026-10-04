@@ -24,7 +24,7 @@ namespace Pitchlab.Presentation
             Material chalk = PresentationMaterials.Get(new Color(0.95f, 0.95f, 0.92f), unlit: true);
 
             float baseDistance = 90f * Ft, diagonal = baseDistance * Mathf.Sqrt(2f);
-            Box("Grass", grass, new Vector3(0f, -0.02f, 70f), new Vector3(200f, 0.02f, 200f), 0f);
+            Box("Grass", grass, new Vector3(0f, -0.02f, 90f), new Vector3(340f, 0.02f, 300f), 0f);   // covers fair and foul ground to beyond the fence
             // Infield dirt: a square on the diamond, enlarged past the bases, plus a dirt circle around home.
             Box("InfieldDirt", dirt, new Vector3(0f, -0.005f, diagonal / 2f), new Vector3(baseDistance + 4f, 0.01f, baseDistance + 4f), 45f);
             Box("InfieldGrass", grass, new Vector3(0f, -0.003f, diagonal / 2f), new Vector3(baseDistance - 3f, 0.01f, baseDistance - 3f), 45f);

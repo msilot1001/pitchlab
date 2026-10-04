@@ -240,7 +240,7 @@ namespace Pitchlab.Tests
             // The same hit shown by jumping to T, or by rendering every 1/30 s or 1/240 s up to T: identical ball, landing
             // marker and phase flags (one-way presentation flags must not depend on which frames happened).
             yield return null;
-            var results = new System.Collections.Generic.List<(Vector3 Ball, bool Landed, Vector3 Marker)>();
+            var results = new System.Collections.Generic.List<(Vector3 Ball, bool Landed, Vector3 Marker, string Banner)>();
             foreach (double step in new[] { 0.0, 1.0 / 30.0, 1.0 / 240.0 })
             {
                 _release = _now + _lab.DeliveryLead;
@@ -256,7 +256,8 @@ namespace Pitchlab.Tests
                 if (step > 0.0)
                     for (double t = contact; t < target; t += step) At(t);
                 At(target);
-                results.Add((_lab.BallTransform.position, _landing.Visible, _landing.transform.position));
+                results.Add((_lab.BallTransform.position, _landing.Visible, _landing.transform.position, _view.Banner));
+                Assert.AreEqual(_view.Feedback(_lab.RenderedSimTime), _view.Banner, "the shown banner is the line for this time");
                 _now += 30.0;
             }
 
@@ -265,6 +266,7 @@ namespace Pitchlab.Tests
                 Assert.Less(Vector3.Distance(results[0].Ball, results[i].Ball), 1e-5f, $"ball, cadence {i}");
                 Assert.AreEqual(results[0].Landed, results[i].Landed, $"landing shown, cadence {i}");
                 Assert.Less(Vector3.Distance(results[0].Marker, results[i].Marker), 1e-5f, $"marker, cadence {i}");
+                Assert.AreEqual(results[0].Banner, results[i].Banner, $"banner, cadence {i}");
             }
         }
 
@@ -298,6 +300,130 @@ namespace Pitchlab.Tests
                 double beyond = field.DistanceBeyondFence(w.x, w.z, out _);
                 Assert.That(beyond, Is.InRange(-FieldLayout.WarningTrackWidth - 1.0, 0.01), $"track vertex {w}");
             }
+        }
+
+        [UnityTest]
+        public IEnumerator FeedbackBuildsWithThePlayAndReturnsToReady()
+        {
+            yield return null;
+            double contact = HitFlush();
+            BallInPlay play = _lab.LastPlay;
+            FairFoulResult call = _lab.LastCall.Value;
+            At(contact - 0.01);
+            Assert.AreEqual(string.Empty, _view.Feedback(_lab.RenderedSimTime), "nothing before contact");
+            At(contact + 0.001);
+            StringAssert.Contains("mph", _view.Banner);
+            StringAssert.Contains("on time", _view.Banner);
+            StringAssert.Contains("sweet spot", _view.Banner);
+            if (call.At.Time > contact + 0.002)
+            {
+                At(call.At.Time - 0.001);
+                Assert.IsFalse(_view.Banner.StartsWith("FAIR") || _view.Banner.StartsWith("FOUL") || _view.Banner.StartsWith("HOME RUN"), "no call before its moment");
+            }
+
+            At(play.FirstGroundContact.Value.Time - 0.001);
+            StringAssert.DoesNotEndWith("ft", _view.Banner, "no carry before the first bounce");
+            At(System.Math.Max(call.At.Time, contact) + 0.001);
+            string called = call.Call == BallInPlayCall.HomeRun ? "HOME RUN" : call.Call == BallInPlayCall.Fair ? "FAIR" : "FOUL";
+            StringAssert.StartsWith(called, _view.Feedback(_lab.RenderedSimTime));
+            At(play.FirstGroundContact.Value.Time + 0.001);
+            StringAssert.EndsWith($"{Units.MetersToFeet(_lab.ShownCarry):0} ft", _view.Feedback(_lab.RenderedSimTime));
+            At(play.EndTime + 0.01);
+            if (play.EndPhase == BallPhase.Rest) StringAssert.EndsWith($"(rests {Units.MetersToFeet(play.FinalDistance):0} ft)", _view.Banner);
+            Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
+            Assert.IsTrue(_camera.IsFollowing);
+            At(play.EndTime + BattingStateMachine.ResultPause + 0.01);
+            Assert.AreEqual(BattingState.Ready, _lab.StateAt(_now));
+            Assert.AreEqual("Click to pitch", _view.Feedback(_lab.RenderedSimTime));
+            Assert.IsFalse(_camera.IsFollowing, "back to the batting view when ready");
+        }
+
+        [UnityTest]
+        public IEnumerator TakeAndMissReadAfterThePitch()
+        {
+            yield return null;
+            HittingPitch pitch = _lab.CurrentPitch;
+            At(pitch.Flight.Duration - 0.01);
+            Assert.AreEqual(string.Empty, _view.Feedback(_lab.RenderedSimTime));
+            At(pitch.Flight.Duration + 0.01);
+            Assert.AreEqual("Take", _view.Feedback(_lab.RenderedSimTime));
+
+            _now += 5.0;
+            _release = _now + _lab.DeliveryLead;
+            _lab.ThrowPitch(0, _release);
+            At(-0.2);
+            pitch = _lab.CurrentPitch;
+            _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z - 0.3);
+            double start = pitch.IdealContactTime - _lab.Swing.SwingDuration - 0.012;
+            Assert.IsFalse(_lab.SwingAtSimTime(start).IsContact);
+            At(start + _lab.Swing.SwingDuration + 0.001);
+            Assert.AreEqual("Swing and miss · early 12 ms", _view.Feedback(_lab.RenderedSimTime));
+        }
+
+        [UnityTest]
+        public IEnumerator DebugMarksEveryEventReachedOnlyInDebugView()
+        {
+            yield return null;
+            HitFlush();
+            BallInPlay play = _lab.LastPlay;
+            double t = play.EndTime + 0.1;
+            At(t);
+            Assert.AreEqual(0, _view.EventMarkersShown, "normal view: no markers");
+            _lab.DebugView = true;
+            double mid = play.Events[play.Events.Count / 2].Time + 1e-6;
+            At(mid);
+            int reached = 0;
+            foreach (BallEvent e in play.Events) if (e.Time <= mid) reached++;
+            Assert.AreEqual(reached, _view.EventMarkersShown);
+            At(t);
+            Assert.AreEqual(play.Events.Count, _view.EventMarkersShown);
+            int k = 0;
+            foreach (Transform m in _view.transform)
+                if (m.name == "EventMarker" && m.gameObject.activeSelf)
+                    Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(play.Events[k++].Before.Position), m.position), 1e-4f, $"marker {k} at its event");
+            _lab.DebugView = false;
+            At(t);
+            Assert.AreEqual(0, _view.EventMarkersShown);
+        }
+
+        [UnityTest]
+        public IEnumerator PressDuringThePlaySkipsItButNotRightAfterContact()
+        {
+            yield return null;
+            double contact = HitFlush();
+            int thrown = _lab.PitchesThrown;
+            double Real(double sim) => _release + sim;
+            At(contact + 0.1);
+            Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(Real(contact + 0.1)));
+            _lab.PressSwingButton(Real(contact + 0.1));
+            Assert.AreEqual(thrown, _lab.PitchesThrown, "a double click just after the hit keeps the hit");
+            Assert.IsNotNull(_lab.LastPlay);
+            At(contact + 1.0);
+            Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(Real(contact + 1.0)));
+            _lab.PressSwingButton(Real(contact + 1.0));
+            Assert.AreEqual(thrown + 1, _lab.PitchesThrown, "a press during the play throws the next pitch");
+            // Clean reset, debug view on: no call, no play, no markers, no banner during the wind-up.
+            _lab.DebugView = true;
+            _release = Real(contact + 1.0) + _lab.DeliveryLead;
+            At(-0.5);
+            Assert.IsNull(_lab.LastCall);
+            Assert.IsNull(_lab.LastPlay);
+            Assert.AreEqual(0, _view.EventMarkersShown);
+            Assert.AreEqual(string.Empty, _view.Banner);
+            Assert.IsFalse(_camera.IsFollowing);
+        }
+
+        [UnityTest]
+        public IEnumerator PciPersistsAcrossPitches()
+        {
+            yield return null;
+            _lab.SetPci(0.21, 0.63);
+            (double x, double z) = _lab.PciAt(_now);
+            _now += 5.0;
+            _lab.PressSwingButton(_now);   // take → next pitch
+            (double x2, double z2) = _lab.PciAt(_now);
+            Assert.AreEqual(x, x2, 1e-12);
+            Assert.AreEqual(z, z2, 1e-12);
         }
     }
 }

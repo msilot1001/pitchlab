@@ -62,7 +62,6 @@ namespace Pitchlab.Sandbox
         private PciTrack _pciTrack;
         private double _pitchStartRealtime = double.NaN;
         private float _pitchPlaybackSpeed = 1f; // latched at throw; speed changes apply to the next pitch
-        private bool _swung;
         private string _pitchLabel = string.Empty; // latched at throw; the preset selection may change mid-pitch
         private string _readout = "Press Space / A to throw.";
         private Vector3[] _pathBuffer = new Vector3[256];
@@ -79,12 +78,15 @@ namespace Pitchlab.Sandbox
         public BattedBallResult LastBattedBall { get; private set; }
         /// <summary>The batted ball played out on the field (bounces, roll, wall, rest); what the ball shows after contact.</summary>
         public BallInPlay LastPlay { get; private set; }
+        /// <summary>Fair/foul call for <see cref="LastPlay"/> (Official Baseball Rules; see <see cref="FairFoul"/>).</summary>
+        public FairFoulResult? LastCall { get; private set; }
+        /// <summary>Distance to show for the hit: carry (first bounce), or the projected distance off or over the fence.</summary>
+        public double ShownCarry => LastPlay == null ? double.NaN : LastPlay.ReachedFenceInTheAir ? LastBattedBall.Metrics.Distance : LastPlay.CarryDistance;
         public static readonly FieldLayout Field = FieldLayout.Standard;
         public SwingInput? LastSwing { get; private set; }
         public int PitchesThrown { get; private set; }
         public SwingParameters Swing => _swing;
         public EnvironmentState Environment => EnvironmentState.Standard;
-        public bool PitchInFlight => CurrentPitch != null && !_swung && SimTime < CurrentPitch.Flight.Duration;
         public double SimTime => ToSimTime(Clock());
         public Transform BallTransform => _ball;
         public double DeliveryLead => _deliveryLead;
@@ -117,7 +119,7 @@ namespace Pitchlab.Sandbox
         public bool MouseCaptured => Cursor.lockState == CursorLockMode.Locked;
 
         /// <summary>Debug view (T): paths, contact marker, PCI range and the contact overlay.</summary>
-        public bool DebugView => _showDebugPaths;
+        public bool DebugView { get => _showDebugPaths; set { if (_pciTrack != null) SetDebugPaths(value); } }
 
         private void Awake()
         {
@@ -272,11 +274,11 @@ namespace Pitchlab.Sandbox
             CurrentPitch = HittingPitch.Create(Presets[_presetIndex], Environment);
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
-            _swung = false;
             LastResult = null;
             LastSwing = null;
             LastBattedBall = null;
             LastPlay = null;
+            LastCall = null;
             ResultSummary = string.Empty;
             PitchesThrown++;
             _pitchPath.enabled = false;
@@ -302,30 +304,45 @@ namespace Pitchlab.Sandbox
             (double x, double z) = PciAt(_pitchStartRealtime + startTime / _pitchPlaybackSpeed);
             var swing = new SwingInput(startTime, x, z);
             ContactResult result = ContactResolver.Resolve(CurrentPitch, swing, _swing);
-            _swung = true;
             LastSwing = swing;
             LastResult = result;
             ShowResult(result);
             return result;
         }
 
-        /// <summary>
-        /// The swing button at real time <paramref name="eventRealtime"/> (the input event's timestamp): throws when no
-        /// pitch is live (released <see cref="DeliveryLead"/> later), ignores presses during the wind-up, otherwise swings
-        /// at exactly that moment with the PCI where it was then, however many frames have passed since.
-        /// </summary>
-        private bool PitchLive(double realtime) => CurrentPitch != null && !_swung && ToSimTime(realtime) < CurrentPitch.Flight.Duration;
+        /// <summary>Batting loop state at real time <paramref name="realtime"/> (<see cref="BattingStateMachine"/>).</summary>
+        /// <summary>Presses this soon after contact are ignored (s): double clicks, switch bounce.</summary>
+        public const double DoublePressGrace = 0.3;
 
+        public BattingState StateAt(double realtime) =>
+            CurrentPitch == null ? BattingState.Ready : BattingStateMachine.At(ToSimTime(realtime), CurrentPitch, LastSwing, LastResult, LastPlay, _swing.SwingDuration);
+
+        private bool PitchLive(double realtime) => StateAt(realtime) == BattingState.PitchInFlight && !LastSwing.HasValue;
+
+        /// <summary>
+        /// The swing button at real time <paramref name="eventRealtime"/> (the input event's timestamp), by batting state:
+        /// Ready, Result or BallInPlay → throw the next pitch (released <see cref="DeliveryLead"/> later; a press during a
+        /// play skips its remainder); Windup or Swinging → ignored (no swing before release, no double swing);
+        /// PitchInFlight → swing at exactly that moment with the PCI where it was then, however many frames have passed.
+        /// </summary>
         public void PressSwingButton(double eventRealtime)
         {
-            if (!PitchLive(eventRealtime))
+            switch (StateAt(eventRealtime))
             {
-                ThrowPitch(_presetIndex, eventRealtime + _deliveryLead / _playbackSpeed);
-                return;
+                case BattingState.PitchInFlight:
+                    // One swing per pitch: a second press stamped earlier than the first (another device's event handled
+                    // later in the same update) reads as "before the swing" but must not swing again.
+                    if (!LastSwing.HasValue) SwingAtSimTime(ToSimTime(eventRealtime));
+                    return;
+                case BattingState.Windup:
+                case BattingState.Swinging:
+                    return;
+                case BattingState.BallInPlay when ToSimTime(eventRealtime) < LastResult.Value.BattedBall.Time + DoublePressGrace:
+                    return;   // a double click or switch bounce just after a hit must not throw the hit away
+                default:
+                    ThrowPitch(_presetIndex, eventRealtime + _deliveryLead / _playbackSpeed);
+                    return;
             }
-
-            if (ToSimTime(eventRealtime) < 0.0) return;   // wind-up: no swing before the ball is released
-            SwingAtSimTime(ToSimTime(eventRealtime));
         }
 
         // Known limit: the Input System merges consecutive DualSense stick reports within one update (IEventMerger),
@@ -362,6 +379,7 @@ namespace Pitchlab.Sandbox
             {
                 LastBattedBall = BattedBallSimulation.Run(r.BattedBall, Environment);
                 LastPlay = BallInPlaySimulation.Run(r.BattedBall, Environment, Field);
+                LastCall = FairFoul.Call(LastPlay);
                 BattedBallMetrics flight = LastBattedBall.Metrics;
                 // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.
                 double carry = LastPlay.ReachedFenceInTheAir ? flight.Distance : LastPlay.CarryDistance;
@@ -371,7 +389,7 @@ namespace Pitchlab.Sandbox
                     $"PCI offset: barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in (+ = under ball)\n" +
                     $"Exit velocity {Units.MetersPerSecondToMph(r.ExitSpeed):0.0} mph   launch {r.LaunchAngleDegrees:+0;-0}°   spray {r.SprayAngleDegrees:+0;-0}° (+ = RF)\n" +
                     $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm (back {launch.BackspinRpm:0}, side {launch.SidespinRpm:+0;-0}, + = curves to RF)   q {r.CollisionEfficiency:0.00}" +
-                    (Math.Abs(r.SprayAngleDegrees) > 45.0 ? "   FOUL" : "") +
+                    $"   {LastCall.Value.Call} ({LastCall.Value.Basis})" +
                     $"\nFlight: carry {Units.MetersToFeet(carry):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft" +
                     (LastPlay.ClearedFence ? "   over the fence" : $", final {Units.MetersToFeet(LastPlay.FinalDistance):0} ft at {LastPlay.EndTime - LastPlay.First.Time:0.0} s");
                 Vector3 contact = SimulationSpace.ToUnity(r.BattedBall.Position);
@@ -489,7 +507,9 @@ namespace Pitchlab.Sandbox
         {
             if (!_showPanel)
             {
-                GUI.Label(new Rect(10, 6, 300, 22), "H: debug panel");
+                GUI.Label(new Rect(10, 6, 520, 22), (_requireMouseCapture && !MouseCaptured ? "Click to capture the mouse · " : "Mouse aims · click throws/swings · Esc releases · ") +
+                                                    "H details · T debug");
+                if (_showDebugPaths) GUI.Label(new Rect(10, 30, 560, 90), DebugOverlay(), GUI.skin.box);
                 return;
             }
 

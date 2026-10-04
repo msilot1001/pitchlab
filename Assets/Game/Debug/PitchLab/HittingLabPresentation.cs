@@ -42,6 +42,8 @@ namespace Pitchlab.Sandbox
         private float _finishTilt, _targetResidual;
         private Vector3 _target;            // world point the sweet spot aims at, at the contact time
         private TrailRenderer _sweetTrail;  // debug: sweet-spot path
+        private readonly System.Collections.Generic.List<MeshRenderer> _eventMarkers = new System.Collections.Generic.List<MeshRenderer>();
+        private readonly System.Collections.Generic.List<Mesh> _builtMeshes = new System.Collections.Generic.List<Mesh>();
         private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
         // Last shown poses: a new pitch thrown before a figure has returned to its start blends from here (no snapping).
         private readonly MannequinPose _pitcherShown = new MannequinPose(), _batterShown = new MannequinPose();
@@ -62,6 +64,8 @@ namespace Pitchlab.Sandbox
         /// <summary>Deformation of the reference swing for the current swing, and the sweet spot's miss of its target at contact (m).</summary>
         public SwingAdjustment SwingAdjustment => _adjust;
         public float TargetResidual => _targetResidual;
+        /// <summary>The result line currently shown (set every frame from <see cref="Feedback"/>).</summary>
+        public string Banner => _banner;
         public TrailRenderer BallTrail => _trail;
 
         private void Awake()
@@ -182,10 +186,44 @@ namespace Pitchlab.Sandbox
                 BallInPlay play = _lab.LastPlay;
                 if (!_landingShown && play?.FirstGroundContact is BallEvent landing && t >= landing.Time) ShowLanding(play, landing);
             }
-            else if (_lab.LastResult.HasValue && _swing.HasValue && t >= _swing.Value.StartTime + _lab.Swing.SwingDuration)
+
+            _banner = Feedback(t);
+            BattingState state = _pitch == null ? BattingState.Ready : BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.LastPlay, _lab.Swing.SwingDuration);
+            // Back to the batting view once the result pause is over (the next throw resets the rest).
+            if (state == BattingState.Ready && _pitch != null && _baseballCamera.IsFollowing)
             {
-                _banner = _lab.ResultSummary;
+                _baseballCamera.ShowBatting();
+                _landing.Hide();
             }
+
+            UpdateEventMarkers(t);
+        }
+
+        /// <summary>
+        /// The compact result line, a pure function of the simulation time (identical at any frame rate). It builds with the
+        /// play: timing and contact quality at contact; the fair/foul call at its decisive moment; the carry at the first
+        /// bounce; the final distance at rest. Misses and takes read after the pitch.
+        /// </summary>
+        public string Feedback(double t)
+        {
+            if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
+            BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.LastPlay, _lab.Swing.SwingDuration);
+            if (state == BattingState.Ready) return "Click to pitch";
+            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? "Take" : string.Empty;
+            string timing = ContactFeedback.Timing(r);
+            if (!r.IsContact)
+                return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;
+            if (t < r.BattedBall.Time) return string.Empty;
+
+            string line = $"{Units.MetersPerSecondToMph(r.ExitSpeed):0} mph · {r.LaunchAngleDegrees:0}° · {timing}";
+            if (ContactFeedback.Quality(r, _lab.Swing) is ContactQuality q) line += $" · {ContactFeedback.Describe(q)}";
+            BallInPlay play = _lab.LastPlay;
+            if (_lab.LastCall is FairFoulResult call && t >= call.At.Time)
+                line = (call.Call == BallInPlayCall.HomeRun ? "HOME RUN" : call.Call == BallInPlayCall.Fair ? "FAIR" : "FOUL") + "  " + line;
+            if (play.FirstGroundContact is BallEvent landing && t >= landing.Time) line += $" · {Units.MetersToFeet(_lab.ShownCarry):0} ft";
+            if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
+            if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime) line += " · ground-rule double";
+            return line;
         }
 
         private void ResetForPitch(HittingPitch pitch)
@@ -288,11 +326,17 @@ namespace Pitchlab.Sandbox
                 mesh.SetVertices(v);
                 mesh.SetTriangles(t, 0);
                 mesh.RecalculateNormals();
+                _builtMeshes.Add(mesh);
                 var go = new GameObject(name);
                 go.transform.SetParent(transform, false);
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterial = PresentationMaterials.Get(color, unlit: true);   // flat: double-sided faces have no useful normals
             }
+        }
+
+        private void OnDestroy()
+        {
+            foreach (Mesh mesh in _builtMeshes) if (mesh != null) Destroy(mesh);   // runtime meshes are not owned by their GameObjects
         }
 
         private void PlaceBatter()
@@ -424,7 +468,6 @@ namespace Pitchlab.Sandbox
             _baseballCamera.Impulse(0.012f, 0.15f);
             _baseballCamera.Follow(_lab.BallTransform);
             _trail.Clear();
-            _banner = _lab.ResultSummary;
         }
 
         private void ShowLanding(BallInPlay play, BallEvent landing)
@@ -432,8 +475,54 @@ namespace Pitchlab.Sandbox
             _landingShown = true;
             Vector3d p = landing.Before.Position;
             Vector3 point = SimulationSpace.ToUnity(new Vector3d(p.X, p.Y, 0.0));
-            double carry = play.ReachedFenceInTheAir ? _lab.LastBattedBall.Metrics.Distance : play.CarryDistance;
-            _landing.Show(point, $"{Units.MetersToFeet(carry):0} ft", _view);
+            _landing.Show(point, $"{Units.MetersToFeet(_lab.ShownCarry):0} ft", _view);
+        }
+
+        /// <summary>
+        /// Debug (T): a small marker at every event of the play reached so far — ground impacts (white), wall impacts (red),
+        /// slide → roll (blue), rest / out of play (yellow), clearing the fence (red). Visual only, pooled, no colliders.
+        /// </summary>
+        private void UpdateEventMarkers(double t)
+        {
+            BallInPlay play = _lab.DebugView ? _lab.LastPlay : null;
+            int shown = 0;
+            if (play != null)
+                foreach (BallEvent e in play.Events)
+                {
+                    if (e.Time > t) break;
+                    if (shown == _eventMarkers.Count)
+                    {
+                        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                        go.name = "EventMarker";
+                        PlayerMannequin.DestroyCollider(go);
+                        go.transform.SetParent(transform, false);
+                        go.transform.localScale = Vector3.one * 0.35f;
+                        _eventMarkers.Add(go.GetComponent<MeshRenderer>());
+                    }
+
+                    MeshRenderer marker = _eventMarkers[shown++];
+                    marker.gameObject.SetActive(true);
+                    marker.transform.position = SimulationSpace.ToUnity(e.Before.Position);
+                    Color color = e.Kind == BallEventKind.GroundImpact ? Color.white
+                        : e.Kind == BallEventKind.SlideToRoll ? new Color(0.3f, 0.6f, 1f)
+                        : e.Kind == BallEventKind.Rest || e.Kind == BallEventKind.LeftPlay ? new Color(1f, 0.85f, 0.2f)
+                        : new Color(1f, 0.25f, 0.2f);
+                    Material material = PresentationMaterials.Get(color, unlit: true);
+                    if (marker.sharedMaterial != material) marker.sharedMaterial = material;
+                }
+
+            for (int i = shown; i < _eventMarkers.Count; i++) _eventMarkers[i].gameObject.SetActive(false);
+        }
+
+        /// <summary>Debug event markers currently shown (tests).</summary>
+        public int EventMarkersShown
+        {
+            get
+            {
+                int n = 0;
+                foreach (MeshRenderer m in _eventMarkers) if (m.gameObject.activeSelf) n++;
+                return n;
+            }
         }
 
         private static float Ease(double u) => Mathf.SmoothStep(0f, 1f, (float)Math.Max(0.0, Math.Min(1.0, u)));

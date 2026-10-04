@@ -175,4 +175,94 @@ Batted balls play out on the field after their first landing: bounce, skip, slid
 - **Game View:** a foul chopper; a fair grounder through the infield to rest near the track, with the camera following; wall and track visible.
 
 ## Milestone 3: TASK-004.6B-2, batting UX, fair/foul, loop polish
-Not started.
+
+### Goal
+A complete, readable at-bat loop on top of B-1 and 004.7:
+- fair/foul calls;
+- compact result, timing and contact-quality feedback;
+- an explicit state machine;
+- a clean reset;
+- camera through bounce, roll, wall and rest;
+- normal vs debug UI;
+- debug event markers.
+
+### Relevant files
+- **Gameplay:** `FairFoul.cs`, `BattingStateMachine.cs`, `ContactFeedback.cs` (in `Assets/Game/Gameplay/Hitting/`).
+- **Sandbox:**
+  - `HittingLabController` (state-driven press, `LastCall`, `ShownCarry`, `DebugView`, hint line);
+  - `HittingLabPresentation` (`Feedback(t)` banner, camera at Ready, event markers).
+- **Scene:** `HittingLab.unity` (details panel off by default).
+- **Presentation:** `FieldDressing` (grass covers foul ground beyond the fence).
+- **Tests:**
+  - EditMode: `FairFoulTests`, `BattingStateMachineTests`, `ContactFeedbackTests`;
+  - PlayMode: `HittingLabPresentationTests` (feedback through the play to Ready, take/miss, debug markers) and `HittingLabSceneTests` (press contract).
+- **Docs:** `Docs/ARCHITECTURE.md` (batting loop, fair/foul, feedback).
+
+### Status
+- [x] Fair/foul (OBR definitions; lines and poles fair; ball judged by any part over the line).
+- [x] State machine and press contract. A double click during the swing no longer re-throws; a press during a play throws the next pitch.
+- [x] Feedback line (a pure function of time), "Click to pitch", camera back to batting at Ready, normal vs debug UI, event markers.
+- [x] Game View playtest (frozen clock, Play Mode):
+  - a fair drive to the track: "FAIR 102 mph · 18° · on time · sweet spot · 372 ft (rests 396 ft)";
+  - the debug view with markers and overlays;
+  - Ready with the batter back in stance;
+  - a pulled foul beyond the pole: "FOUL … early 30 ms …".
+- [x] **unity-reviewer.** Fixed:
+  - *Double swing (MEDIUM):* an out-of-order earlier-stamped second press could swing twice. Now one swing per pitch; mutation-verified test.
+  - Removed the dead `PitchInFlight`/`_swung`.
+  - Marker renderers are cached.
+  - Outfield meshes are destroyed.
+  - `DebugView` guard.
+  - No stray separator when timing is missing.
+- [x] **physics-reviewer and test-reviewer.** Fixed:
+  - *Pole band:* the fence and pole now cover the line band, so a ball grazing the pole by part of itself is a home run or off the wall, not foul.
+  - *Fence order:* a fair bounce over the fence is a ground-rule double, not a home run.
+  - *Off the wall on the fly:* fair.
+  - *Foul-line distance:* correct behind the plate's apex.
+  - *On time* now uses the resolver's Good window (±7 ms).
+  - The state machine uses absolute times, takes the swing duration (a late miss reads after the swing), and has a 0.3 s double-press grace after contact.
+  - Tests added:
+    - third-base side;
+    - base-distance boundary;
+    - passing the base on the line;
+    - behind the apex;
+    - ground-rule double;
+    - wall carom;
+    - simulation-driven pole graze (home run, foul, off the wall);
+    - state boundaries;
+    - late miss;
+    - quality through the resolver;
+    - banner stages and the shown banner across frame cadences;
+    - marker positions;
+    - press during the play and the grace period;
+    - clean reset;
+    - PCI persistence.
+- [x] Full regression (`Scripts/check.sh`); commit `feat: finish batting vertical slice UX and play loop`.
+
+### Verification (B-2)
+- **`Scripts/check.sh` (in Editor):**
+  - whitespace OK;
+  - EditMode 389 total, 383 passed, 0 failed (6 explicit/ignored, pre-existing);
+  - PlayMode 34/34.
+- **Suites:**
+  - FairFoulTests 23;
+  - BattingStateMachineTests 6;
+  - ContactFeedbackTests 7;
+  - HittingLabPresentationTests 16;
+  - HittingLabSceneTests 8.
+- **Game View:** fair drive, debug view, Ready and foul captures (see Status).
+
+### Remaining risks (whole slice)
+- **Rolling roll-out** coefficients and **e_n** are ASSUMED; no public baseball roll-out data exists. Calibrate against tracking video before fielding depends on exact roll distances.
+- **Contact depth beyond reach.** Contact at ±20–35 ms is 0.8–1.4 m out front or deep, beyond a planted batter. The visual bat approaches but does not meet the ball, which is documented. A contact-depth model would be a gameplay decision; the timing windows are frozen.
+- **Simplifications:**
+  - the mound is flat for ground physics;
+  - there is no backstop or foul-territory wall;
+  - bases are not physical, so touching a bag is approximated by passing it;
+  - the fence is generic.
+
+### Decisions
+- **PCI persistence:** keep the PCI where it is between pitches (the mouse hand's position; TASK-003 behaviour).
+- **Press during BallInPlay or Result:** throws the next pitch, a skip, rather than being ignored. A long roll-out (8 s) shouldn't hold the player.
+- **Contact quality:** shown only from gameplay data (the barrel offset). No invented "barrel" metric.
+- **Sounds:** not added (optional). The existing contact crack remains.

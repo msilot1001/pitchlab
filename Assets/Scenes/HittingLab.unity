@@ -432,7 +432,7 @@ MonoBehaviour:
   _playbackSpeed: 1
   _deliveryLead: 1.1
   _showDebugPaths: 0
-  _showPanel: 1
+  _showPanel: 0
   _ball: {fileID: 671174561}
   _rubber: {fileID: 1671547960}
   _plate: {fileID: 1231535125}
