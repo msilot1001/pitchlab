@@ -28,7 +28,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private SwingParameters _swing = SwingParameters.Default;
         [SerializeField, Range(0.1f, 1f)] private float _playbackSpeed = 1f;
         /// <summary>Simulation time from the throw press to the authoritative release, s (the pitcher's wind-up; real time = lead ÷ playback speed).</summary>
-        [SerializeField, Min(0f)] private float _deliveryLead = 1.1f;
+        [SerializeField, Min(0.5f)] private float _deliveryLead = 1.1f;
         [SerializeField] private bool _showDebugPaths;
         [SerializeField] private bool _showPanel = true;
 
@@ -322,7 +322,8 @@ namespace Pitchlab.Sandbox
         private void PlaceField()
         {
             double rubberDepth = Units.InchesToMeters(6.0);
-            _rubber.position = SimulationSpace.ToUnity(new Vector3d(0.0, PitchingGeometry.RubberFrontY + rubberDepth / 2.0, 0.0));
+            // The rubber sits on top of the 10 in mound drawn by the presentation (FieldDressing); the simulation frame is unchanged.
+            _rubber.position = SimulationSpace.ToUnity(new Vector3d(0.0, PitchingGeometry.RubberFrontY + rubberDepth / 2.0, Pitchlab.Presentation.FieldDressing.MoundTop));
             _rubber.localScale = new Vector3((float)Units.InchesToMeters(24.0), 0.02f, (float)rubberDepth);
             _plate.position = SimulationSpace.ToUnity(new Vector3d(0.0, PitchingGeometry.PlateFrontY / 2.0, 0.0));
             _plate.localScale = new Vector3((float)(2.0 * PitchingGeometry.PlateHalfWidth), 0.01f, (float)PitchingGeometry.PlateFrontY);

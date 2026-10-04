@@ -12,7 +12,7 @@ namespace Pitchlab.Presentation
         public static readonly Color GloveColor = new Color(0.45f, 0.24f, 0.1f);
 
         /// <summary>Wood-bat length (m) and the sweet spot's distance from the grip anchor along the bat (+Y).</summary>
-        public const float BatLength = 0.86f, SweetSpotFromGrip = 0.62f;
+        public const float BatLength = 0.86f, SweetSpotFromGrip = 0.62f, HeadFromGrip = 0.77f;
 
         /// <summary>A bat along the anchor's +Y from the grip; returns the sweet-spot marker transform (barrel ≈ 0.17 m from the end).</summary>
         public static Transform AttachBat(Transform anchor)
@@ -28,6 +28,10 @@ namespace Pitchlab.Presentation
             var sweetSpot = new GameObject("SweetSpot").transform;
             sweetSpot.SetParent(bat, false);
             sweetSpot.localPosition = new Vector3(0f, SweetSpotFromGrip, 0f);
+            // Bat head (barrel end), ≈ 6 in beyond the sweet spot: Statcast swing length is measured on this point.
+            var head = new GameObject("BatHead").transform;
+            head.SetParent(bat, false);
+            head.localPosition = new Vector3(0f, HeadFromGrip, 0f);
             return sweetSpot;
         }
 

@@ -39,34 +39,19 @@ namespace Pitchlab.Tests
         [Test]
         public void LeftHandedMirrorPutsTheThrowingHandOnTheOtherSideAndKeepsAnchors()
         {
+            var pose = new MannequinPose();
+            ReferenceMotions.ReferenceRightHandedPitchDelivery(new Vector3(0.55f, 1.55f, 1.95f), 0.12f).Sample(ReferenceMotions.DeliveryU(-0.1f), pose);
             PlayerMannequin right = Make(false);
-            right.ApplyPose(MannequinPoses.PitchArmCock);
+            right.ApplyPose(pose);
             float rightHandX = right.transform.InverseTransformPoint(right.BallAnchor.position).x;
             Object.DestroyImmediate(_go);
 
             PlayerMannequin left = Make(true);
-            left.ApplyPose(MannequinPoses.PitchArmCock);
+            left.ApplyPose(pose);
             float leftHandX = left.transform.InverseTransformPoint(left.BallAnchor.position).x;
             Assert.Greater(rightHandX, 0.2f, "right-hander's ball hand is on the right");
             Assert.AreEqual(-rightHandX, leftHandX, 1e-4f, "left-hander mirrors it");
             Assert.IsTrue(left.BallAnchor.IsChildOf(left.Joint(MannequinJoint.RightHand)), "anchors stay on their bones");
-        }
-
-        [Test]
-        public void GripPutsBothHandsOnTheBat([Values("Stance", "Load", "Stride", "Contact", "FollowThrough")] string pose, [Values(false, true)] bool leftHanded)
-        {
-            PlayerMannequin m = Make(leftHanded);
-            Transform sweetSpot = Equipment.AttachBat(m.BatAnchor);
-            m.ApplyPose(pose switch
-            {
-                "Stance" => MannequinPoses.BatStance, "Load" => MannequinPoses.BatLoad, "Stride" => MannequinPoses.BatStride,
-                "Contact" => MannequinPoses.BatContact, _ => MannequinPoses.BatFollowThrough,
-            });
-            Vector3 along = (sweetSpot.position - m.BatAnchor.position).normalized;
-            // The left hand sits a hand-width below the right hand along the bat.
-            Vector3 toLeft = m.Joint(MannequinJoint.LeftHand).position - m.Joint(MannequinJoint.RightHand).position;
-            Assert.Less(toLeft.magnitude, 0.2f);
-            Assert.Less(Vector3.Dot(toLeft, along), 0f);
         }
     }
 }

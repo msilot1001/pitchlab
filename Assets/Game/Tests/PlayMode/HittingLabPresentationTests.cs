@@ -89,6 +89,10 @@ namespace Pitchlab.Tests
             Assert.IsTrue(result.IsContact);
             At(pitch.IdealContactTime - 0.01);
             Assert.IsFalse(_view.ContactShown, "nothing shown before the authoritative contact time");
+            At(pitch.IdealContactTime);
+            Transform sweetSpot = null;
+            foreach (Transform t in _view.Batter.GetComponentsInChildren<Transform>()) if (t.name == "SweetSpot") sweetSpot = t;
+            Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(result.BattedBall.Position), sweetSpot.position), 0.03f, "visual bat on the contact point at contact");
             At(pitch.IdealContactTime + 0.5);
             Assert.IsTrue(_view.ContactShown);
             Vector3 batted = SimulationSpace.ToUnity(_lab.LastBattedBall.Flight.StateAt(_lab.RenderedSimTime).Position);

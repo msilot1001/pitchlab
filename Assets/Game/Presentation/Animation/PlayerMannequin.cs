@@ -23,6 +23,10 @@ namespace Pitchlab.Presentation
     public sealed class PlayerMannequin : MonoBehaviour
     {
         public const int JointCount = 16;
+        /// <summary>Upper-arm length (m).</summary>
+        public const float UpperArm = 0.33f;
+        /// <summary>Ankle height (m) above the ground when the foot is flat (the foot box reaches the ground).</summary>
+        public const float AnkleHeight = 0.075f;
 
         [SerializeField] private bool _leftHanded;
         [SerializeField] private Color _bodyColor = new Color(0.07f, 0.07f, 0.08f);
@@ -72,12 +76,14 @@ namespace Pitchlab.Presentation
             Transform neck = Bone(MannequinJoint.Neck, chest, new Vector3(0f, 0.26f, 0f));
             Shape(neck, PrimitiveType.Sphere, new Vector3(0f, 0.15f, 0.01f), new Vector3(0.21f, 0.24f, 0.22f), body);   // head
 
-            Limb(MannequinJoint.RightUpperArm, chest, new Vector3(0.21f, 0.2f, 0f), 0.29f, 0.085f, body);
-            Limb(MannequinJoint.RightForearm, Joint(MannequinJoint.RightUpperArm), new Vector3(0f, -0.29f, 0f), 0.26f, 0.07f, body);
+            // Segment lengths ≈ standard adult ratios of height H = 1.85 m (Drillis & Contini / Winter): upper arm 0.186 H,
+            // forearm 0.146 H, thigh/shank ≈ 0.245 H, shoulder height 0.818 H, hip height 0.53 H.
+            Limb(MannequinJoint.RightUpperArm, chest, new Vector3(0.2f, 0.2f, 0f), UpperArm, 0.085f, body);
+            Limb(MannequinJoint.RightForearm, Joint(MannequinJoint.RightUpperArm), new Vector3(0f, -UpperArm, 0f), 0.26f, 0.07f, body);
             Transform rightHand = Bone(MannequinJoint.RightHand, Joint(MannequinJoint.RightForearm), new Vector3(0f, -0.26f, 0f));
             Shape(rightHand, PrimitiveType.Sphere, new Vector3(0f, -0.04f, 0f), new Vector3(0.08f, 0.1f, 0.06f), body);
-            Limb(MannequinJoint.LeftUpperArm, chest, new Vector3(-0.21f, 0.2f, 0f), 0.29f, 0.085f, body);
-            Limb(MannequinJoint.LeftForearm, Joint(MannequinJoint.LeftUpperArm), new Vector3(0f, -0.29f, 0f), 0.26f, 0.07f, body);
+            Limb(MannequinJoint.LeftUpperArm, chest, new Vector3(-0.2f, 0.2f, 0f), UpperArm, 0.085f, body);
+            Limb(MannequinJoint.LeftForearm, Joint(MannequinJoint.LeftUpperArm), new Vector3(0f, -UpperArm, 0f), 0.26f, 0.07f, body);
             Transform leftHand = Bone(MannequinJoint.LeftHand, Joint(MannequinJoint.LeftForearm), new Vector3(0f, -0.26f, 0f));
             Shape(leftHand, PrimitiveType.Sphere, new Vector3(0f, -0.04f, 0f), new Vector3(0.08f, 0.1f, 0.06f), body);
 
@@ -93,9 +99,9 @@ namespace Pitchlab.Presentation
             RightHandAnchor = Anchor("RightHandAnchor", rightHand, new Vector3(0f, -0.06f, 0.02f));
             LeftHandAnchor = Anchor("LeftHandAnchor", leftHand, new Vector3(0f, -0.06f, 0.02f));
             // The bat grip sits in the right (top) hand; glove on the left hand; a held ball in the right fingers.
-            BatAnchor = Anchor("BatAnchor", rightHand, new Vector3(0f, -0.06f, 0f));
+            BatAnchor = Anchor("BatAnchor", rightHand, Vector3.zero);   // at the wrist joint the grip IK targets
             GloveAnchor = Anchor("GloveAnchor", leftHand, new Vector3(0f, -0.08f, 0.02f));
-            BallAnchor = Anchor("BallAnchor", rightHand, new Vector3(0f, -0.1f, 0.04f));
+            BallAnchor = Anchor("BallAnchor", rightHand, new Vector3(0f, -0.13f, 0.03f));   // ball centre in the fingers (hand ≈ 0.108 H)
 
             _pelvisRest = pelvis.localPosition;
             LeftHanded = _leftHanded;
@@ -124,9 +130,31 @@ namespace Pitchlab.Presentation
             Point(MannequinJoint.LeftShin, pose.LeftShin);
             _joints[(int)MannequinJoint.RightHand].localRotation = Quaternion.identity;
             _joints[(int)MannequinJoint.LeftHand].localRotation = Quaternion.identity;
-            Flatten(MannequinJoint.RightFoot);
-            Flatten(MannequinJoint.LeftFoot);
+            if (pose.RightFootWeight > 0f) ReachLimb(MannequinJoint.RightThigh, pose.RightFoot, pose.RightKneeHint);
+            if (pose.LeftFootWeight > 0f) ReachLimb(MannequinJoint.LeftThigh, pose.LeftFoot, pose.LeftKneeHint);
+            OrientFoot(MannequinJoint.RightFoot, pose.RightFootYaw, pose.RightFootPitch);
+            OrientFoot(MannequinJoint.LeftFoot, pose.LeftFootYaw, pose.LeftFootPitch);
+            if (pose.RightHandWeight > 0f) ReachLimb(MannequinJoint.RightUpperArm, pose.RightHand, pose.RightElbowHint);
+            if (pose.LeftHandWeight > 0f) ReachLimb(MannequinJoint.LeftUpperArm, pose.LeftHand, pose.LeftElbowHint);
             if (pose.GripWeight > 0f) Grip(pose.GripPoint, pose.GripDirection);
+        }
+
+        /// <summary>Figure-frame vector of a world vector (includes the left-handed mirror).</summary>
+        public Vector3 WorldToFigure(Vector3 worldVector) => _visual.InverseTransformVector(worldVector);
+
+        /// <summary>World position of a figure-frame point (includes the left-handed mirror).</summary>
+        public Vector3 FigurePoint(Vector3 figurePoint) => _visual.TransformPoint(figurePoint);
+
+        /// <summary>
+        /// Two-bone reach of a limb (upper arm or thigh as <paramref name="root"/>) so its end joint (wrist or ankle) is at a
+        /// figure-frame point, bending toward a figure-frame hint direction (elbow/knee side).
+        /// </summary>
+        public void ReachLimb(MannequinJoint root, Vector3 figureTarget, Vector3 figureHint)
+        {
+            Transform upper = Joint(root);
+            Transform lower = Joint(root + 1);
+            Vector3 target = _visual.TransformPoint(figureTarget);
+            Reach(upper, lower, Joint(root + 2), target, (upper.position + target) * 0.5f + FigureToWorld(figureHint) * 0.5f);
         }
 
         /// <summary>
@@ -160,11 +188,13 @@ namespace Pitchlab.Presentation
         /// Bends an arm so its hand reaches toward <paramref name="target"/> (world): two-bone analytic solution with the
         /// elbow toward <paramref name="elbowHint"/> (world point). Presentation-only grip helper (second hand on the bat).
         /// </summary>
-        public void ReachArm(bool rightArm, Vector3 target, Vector3 elbowHint)
+        public void ReachArm(bool rightArm, Vector3 target, Vector3 elbowHint) => Reach(
+            Joint(rightArm ? MannequinJoint.RightUpperArm : MannequinJoint.LeftUpperArm),
+            Joint(rightArm ? MannequinJoint.RightForearm : MannequinJoint.LeftForearm),
+            Joint(rightArm ? MannequinJoint.RightHand : MannequinJoint.LeftHand), target, elbowHint);
+
+        private static void Reach(Transform upper, Transform lower, Transform hand, Vector3 target, Vector3 elbowHint)
         {
-            Transform upper = Joint(rightArm ? MannequinJoint.RightUpperArm : MannequinJoint.LeftUpperArm);
-            Transform lower = Joint(rightArm ? MannequinJoint.RightForearm : MannequinJoint.LeftForearm);
-            Transform hand = Joint(rightArm ? MannequinJoint.RightHand : MannequinJoint.LeftHand);
             float a = Vector3.Distance(upper.position, lower.position), b = Vector3.Distance(lower.position, hand.position);
             Vector3 toTarget = target - upper.position;
             float d = Mathf.Clamp(toTarget.magnitude, 0.05f, (a + b) * 0.999f);
@@ -179,12 +209,14 @@ namespace Pitchlab.Presentation
 
         private static void PointWorld(Transform bone, Vector3 world) => AimLocalAxis(bone, Vector3.down, world);
 
-        private void Flatten(MannequinJoint foot)
+        /// <summary>Foot toe direction (yaw, figure frame) and pitch (+ = heel up), independent of the shin.</summary>
+        private void OrientFoot(MannequinJoint foot, float yaw, float pitch)
         {
             Transform f = _joints[(int)foot];
-            Vector3 forward = Vector3.ProjectOnPlane(_joints[(int)MannequinJoint.Pelvis].TransformVector(Vector3.forward), Vector3.up);
-            Vector3 up = f.parent.InverseTransformVector(Vector3.up), fwd = f.parent.InverseTransformVector(forward);
-            if (fwd.sqrMagnitude > 1e-8f) f.localRotation = Quaternion.LookRotation(fwd.normalized, up.normalized);
+            Quaternion q = Quaternion.Euler(pitch, yaw, 0f);
+            Vector3 forward = _visual.TransformVector(q * Vector3.forward), up = _visual.TransformVector(q * Vector3.up);
+            Vector3 fwd = f.parent.InverseTransformVector(forward), u = f.parent.InverseTransformVector(up);
+            if (fwd.sqrMagnitude > 1e-8f) f.localRotation = Quaternion.LookRotation(fwd.normalized, u.normalized);
         }
 
         private Transform Bone(MannequinJoint joint, Transform parent, Vector3 localPosition)

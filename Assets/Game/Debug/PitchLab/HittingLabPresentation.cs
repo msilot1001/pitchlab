@@ -33,13 +33,21 @@ namespace Pitchlab.Sandbox
         private TrailRenderer _trail;
         private Transform _shadow;
         private float _ballDiameter;
-        private PoseSequence _delivery;
-        private MannequinPose _stance, _load, _stride, _contact, _follow;
-        private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose(), _to = new MannequinPose();
+        // Reference motions (Docs/MOTION_REFERENCE.md): normalized clips whose markers are pinned to authoritative times.
+        private MotionClip _swingClip, _deliveryClip;
+        private readonly MotionTimeline _deliveryTime = new MotionTimeline();
+        private float _uStance, _uLaunch, _uContact, _uSwingEnd;
+        private Vector3 _gripShift;         // figure-frame hand shift that puts the bat on the contact point (or PCI)
+        private float _swingYaw, _finishTilt;
+        private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
+        // Last shown poses: a new pitch thrown before a figure has returned to its start blends from here (no snapping).
+        private readonly MannequinPose _pitcherShown = new MannequinPose(), _batterShown = new MannequinPose();
+        private readonly MannequinPose _pitcherFrom = new MannequinPose(), _batterFrom = new MannequinPose();
+        private bool _pitcherTransition, _batterTransition;
 
         private HittingPitch _pitch;          // the pitch the presentation is currently showing
         private SwingInput? _swing;
-        private Vector3 _pitcherRoot, _batterRoot, _batterShift;
+        private Vector3 _pitcherRoot, _batterRoot;
         private bool _contactShown, _landingShown;
         private string _banner = string.Empty;
         private GUIStyle _bannerStyle;
@@ -59,13 +67,11 @@ namespace Pitchlab.Sandbox
                 return;
             }
 
-            _delivery = new PoseSequence(
-                (-Mathf.Max((float)_lab.DeliveryLead, 0.8f), MannequinPoses.PitchSet), (-0.75f, MannequinPoses.PitchLegLift), (-0.3f, MannequinPoses.PitchStride),
-                (-0.12f, MannequinPoses.PitchArmCock), (0f, MannequinPoses.PitchRelease), (0.35f, MannequinPoses.PitchFollowThrough),
-                (1.4f, MannequinPoses.PitchFollowThrough), (2.4f, MannequinPoses.PitchSet));
-            _stance = MannequinPoses.BatStance;
-            _load = MannequinPoses.BatLoad;
-            _stride = MannequinPoses.BatStride;
+            _swingClip = ReferenceMotions.ReferenceRightHandedSwing();
+            _uStance = _swingClip.Marker("stance");
+            _uLaunch = _swingClip.Marker("launch");
+            _uContact = _swingClip.Marker("contact");
+            _uSwingEnd = _swingClip.Marker("finish");
 
             _pitcher = Instantiate(_mannequinPrefab, transform);
             _pitcher.name = "Pitcher";
@@ -113,7 +119,7 @@ namespace Pitchlab.Sandbox
             _trail.sharedMaterial = PresentationMaterials.Get(new Color(1f, 1f, 1f), unlit: true);
             _trail.emitting = false;
 
-            PlacePitcher(PitchPresets.All[0].ToInitialState().Position);
+            PlacePitcher(PitchPresets.All[0].ToInitialState().Position);   // idle: the pitcher waits in the set position
             PlaceBatter();
             ResetForPitch(null);
         }
@@ -170,42 +176,99 @@ namespace Pitchlab.Sandbox
             _swing = null;
             _contactShown = false;
             _landingShown = false;
-            _batterShift = Vector3.zero;
+            _gripShift = Vector3.zero;
+            _swingYaw = _finishTilt = 0f;
             _banner = string.Empty;
             _landing.Hide();
             _cue.Hide();
             _trail.Clear();
             _baseballCamera.ShowBatting();
+            MannequinPose.Blend(_pitcherShown, _pitcherShown, 0f, _pitcherFrom);
+            MannequinPose.Blend(_batterShown, _batterShown, 0f, _batterFrom);
             if (pitch != null) PlacePitcher(pitch.Flight.First.Position);
+            _deliveryClip.Sample(_deliveryClip.Marker("set"), _from);
+            _pitcherTransition = pitch != null && Away(_pitcherFrom, _from);
+            _swingClip.Sample(_uStance, _from);
+            _batterTransition = pitch != null && Away(_batterFrom, _from);
         }
 
-        /// <summary>Puts the pitcher on the mound so that the throwing hand reaches the simulated release point at release.</summary>
-        private void PlacePitcher(Vector3d release)
+        /// <summary>
+        /// Fits the reference delivery to this pitch's authoritative release: the figure stands on the rubber (mound top),
+        /// the release key's hand target is the simulated release point, and any remaining reach shortfall becomes one small,
+        /// constant root offset applied before the wind-up starts (no sliding during the motion).
+        /// </summary>
+        private void PlacePitcher(Vector3d releaseSim)
         {
-            var mound = new Vector3(0f, 0f, (float)PitchingGeometry.RubberFrontY + 0.25f);
-            _pitcher.transform.SetPositionAndRotation(mound, Quaternion.Euler(0f, 180f, 0f));
-            _pitcher.ApplyPose(MannequinPoses.PitchRelease);
-            Vector3 offset = SimulationSpace.ToUnity(release) - _pitcher.BallAnchor.position;
-            // Presentation fit: slide the figure (not the simulation) within limits; the mound is not modelled in height.
-            offset = new Vector3(Mathf.Clamp(offset.x, -1f, 1f), Mathf.Clamp(offset.y, -0.35f, 0.35f), Mathf.Clamp(offset.z, -1f, 1f));
-            _pitcherRoot = mound + offset;
-            _pitcher.transform.position = _pitcherRoot;
+            Vector3 release = SimulationSpace.ToUnity(releaseSim);
+            var rubber = new Vector3(0f, FieldDressing.MoundTop, (float)PitchingGeometry.RubberFrontY);
+            Vector3 plant = ReferenceMotions.FootPlant(0f);
+            Vector3 Figure(Vector3 world) => new Vector3(rubber.x - world.x, world.y - rubber.y, rubber.z - world.z);   // root faces home (yaw 180)
+            float drop = FieldDressing.MoundTop - FieldDressing.MoundHeight(rubber.x - plant.x, rubber.z - plant.z);
+            // The figure stands on the rubber; only the release wrist target is corrected (a few passes) until the ball in
+            // the hand meets the simulated release point — the feet never move for the fit.
+            Vector3 correction = Vector3.zero;
+            _pitcher.transform.SetPositionAndRotation(rubber, Quaternion.Euler(0f, 180f, 0f));
+            for (int pass = 0; pass < 4; pass++)
+            {
+                _deliveryClip = ReferenceMotions.ReferenceRightHandedPitchDelivery(Figure(release), drop, correction);
+                _deliveryClip.Sample(_deliveryClip.Marker("release"), _pose);
+                _pitcher.ApplyPose(_pose);
+                Vector3 miss = release - _pitcher.BallAnchor.position;
+                correction = Vector3.ClampMagnitude(correction + new Vector3(-miss.x, miss.y, -miss.z), 0.2f);
+            }
+
+            _deliveryClip = ReferenceMotions.ReferenceRightHandedPitchDelivery(Figure(release), drop, correction);
+            ReleaseFitOffset = correction;
+            _pitcherRoot = rubber;
+
+            // Wind-up: the throw press (−DeliveryLead) shows "set", release is the authoritative release, then real seconds.
+            _deliveryTime.Clear();
+            _deliveryTime.Add(-_lab.DeliveryLead, _deliveryClip.Marker("set"));
+            _deliveryTime.Add(0.0, _deliveryClip.Marker("release"));
+            _deliveryTime.Add(ReferenceMotions.DeliveryEnd, _deliveryClip.Marker("recovery"));
         }
+
+        /// <summary>Release fit (presentation only): figure-frame correction of the release wrist target.</summary>
+        public Vector3 ReleaseFitOffset { get; private set; }
 
         private void PlaceBatter()
         {
             bool left = _lab.Swing.Side == BatterSide.Left;
             _batter.LeftHanded = left;
-            // In the box beside the plate, facing it: third-base side (−X) for a right-handed hitter.
-            _batterRoot = new Vector3(left ? 0.85f : -0.85f, 0f, 0.35f);
-            _batter.transform.SetPositionAndRotation(_batterRoot, Quaternion.Euler(0f, left ? -90f : 90f, 0f));
+            // Stance position (Baseball Savant batter positioning, reference hitter 2024): hips 24.7 in behind the front of
+            // the plate and 27.7 in off its inside edge; the figure faces the pitcher, plate on its right (mirrored for lefties).
+            float off = (float)Units.InchesToMeters(8.5 + 27.7);
+            _batterRoot = new Vector3(left ? off : -off, 0f, (float)(PitchingGeometry.PlateFrontY - Units.InchesToMeters(24.7)));
+            _batter.transform.SetPositionAndRotation(_batterRoot, Quaternion.identity);
         }
 
         private void AnimatePitcher(double t)
         {
-            _delivery.Sample(double.IsNegativeInfinity(t) ? _delivery.Start : (float)t, _pose);
+            _deliveryClip.Sample(double.IsNegativeInfinity(t) ? _deliveryClip.Marker("set") : _deliveryTime.U(t), _pose);
+            // After the recovery the pitcher walks back to the rubber (two steps) and waits in the set position.
+            double back = t - ReferenceMotions.DeliveryEnd - 0.8;
+            if (back > 0.0)
+            {
+                _deliveryClip.Sample(_deliveryClip.Marker("set"), _from);
+                MannequinPose.StepBlend(_pose, _from, Ease(back / 1.2), _pose);
+            }
+
+            if (_pitcherTransition) Transition(_pitcherFrom, t, 0.6);   // e.g. still in the recovery 1.4 m off the rubber
             _pitcher.ApplyPose(_pose);
+            MannequinPose.Blend(_pose, _pose, 0f, _pitcherShown);
         }
+
+        /// <summary>Right after a new pitch is thrown, step from the previously shown pose into the new motion.</summary>
+        private void Transition(MannequinPose from, double t, double seconds)
+        {
+            double since = t + _lab.DeliveryLead;
+            if (_pitch != null && since < seconds) MannequinPose.StepBlend(from, _pose, Ease(since / seconds), _pose);
+        }
+
+        /// <summary>A transition is needed only if the figure was shown away from the motion's start (feet or hips moved).</summary>
+        private static bool Away(MannequinPose shown, MannequinPose start) =>
+            (shown.LeftFoot - start.LeftFoot).magnitude + (shown.RightFoot - start.RightFoot).magnitude + (shown.PelvisOffset - start.PelvisOffset).magnitude > 0.05f
+            || Mathf.Abs(Mathf.DeltaAngle(shown.Pelvis.y, start.Pelvis.y)) > 5f;
 
         private void OnSwing(SwingInput swing, ContactResult result)
         {
@@ -213,30 +276,28 @@ namespace Pitchlab.Sandbox
             // Presentation reflects the authoritative swing: timing turns the body (early = more open, pulled), the vertical
             // offset tilts the finish (undercut = higher, topped = lower).
             double timing = double.IsNaN(result.TimingError) ? 0.0 : result.TimingError;
-            float yaw = Mathf.Clamp((float)(timing * _lab.Swing.SprayRate * Mathf.Rad2Deg), -30f, 30f);
-            _contact = MannequinPoses.BatContact;
-            _contact.Pelvis.y += yaw;
-            _contact.Chest.y += 0.5f * yaw;
-            _follow = MannequinPoses.BatFollowThrough;
-            _follow.Pelvis.y += yaw;
+            _swingYaw = Mathf.Clamp((float)(timing * _lab.Swing.SprayRate * Mathf.Rad2Deg), -30f, 30f);   // early (−) opens the hips further
             double vertical = double.IsNaN(result.VerticalOffset) ? 0.0 : result.VerticalOffset;
-            _follow.GripDirection = Quaternion.AngleAxis(Mathf.Clamp((float)(vertical * 600.0), -20f, 20f), Vector3.right) * _follow.GripDirection;
+            _finishTilt = Mathf.Clamp((float)(vertical * 600.0), -20f, 20f);
 
             // Where the bat should be at contact time: on the ball for a hit; where the player aimed (the PCI, at the contact
-            // plane) for a miss, so the bat visibly passes under, over or beside the ball.
+            // plane) for a miss, so the bat visibly passes under, over or beside the ball. Reached by moving the hands (the
+            // feet stay planted), relative to the reference contact pose.
             Vector3 target = SimulationSpace.ToUnity(result.IsContact ? result.BattedBall.Position : new Vector3d(swing.PciX, _pitch.ContactPlaneY, swing.PciZ));
             _batter.transform.position = _batterRoot;
-            _batter.ApplyPose(_contact);
-            Vector3 delta = target - _sweetSpot.position;
-            _batterShift = new Vector3(Mathf.Clamp(delta.x, -0.3f, 0.3f), Mathf.Clamp(delta.y, -0.3f, 0.3f), Mathf.Clamp(delta.z, -0.4f, 0.4f));
+            _swingClip.Sample(_uContact, _pose);
+            _pose.Pelvis.y += _swingYaw;
+            _pose.Chest.y += 0.5f * _swingYaw;   // exactly the pose shown at contact (see AnimateBatter)
+            _batter.ApplyPose(_pose);
+            _gripShift = Vector3.ClampMagnitude(_batter.WorldToFigure(target - _sweetSpot.position), 0.25f);
         }
 
         private void AnimateBatter(double t)
         {
-            float shift = 0f;
+            float weight = 0f;
             if (_pitch == null || double.IsNegativeInfinity(t))
             {
-                MannequinPose.Blend(_stance, _stance, 0f, _pose);
+                _swingClip.Sample(_uStance, _pose);
             }
             else if (!_swing.HasValue)
             {
@@ -246,31 +307,50 @@ namespace Pitchlab.Sandbox
             {
                 double s = _swing.Value.StartTime, c = s + _lab.Swing.SwingDuration;
                 if (t < s) PreSwing(t, _pose);
-                else if (t < c)
+                else
                 {
-                    PreSwing(s, _from);
-                    MannequinPose.Blend(_from, _contact, Ease((t - s) / (c - s)), _pose);
+                    // Launch → contact is pinned to the authoritative swing: start wherever the pre-swing motion was at the
+                    // press, reach the contact marker exactly at the contact time, then play the finish in real seconds.
+                    float u = t < c
+                        ? Mathf.Lerp(PreSwingU(s), _uContact, (float)((t - s) / (c - s)))
+                        : Mathf.Min(_uSwingEnd, _uContact + (float)(t - c) / (ReferenceMotions.SwingEnd - ReferenceMotions.SwingStart));
+                    _swingClip.Sample(u, _pose);
+                    // Timing turn and finish tilt fade in with the swing and out with the return to stance.
+                    float back = t > c + 2.5 ? Ease((t - c - 2.5) / 1.0) : 0f;
+                    weight = (float)(t < c ? (t - s) / (c - s) : Math.Max(0.0, 1.0 - (t - c) / 0.5));
+                    float turn = (t < c ? weight : 1f) * (1f - back);
+                    _pose.Pelvis.y += _swingYaw * turn;
+                    _pose.Chest.y += 0.5f * _swingYaw * turn;
+                    if (t > c) _pose.GripDirection = Quaternion.AngleAxis(-_finishTilt * Mathf.Clamp01((float)(t - c) / 0.3f) * (1f - back), Vector3.right) * _pose.GripDirection;
+                    if (back > 0f)
+                    {
+                        _swingClip.Sample(_uStance, _from);
+                        MannequinPose.StepBlend(_pose, _from, back, _pose);
+                    }
                 }
-                else if (t < c + 0.3) MannequinPose.Blend(_contact, _follow, Ease((t - c) / 0.3), _pose);
-                else if (t < c + 2.5) MannequinPose.Blend(_follow, _follow, 0f, _pose);
-                else MannequinPose.Blend(_follow, _stance, Ease((t - c - 2.5) / 0.8), _pose);
-                // Slide toward the contact point around contact only (bump: 0 → 1 at contact → 0).
-                shift = (float)(t < s - 0.05 ? 0.0 : t < c ? (t - s + 0.05) / (c - s + 0.05) : Math.Max(0.0, 1.0 - (t - c) / 0.6));
             }
 
-            _batter.transform.position = _batterRoot + _batterShift * Mathf.SmoothStep(0f, 1f, shift);
+            _pose.GripPoint += _gripShift * Mathf.SmoothStep(0f, 1f, weight);
+            if (_batterTransition && !double.IsNegativeInfinity(t)) Transition(_batterFrom, t, 0.35);
+            _batter.transform.position = _batterRoot;
             _batter.ApplyPose(_pose);
+            MannequinPose.Blend(_pose, _pose, 0f, _batterShown);
         }
 
-        /// <summary>Stance → load before release → stride as the pitch arrives; back to stance once it has passed.</summary>
+        /// <summary>Clip position before any swing: the reference timing relative to the expected contact, holding at launch-ready.</summary>
+        private float PreSwingU(double t) =>
+            Mathf.Min(_uLaunch, ReferenceMotions.SwingU((float)(t - _pitch.IdealContactTime)));
+
+        /// <summary>Stance → load → stride → plant toward the expected contact; after a take, back to the stance.</summary>
         private void PreSwing(double t, MannequinPose into)
         {
-            double stride = Math.Max(0.15, _pitch.IdealContactTime - _lab.Swing.SwingDuration - 0.02);
-            if (t < -0.5) MannequinPose.Blend(_stance, _stance, 0f, into);
-            else if (t < 0.0) MannequinPose.Blend(_stance, _load, Ease((t + 0.5) / 0.5), into);
-            else if (t < stride) MannequinPose.Blend(_load, _stride, Ease(t / stride), into);
-            else if (t < _pitch.Flight.Duration + 0.3) MannequinPose.Blend(_stride, _stride, 0f, into);
-            else MannequinPose.Blend(_stride, _stance, Ease((t - _pitch.Flight.Duration - 0.3) / 0.6), into);
+            _swingClip.Sample(PreSwingU(t), into);
+            double passed = t - _pitch.Flight.Duration - 0.3;
+            if (passed > 0.0)
+            {
+                _swingClip.Sample(_uStance, _from);
+                MannequinPose.StepBlend(into, _from, Ease(passed / 1.0), into);
+            }
         }
 
         private void ShowContact(ContactResult r)
