@@ -1,0 +1,71 @@
+using System;
+using Pitchlab.Simulation.Core;
+
+namespace Pitchlab.Simulation.BallFlight
+{
+    /// <summary>Uniform atmosphere and gravity for a flight (SI). Gravity acts along -Z.</summary>
+    public readonly struct EnvironmentState
+    {
+        /// <summary>Standard gravity, m/s².</summary>
+        public const double StandardGravity = 9.80665;
+
+        /// <summary>Air density, kg/m³.</summary>
+        public readonly double AirDensity;
+        /// <summary>Gravitational acceleration magnitude, m/s².</summary>
+        public readonly double Gravity;
+        /// <summary>Air velocity relative to the ground, m/s, in the simulation frame.</summary>
+        public readonly Vector3d Wind;
+
+        /// <summary>
+        /// Dynamic viscosity of air, Pa·s, at about 20 °C (varies ≈ ±5 % over playable temperatures). Used only to
+        /// report Reynolds numbers for the model's validity range, not in the forces.
+        /// </summary>
+        public const double AirDynamicViscosity = 1.81e-5;
+
+        public EnvironmentState(double airDensity, double gravity, Vector3d wind)
+        {
+            if (!(airDensity >= 0.0) || double.IsInfinity(airDensity)) throw new ArgumentOutOfRangeException(nameof(airDensity));
+            if (double.IsNaN(gravity) || double.IsInfinity(gravity)) throw new ArgumentOutOfRangeException(nameof(gravity));
+            if (double.IsNaN(wind.Length) || double.IsInfinity(wind.Length)) throw new ArgumentOutOfRangeException(nameof(wind));
+            AirDensity = airDensity;
+            Gravity = gravity;
+            Wind = wind;
+        }
+
+        /// <summary>Sea level, 21 °C (70 °F), 50 % relative humidity, still air: ρ ≈ 1.194 kg/m³.</summary>
+        public static EnvironmentState Standard => FromWeather(21.0, 101325.0, 0.5, Vector3d.Zero);
+
+        /// <summary>No air: gravity only.</summary>
+        public static EnvironmentState Vacuum => new EnvironmentState(0.0, StandardGravity, Vector3d.Zero);
+
+        /// <summary>Environment from station weather, using <see cref="MoistAirDensity"/>.</summary>
+        public static EnvironmentState FromWeather(double temperatureCelsius, double stationPressurePascals, double relativeHumidity, Vector3d wind) =>
+            new EnvironmentState(MoistAirDensity(temperatureCelsius, stationPressurePascals, relativeHumidity), StandardGravity, wind);
+
+        /// <summary>
+        /// International Standard Atmosphere pressure (Pa) at an elevation (m), sea-level 101 325 Pa:
+        /// p = 101325·(1 − 2.25577e-5·h)^5.25588. Used when only a park's elevation is known.
+        /// </summary>
+        public static double StandardAtmospherePressure(double elevationMeters) =>
+            101325.0 * Math.Pow(1.0 - 2.25577e-5 * elevationMeters, 5.25588);
+
+        /// <summary>
+        /// Moist-air density (kg/m³) as an ideal mixture of dry air and water vapour. Saturation vapour pressure
+        /// uses the Buck (1996) equation. <paramref name="relativeHumidity"/> is a 0–1 fraction.
+        /// </summary>
+        public static double MoistAirDensity(double temperatureCelsius, double stationPressurePascals, double relativeHumidity)
+        {
+            // Buck's fit is for roughly −80..+50 °C; the playable range is far narrower.
+            if (!(temperatureCelsius >= -80.0 && temperatureCelsius <= 60.0)) throw new ArgumentOutOfRangeException(nameof(temperatureCelsius));
+            if (!(stationPressurePascals > 0.0) || double.IsInfinity(stationPressurePascals)) throw new ArgumentOutOfRangeException(nameof(stationPressurePascals));
+            if (!(relativeHumidity >= 0.0 && relativeHumidity <= 1.0)) throw new ArgumentOutOfRangeException(nameof(relativeHumidity));
+            const double dryAirGasConstant = 287.058;     // J/(kg·K)
+            const double waterVapourGasConstant = 461.495; // J/(kg·K)
+            double t = temperatureCelsius;
+            double saturation = 611.21 * Math.Exp((18.678 - t / 234.5) * (t / (257.14 + t)));
+            double vapour = relativeHumidity * saturation;
+            double kelvin = t + 273.15;
+            return (stationPressurePascals - vapour) / (dryAirGasConstant * kelvin) + vapour / (waterVapourGasConstant * kelvin);
+        }
+    }
+}

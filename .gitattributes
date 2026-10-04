@@ -15,3 +15,11 @@
 *.aiff filter=lfs diff=lfs merge=lfs -text
 *.mp4 filter=lfs diff=lfs merge=lfs -text
 *.mov filter=lfs diff=lfs merge=lfs -text
+# Unity writes YAML with trailing spaces (e.g. "userData: "); exempt serialized assets from whitespace checks.
+*.meta -whitespace
+*.unity -whitespace
+*.prefab -whitespace
+*.asset -whitespace
+*.mat -whitespace
+*.anim -whitespace
+*.controller -whitespace

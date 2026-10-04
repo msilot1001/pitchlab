@@ -1,0 +1,16 @@
+{
+    "name": "Pitchlab.Gameplay",
+    "rootNamespace": "Pitchlab.Gameplay",
+    "references": [
+        "Pitchlab.Simulation"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}
