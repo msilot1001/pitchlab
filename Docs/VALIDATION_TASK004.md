@@ -1,4 +1,4 @@
-# TASK-004 — Batted-ball flight validation (status: flight model consistent with 2024 Statcast given average spin; contact spin not validated)
+# TASK-004 — Batted-ball flight validation (status: flight model consistent with 2024 Statcast given average spin; contact spin conditionally validated in TASK-004.5)
 
 Regenerate: explicit test `BattedBallValidationTests.WriteBattedValidationReport` → `TestResults/batted_validation.md`. Thresholds were pre-registered in the overnight ExecPlan before any replay and are unchanged. The pre-registered **spin input** (backspin only) was replaced after it failed — a post-hoc protocol deviation, documented below.
 
@@ -65,7 +65,7 @@ Independent checks: `MatchesNathanTrajectoryCalculator` reproduces both spreadsh
 | H3 | tracker era | weakened | same −8 ft bound; adopted model +2.6 ft on 2024, −4.0 ft on 2016 |
 | H4 | drag model / seasonal drag | weakened | coefficients unchanged and pass; season C_D changes 0.01–0.03 ≈ 4–14 ft at most |
 | H5 | lift / spin model — **validation spin input** | **supported (root cause)** | backspin-only input; Statcast-average spin with sidespin removes the bias on 2016 and 2024 |
-| H6 | ContactResolver batted-ball spin | supported (separate issue) | contact model gives backspin only, ≈ 160 rpm/° of LA (≈ 1.6–1.8× Statcast); changes distance by −26 … +17 ft vs average spin at 100 mph |
+| H6 | ContactResolver batted-ball spin | supported (separate issue; addressed in TASK-004.5) | at the time, the contact model gave backspin only, ≈ 160 rpm/° of LA (≈ 1.6–1.8× Statcast), changing distance by −26 … +17 ft vs average spin at 100 mph |
 | H7 | environment | ruled out | ±10 °F → ±2.9 ft; −30 ft would need ρ ≈ 1.45 |
 | H8 | `hit_distance_sc` semantics | ruled out as cause | home runs, caught outs and landed hits had the same bias |
 | H9 | other | none found | |
@@ -95,6 +95,6 @@ Independent checks: `MatchesNathanTrajectoryCalculator` reproduces both spreadsh
 
 ## Remaining limitations
 
-- In-game batted balls get their spin from `ContactResolver` (H6): backspin only, too high. Flight is validated; contact spin is not. HittingLab shows "contact spin not yet validated". Distance-dependent gameplay should use a contact spin validated against Statcast spin distributions.
+- In-game batted balls get their spin from `ContactResolver`. Since TASK-004.5 (`Docs/HITTING.md`) it produces a 3D spin vector — backspin or topspin from undercut/overcut, sidespin from the bat's vertical angle and timing yaw, plus the surviving part of the incoming pitch spin ⟂ the line of centres — from sourced collision parameters. Validation of that spin is conditional: public Statcast has no per-ball spin, so it compares averages over a deterministic contact grid with Nathan's average-Statcast spin model (itself a regression with an inferred back/side split) and checks that fly-ball carry stays within a few feet of the reference spin. That shows physical plausibility and protects against regressions; it does not prove individual-ball spin accuracy.
 - The average spin model is an average; per-ball spin scatter leaves ≈ 14 ft RMS.
 - Only Tropicana dome data; wind and outdoor air are covered only by the environment sensitivity tests.
