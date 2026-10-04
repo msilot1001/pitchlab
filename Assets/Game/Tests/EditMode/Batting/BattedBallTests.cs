@@ -67,6 +67,22 @@ namespace Pitchlab.Tests.Batting
         }
 
         [Test]
+        public void FromStateInvertsToStateAndIgnoresGyrospin()
+        {
+            var launch = new BattedBallLaunch(100.0, 30.0, -20.0, 2000.0, 1500.0);
+            BallState s = launch.ToState(Contact);
+            BattedBallLaunch back = BattedBallLaunch.FromState(s);
+            Assert.AreEqual(launch.ExitSpeedMph, back.ExitSpeedMph, 1e-9);
+            Assert.AreEqual(launch.LaunchAngleDegrees, back.LaunchAngleDegrees, 1e-9);
+            Assert.AreEqual(launch.SprayAngleDegrees, back.SprayAngleDegrees, 1e-9);
+            Assert.AreEqual(launch.BackspinRpm, back.BackspinRpm, 1e-9);
+            Assert.AreEqual(launch.SidespinRpm, back.SidespinRpm, 1e-9);
+            var gyro = new BallState(s.Time, s.Position, s.Velocity, s.Spin + Units.RpmToRadiansPerSecond(800.0) * s.Velocity.Normalized);
+            Assert.AreEqual(launch.SidespinRpm, BattedBallLaunch.FromState(gyro).SidespinRpm, 1e-9);
+            Assert.AreEqual(launch.BackspinRpm, BattedBallLaunch.FromState(gyro).BackspinRpm, 1e-9);
+        }
+
+        [Test]
         public void SidespinIsTransverseToTheLaunchVelocity()
         {
             // Nathan 2017 Eq. 4: backspin and sidespin axes are both ⟂ to the launch velocity (no gyrospin).

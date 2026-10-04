@@ -417,6 +417,7 @@ MonoBehaviour:
     Side: 0
     BatSpeed: 32.18688
     AttackAngle: 0.17453292519943295
+    VerticalBatAngle: 0.5585053606381855
     SwingDuration: 0.15
     BarrelRadius: 0.033146999999999996
     SweetSpotEfficiency: 0.21
@@ -425,8 +426,8 @@ MonoBehaviour:
     BarrelHalfLength: 0.127
     SprayRate: 20.94395102393195
     MaxTimingError: 0.035
-    TangentialRestitution: 0.4
-    TangentialRecoil: 0.18
+    TangentialRestitution: 0.3
+    TangentialRecoil: 0.3
     Friction: 0.2
   _playbackSpeed: 1
   _ball: {fileID: 671174561}

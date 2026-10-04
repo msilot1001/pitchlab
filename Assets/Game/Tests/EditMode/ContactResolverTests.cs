@@ -1,6 +1,7 @@
 using System;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Simulation.Batting;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Pitching;
@@ -206,15 +207,17 @@ namespace Pitchlab.Tests
             Assert.Less(towardTip.CollisionEfficiency, towardHandle.CollisionEfficiency);
         }
 
-        [TestCase(1.0, TestName = "Oblique 30° collision, tangential impulse below friction limit")]
-        [TestCase(0.05, TestName = "Oblique 30° collision, friction-limited")]
-        public void ObliqueCollisionMatchesHandDerivation(double friction)
+        [TestCase(1.0, 0.0, TestName = "Oblique 30° collision, tangential impulse below friction limit")]
+        [TestCase(0.05, 0.0, TestName = "Oblique 30° collision, friction-limited")]
+        [TestCase(1.0, 32.0, TestName = "Oblique 30° collision, barrel tilted 32°")]
+        public void ObliqueCollisionMatchesHandDerivation(double friction, double batTiltDegrees)
         {
             // Vacuum, level swing, ball at 40 m/s along −Y, bat under the ball so the line of centres is 30° above
             // horizontal. Expected values derived by hand in scalar form (Docs/HITTING.md): n = (0, cos30, sin30),
             // t̂ = (0, −sin30, cos30), slip = (40 + V)·sin30, normal impulse = (1 + q)(40 + V)·cos30.
             SwingParameters p = Params;
             p.AttackAngle = 0.0;
+            p.VerticalBatAngle = Units.DegreesToRadians(batTiltDegrees);
             p.Friction = friction;
             var release = new BallState(0.0, new Vector3d(0.0, 18.0, 0.8), new Vector3d(0.0, -40.0, 0.0), Vector3d.Zero);
             HittingPitch pitch = HittingPitch.Create(release, new EnvironmentState(0.0, 0.0, Vector3d.Zero));
@@ -228,13 +231,189 @@ namespace Pitchlab.Tests
             // Ball velocity = normal part + bat tangential part (V·s along (0, s, −c)) + relative tangential (slip along t̂) − J·t̂.
             double vy = outNormal * c + V * s * s + (slip - j) * -s;
             double vz = outNormal * s - V * s * c + (slip - j) * c;
+            double w = 2.5 * j / BallProperties.Baseball.Radius;
+            // Ball and bat both move along Y, so tilting the barrel (tip, +X for a right-handed hitter, down by θ) rotates the
+            // whole level-barrel result about Y: +Z (undercut direction) → (sin θ, 0, cos θ), +X (backspin axis) → (cos θ, 0, −sin θ).
+            double t = Units.DegreesToRadians(batTiltDegrees);
             Assert.AreEqual(ContactOutcome.Contact, r.Outcome);
-            Assert.AreEqual(0.0, r.BattedBall.Velocity.X, 1e-9);
+            Assert.AreEqual(vz * Math.Sin(t), r.BattedBall.Velocity.X, 1e-9);
             Assert.AreEqual(vy, r.BattedBall.Velocity.Y, 1e-9);
-            Assert.AreEqual(vz, r.BattedBall.Velocity.Z, 1e-9);
-            Assert.AreEqual(2.5 * j / BallProperties.Baseball.Radius, r.BattedBall.Spin.X, 1e-6, "backspin about +X");
+            Assert.AreEqual(vz * Math.Cos(t), r.BattedBall.Velocity.Z, 1e-9);
+            Assert.AreEqual(w * Math.Cos(t), r.BattedBall.Spin.X, 1e-6, "backspin about the tilted barrel");
             Assert.AreEqual(0.0, r.BattedBall.Spin.Y, 1e-9);
-            Assert.AreEqual(0.0, r.BattedBall.Spin.Z, 1e-9);
+            Assert.AreEqual(-w * Math.Sin(t), r.BattedBall.Spin.Z, 1e-6);
+        }
+
+        // ---- Batted-ball spin (TASK-004.5). Spin components in BattedBallLaunch convention: backspin lifts, + sidespin
+        // curves toward +X (right field).
+
+        /// <summary>A pitch that is its own mirror image in X: released on the centre line, pure backspin.</summary>
+        private static HittingPitch SymmetricPitch() => HittingPitch.Create(
+            new BallState(0.0, new Vector3d(0.0, 16.8, 1.8), new Vector3d(0.0, -38.0, -1.5), new Vector3d(-Units.RpmToRadiansPerSecond(2200.0), 0.0, 0.0)),
+            EnvironmentState.Standard);
+
+        private static BattedBallLaunch Spin(ContactResult r) => BattedBallLaunch.FromState(r.BattedBall);
+
+        [TestCase(0.0, 0.0, 0.0), TestCase(0.0, 0.0, -0.0127), TestCase(-0.008, 0.0, -0.0127), TestCase(0.008, 0.0, -0.0127),
+         TestCase(0.004, 0.03, -0.006), TestCase(-0.003, -0.02, 0.015)]
+        public void LeftAndRightHandedContactAreMirrorImages(double timing, double pciDx, double pciDz)
+        {
+            // Mirrored swing (other hand, PCI mirrored) on a mirror-symmetric pitch: X velocity, spray and sidespin flip;
+            // speed, launch and backspin are identical. No sign table — the geometry (barrel tip side) does it.
+            HittingPitch pitch = SymmetricPitch();
+            SwingParameters lefty = Params;
+            lefty.Side = BatterSide.Left;
+            ContactResult r = Swing(pitch, timing, pciDx, pciDz), l = Swing(pitch, timing, -pciDx, pciDz, lefty);
+            Assert.IsTrue(r.IsContact && l.IsContact);
+            Assert.AreEqual(-r.BattedBall.Velocity.X, l.BattedBall.Velocity.X, 1e-9);
+            Assert.AreEqual(r.BattedBall.Velocity.Y, l.BattedBall.Velocity.Y, 1e-9);
+            Assert.AreEqual(r.BattedBall.Velocity.Z, l.BattedBall.Velocity.Z, 1e-9);
+            // Spin is a pseudovector: under X → −X its X component stays and Y, Z flip (backspin same, sidespin and gyro flip).
+            Assert.AreEqual(r.BattedBall.Spin.X, l.BattedBall.Spin.X, 1e-9);
+            Assert.AreEqual(-r.BattedBall.Spin.Y, l.BattedBall.Spin.Y, 1e-9);
+            Assert.AreEqual(-r.BattedBall.Spin.Z, l.BattedBall.Spin.Z, 1e-9);
+            Assert.AreEqual(-Spin(r).SidespinRpm, Spin(l).SidespinRpm, 1e-6);
+        }
+
+        [Test]
+        public void SidespinFollowsBatTiltAndTiming()
+        {
+            // Right-handed hitter. Undercut on time: the tilted barrel (tip down toward first base) turns some backspin
+            // into slice toward right field. Early (pulled) contact hooks toward left field, late (opposite field) slices
+            // more (Nathan, carry-v2 2020). Topped balls get topspin and hook.
+            HittingPitch pitch = SymmetricPitch();
+            BattedBallLaunch onTime = Spin(Swing(pitch, pciDz: -0.0127)), pulled = Spin(Swing(pitch, -0.010, pciDz: -0.0127)),
+                opposite = Spin(Swing(pitch, 0.010, pciDz: -0.0127)), topped = Spin(Swing(pitch, pciDz: 0.02));
+            Assert.Greater(onTime.BackspinRpm, 1000.0);
+            Assert.Greater(onTime.SidespinRpm, 0.0, "slice");
+            Assert.Less(pulled.SprayAngleDegrees, -10.0);
+            Assert.Less(pulled.SidespinRpm, 0.0, "pulled fly ball hooks");
+            Assert.Greater(opposite.SprayAngleDegrees, 10.0);
+            Assert.Greater(opposite.SidespinRpm, onTime.SidespinRpm, "opposite-field fly ball slices more");
+            Assert.Less(topped.BackspinRpm, 0.0, "topspin");
+            Assert.Less(topped.SidespinRpm, 0.0);
+
+            SwingParameters level = Params;
+            level.VerticalBatAngle = 0.0;
+            Assert.AreEqual(0.0, Spin(Swing(pitch, pciDz: -0.0127, p: level)).SidespinRpm, 1e-6, "no tilt, no yaw → no sidespin");
+        }
+
+        [Test]
+        public void SpinChangesContinuouslyWithContactOffset()
+        {
+            // 0.1 mm steps over ±50 mm of the ±70 mm vertical contact range, including where friction starts to cap the
+            // impulse (≈ 25 rpm per step at most; the line-of-centres angle steepens only in the last few mm of grazing).
+            HittingPitch pitch = Pitch(PitchPresets.FourSeam);
+            Vector3d previous = default;
+            bool first = true;
+            int contacts = 0;
+            for (int i = -500; i <= 500; i++)
+            {
+                ContactResult r = Swing(pitch, 0.002, 0.01, i * 0.0001);
+                if (!r.IsContact) { first = true; continue; }
+                contacts++;
+                Assert.IsFalse(double.IsNaN(r.BattedBall.Spin.Length) || double.IsInfinity(r.BattedBall.Spin.Length));
+                if (!first) Assert.Less(Units.RadiansPerSecondToRpm((r.BattedBall.Spin - previous).Length), 40.0, $"jump at {i * 0.1} mm");
+                previous = r.BattedBall.Spin;
+                first = false;
+            }
+
+            Assert.AreEqual(1001, contacts, "±50 mm is inside the ±70 mm reach: every step is contact");
+        }
+
+        [Test]
+        public void BallNeverGainsEnergyInTheBatFrame()
+        {
+            // On time (no yaw) the bat moves along (0, cos A, sin A). In its frame the ball's kinetic energy (translation +
+            // rotation, I = 0.4·m·r²) can only fall: q ≤ 1, e_x ≤ 1, and spin about the line of centres is dropped.
+            int contacts = 0;
+            foreach (PitchInput input in new[] { PitchPresets.FourSeam, PitchPresets.Curveball, PitchPresets.Slider })
+            {
+                HittingPitch pitch = Pitch(input);
+                Vector3d bat = Params.BatSpeed * new Vector3d(0.0, Math.Cos(Params.AttackAngle), Math.Sin(Params.AttackAngle));
+                for (double dz = -0.07; dz <= 0.07; dz += 0.0025)
+                for (double dx = -0.12; dx <= 0.12; dx += 0.03)
+                {
+                    ContactResult r = Swing(pitch, 0.0, dx, dz);
+                    if (!r.IsContact) continue;
+                    contacts++;
+                    Vector3d vin = pitch.IdealContactState.Velocity - bat, vout = r.BattedBall.Velocity - bat;
+                    double r2 = Math.Pow(BallProperties.Baseball.Radius, 2);
+                    double before = vin.LengthSquared + 0.4 * r2 * pitch.IdealContactState.Spin.LengthSquared;
+                    double after = vout.LengthSquared + 0.4 * r2 * r.BattedBall.Spin.LengthSquared;
+                    Assert.LessOrEqual(after, before * (1.0 + 1e-12), $"dx {dx} dz {dz}");
+                }
+            }
+
+            Assert.Greater(contacts, 300);
+        }
+
+        [Test]
+        public void IncomingBackspinPartlySurvivesAsTopspinRelativeToTheBattedBall()
+        {
+            // Same swing on the same path, with and without the pitch's 2200 rpm backspin: the pitch's spin keeps its
+            // direction, which is topspin for the ball going back out, so the batted ball has less backspin. Rigid
+            // clamped bat: (0.4 − e_x)/1.4 of it survives (Nathan et al. 2012, Eq. 3); recoiling bat: 1 − (5/7)(1+e_x)/(1+r_x).
+            var start = new BallState(0.0, new Vector3d(0.0, 18.0, 0.8), new Vector3d(0.0, -40.0, 0.0), Vector3d.Zero);
+            var spinning = new BallState(0.0, start.Position, start.Velocity, new Vector3d(-Units.RpmToRadiansPerSecond(2200.0), 0.0, 0.0));
+            var vacuum = new EnvironmentState(0.0, 0.0, Vector3d.Zero);   // no Magnus: both pitches follow the same path
+            SwingParameters level = Params;
+            level.AttackAngle = 0.0;
+            level.VerticalBatAngle = 0.0;
+            double centres = BallProperties.Baseball.Radius + level.BarrelRadius;
+            double without = Swing(HittingPitch.Create(start, vacuum), pciDz: -0.3 * centres, p: level).BattedBall.Spin.X;
+            double with = Swing(HittingPitch.Create(spinning, vacuum), pciDz: -0.3 * centres, p: level).BattedBall.Spin.X;
+            double survives = 1.0 - 5.0 / 7.0 * (1.0 + level.TangentialRestitution) / (1.0 + level.TangentialRecoil);
+            Assert.Greater(without, 0.0, "backspin");
+            Assert.AreEqual(-survives * Units.RpmToRadiansPerSecond(2200.0), with - without, 1e-6);
+        }
+
+        [Test]
+        public void ExtremeValidParametersGiveFiniteOutput()
+        {
+            HittingPitch pitch = Pitch(PitchPresets.Curveball);
+            double reach = (BallProperties.Baseball.Radius + Params.BarrelRadius) * 0.999;
+            int contacts = 0;
+            foreach (double tilt in new[] { -89.0, 0.0, 89.0 })
+            foreach (double attack in new[] { -80.0, 80.0, 10.0 })
+            foreach (double ex in new[] { 0.0, 1.0 })
+            foreach (double friction in new[] { 0.0, 100.0 })
+            foreach (double timing in new[] { -(Params.MaxTimingError - 1e-9), 0.0, Params.MaxTimingError - 1e-9 })
+            foreach (double dz in new[] { -reach, 0.0, reach })
+            foreach (double dx in new[] { -Params.BarrelHalfLength * 0.999, Params.BarrelHalfLength * 0.999 })
+            {
+                SwingParameters p = Params;
+                p.VerticalBatAngle = Units.DegreesToRadians(tilt);
+                p.AttackAngle = Units.DegreesToRadians(attack);
+                p.TangentialRestitution = ex;
+                p.TangentialRecoil = 0.0;
+                p.Friction = friction;
+                ContactResult r = Swing(pitch, timing, dx, dz, p);
+                if (!r.IsContact) continue;
+                contacts++;
+                Vector3d v = r.BattedBall.Velocity, w = r.BattedBall.Spin;
+                Assert.IsTrue(Finite(v.X) && Finite(v.Y) && Finite(v.Z) && Finite(w.X) && Finite(w.Y) && Finite(w.Z), $"tilt {tilt} attack {attack} e_x {ex} μ {friction} t {timing} dz {dz} dx {dx}");
+            }
+
+            Assert.Greater(contacts, 50);
+        }
+
+        private static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
+
+        [Test]
+        public void OffCentreContactKeepsTheSpinOfTheSameUndercut()
+        {
+            // Spin depends on the line of centres and the slip, not on where along the barrel the ball is hit (q only
+            // changes the normal impulse, so the friction cap at most lowers it). Real bats recoil more off the sweet
+            // spot (b²/I₀ in r_x); not modelled.
+            HittingPitch pitch = Pitch(PitchPresets.FourSeam);
+            double centred = Swing(pitch, pciDz: -0.0127).BattedBall.Spin.Length;
+            foreach (double dx in new[] { -0.0762, 0.0762 })
+            {
+                BattedBallLaunch l = Spin(Swing(pitch, pciDx: dx, pciDz: -0.0127));
+                Assert.Greater(l.BackspinRpm, 1000.0);
+                Assert.LessOrEqual(Swing(pitch, pciDx: dx, pciDz: -0.0127).BattedBall.Spin.Length, centred * (1.0 + 1e-9));
+            }
         }
 
         [Test]
@@ -269,7 +448,8 @@ namespace Pitchlab.Tests
             Assert.AreEqual(GoldenSpin, r.BattedBall.Spin.Length, 1e-4);
         }
 
-        private const double GoldenExitSpeed = 45.396488151749104, GoldenLaunch = 33.756741897670821, GoldenSpray = 8.7799197417013719, GoldenSpin = 529.61004932374942;
+        // TASK-004.5 (e_x 0.30, r_x 0.30, vertical bat angle 32°, incoming spin ⟂ line of centres) re-pinned these.
+        private const double GoldenExitSpeed = 45.506727145173578, GoldenLaunch = 28.187673952178166, GoldenSpray = 23.816341936477784, GoldenSpin = 444.99594617101008;
 
         [Test]
         public void PitchThatNeverReachesTheContactPlaneCannotBeHit()

@@ -38,6 +38,21 @@ namespace Pitchlab.Simulation.Batting
             Vector3d spin = Units.RpmToRadiansPerSecond(BackspinRpm) * backspinAxis - Units.RpmToRadiansPerSecond(SidespinRpm) * sidespinAxis;
             return new BallState(0.0, contactPosition, velocity, spin);
         }
+
+        /// <summary>
+        /// Inverse of <see cref="ToState"/>: exit speed, angles, and the spin projected on the backspin and sidespin
+        /// axes. Spin along the velocity (gyrospin) has no component here; it is <c>Spin · v̂</c>.
+        /// </summary>
+        public static BattedBallLaunch FromState(BallState state)
+        {
+            Vector3d v = state.Velocity;
+            double speed = v.Length, launch = Math.Asin(v.Z / speed), spray = Math.Atan2(v.X, v.Y);
+            var horizontal = new Vector3d(Math.Sin(spray), Math.Cos(spray), 0.0);
+            Vector3d backspinAxis = Vector3d.Cross(horizontal, new Vector3d(0.0, 0.0, 1.0));
+            Vector3d sidespinAxis = Math.Cos(launch) * new Vector3d(0.0, 0.0, 1.0) - Math.Sin(launch) * horizontal;
+            return new BattedBallLaunch(Units.MetersPerSecondToMph(speed), Units.RadiansToDegrees(launch), Units.RadiansToDegrees(spray),
+                Units.RadiansPerSecondToRpm(Vector3d.Dot(state.Spin, backspinAxis)), -Units.RadiansPerSecondToRpm(Vector3d.Dot(state.Spin, sidespinAxis)));
+        }
     }
 
     /// <summary>Landing and shape of a batted-ball flight (SI; distances on the ground from the plate origin).</summary>

@@ -43,7 +43,7 @@ namespace Pitchlab.Tests.Batting
         /// values"): ω_b = −763 + 120·LA + 21·φ·s, ω_s = −849·s − 94·φ, s = +1 RHB / −1 LHB, φ = spray (+ toward RF).
         /// Nathan's ω_s > 0 breaks toward LF, hence the sign flip for <see cref="BattedBallLaunch.SidespinRpm"/>.
         /// </summary>
-        private static (double, double) AverageStatcastSpin(double la, double spray, bool rhb)
+        internal static (double Back, double Side) AverageStatcastSpin(double la, double spray, bool rhb)
         {
             double s = rhb ? 1.0 : -1.0;
             return (-763.0 + 120.0 * la + 21.0 * spray * s, -(-849.0 * s - 94.0 * spray));

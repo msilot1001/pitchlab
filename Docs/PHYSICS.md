@@ -96,7 +96,7 @@ The simulator is the baseline for gameplay work. Outstanding items:
 | Constant C_D at pitch speeds; game-to-game environment uncertainty | accepted approximation |
 | Drag crisis below ~70 mph (slow curves, eephus) | research later (flagged by the validity range) |
 | Batted-ball drag/lift: Nathan 2017 fly-ball pair (spin-dependent C_D) as `AerodynamicModel.BattedBall`, spin decay τ = 30 s; validated against 2024 Statcast with Nathan's average-Statcast spin incl. sidespin (dev +0.9 / holdout +2.1 ft; Docs/VALIDATION_TASK004.md) | done |
-| Batted-ball spin from `ContactResolver`: backspin only, ≈ 1.6–1.8× Statcast | **blocker before distance-dependent gameplay** (home runs, fielding) |
+| Batted-ball spin from `ContactResolver` (TASK-004.5): measured e_x 0.30, derived bat recoil r_x 0.30, vertical bat angle 32° → total spin 0.85–0.99 × Statcast average, sidespin by spray/hand, fly-ball carry within ±6 ft of the reference (Docs/HITTING.md) | done; individual-ball spin not validatable with public data |
 | C_L provenance (fly-ball fit used for pitches) | accepted approximation (native fit for batted balls) |
 | Fixed spin axis, no decay for pitches | accepted approximation |
 | Movement metric vs Savant pfx (≈ 1 in z) | accepted approximation |

@@ -244,14 +244,14 @@ namespace Pitchlab.Sandbox
             {
                 LastBattedBall = BattedBallSimulation.Run(r.BattedBall, Environment);
                 BattedBallMetrics flight = LastBattedBall.Metrics;
+                BattedBallLaunch launch = BattedBallLaunch.FromState(r.BattedBall);
                 _readout =
                     $"{_pitchLabel}  timing {timing}\n" +
                     $"PCI offset: barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in (+ = under ball)\n" +
                     $"Exit velocity {Units.MetersPerSecondToMph(r.ExitSpeed):0.0} mph   launch {r.LaunchAngleDegrees:+0;-0}°   spray {r.SprayAngleDegrees:+0;-0}° (+ = RF)\n" +
-                    $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm   q {r.CollisionEfficiency:0.00}" +
+                    $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm (back {launch.BackspinRpm:0}, side {launch.SidespinRpm:+0;-0}, + = curves to RF)   q {r.CollisionEfficiency:0.00}" +
                     (Math.Abs(r.SprayAngleDegrees) > 45.0 ? "   FOUL" : "") +
-                    $"\nFlight: {Units.MetersToFeet(flight.Distance):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft" +
-                    " (contact spin not yet validated: ±≈ 25 ft)";
+                    $"\nFlight: {Units.MetersToFeet(flight.Distance):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft";
                 Vector3 contact = SimulationSpace.ToUnity(r.BattedBall.Position);
                 _contactMarker.position = contact;
                 _contactMarker.gameObject.SetActive(true);
