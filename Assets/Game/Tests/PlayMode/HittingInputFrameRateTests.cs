@@ -29,6 +29,7 @@ namespace Pitchlab.Tests
         }
 
         private HittingLabController _lab;
+        private HittingLabPresentation _view;
         private Keyboard _keyboard;
         private InputSettings.UpdateMode _originalUpdateMode;
         private InputSettings.EditorInputBehaviorInPlayMode _originalEditorBehavior;
@@ -42,6 +43,8 @@ namespace Pitchlab.Tests
             yield return null;
             _lab = UnityEngine.Object.FindFirstObjectByType<HittingLabController>();
             Assert.IsNotNull(_lab);
+            _view = UnityEngine.Object.FindFirstObjectByType<HittingLabPresentation>();
+            Assert.IsNotNull(_view);
 
             // Change the active settings in place and restore them in TearDown (assigning a new settings object would
             // destroy the in-memory default). Input must reach the game whether or not the Game view has focus.
@@ -112,7 +115,8 @@ namespace Pitchlab.Tests
             yield break;
         }
 
-        // Trace (seconds after the throw press at `start`): Space throw, D held 0.10 → 0.35, W held 0.170 → 0.205,
+        // Trace (seconds after the throw press at `start`; everything after the throw also shifted by the pitcher's
+        // DeliveryLead, so times are relative to the release): Space throw, D held 0.10 → 0.35, W held 0.170 → 0.205,
         // swing 4 ms late while D is still held. PCI speed 1.2 m/s, so one 30 fps frame of error would be 4 cm.
         private Outcome Run(double start, Func<int, double> interval)
         {
@@ -124,21 +128,22 @@ namespace Pitchlab.Tests
             _now = start - 0.5;
             _lab.SetPci(ball.X - 1.2 * (swingAt - 0.100), ball.Z - 1.2 * (0.205 - 0.170));
 
+            double lead = _lab.DeliveryLead;
             var events = new List<(double Time, Key[] Keys)>
             {
                 (0.000, new[] { Key.Space }),
                 (0.040, new Key[0]),
-                (0.100, new[] { Key.D }),
-                (0.170, new[] { Key.D, Key.W }),
-                (0.205, new[] { Key.D }),
-                (swingAt, new[] { Key.D, Key.Space }),
-                (swingAt + 0.030, new[] { Key.D }),
-                (0.350, new Key[0]),
+                (lead + 0.100, new[] { Key.D }),
+                (lead + 0.170, new[] { Key.D, Key.W }),
+                (lead + 0.205, new[] { Key.D }),
+                (lead + swingAt, new[] { Key.D, Key.Space }),
+                (lead + swingAt + 0.030, new[] { Key.D }),
+                (lead + 0.350, new Key[0]),
             };
 
             int next = 0;
             double frame = start - 0.1;
-            for (int k = 0; frame < start + 0.6; k++)
+            for (int k = 0; frame < start + lead + 0.6; k++)
             {
                 double previous = frame;
                 frame += interval(k);
@@ -151,13 +156,14 @@ namespace Pitchlab.Tests
                 _now = frame;
                 InputSystem.Update();           // processes this frame's events (callbacks carry the event timestamps)
                 _lab.SendMessage("Update");     // the controller's real per-frame path (clock = this frame's time)
+                _view.FrameUpdate();            // presentation renders every frame too; it must not change any outcome
                 Assert.Greater(frame, previous);
             }
 
             Assert.AreEqual(events.Count, next, "all events queued");
             Assert.IsTrue(_lab.LastSwing.HasValue && _lab.LastResult.HasValue, "the trace produced a swing");
             Assert.AreEqual(preview.IdealContactTime, _lab.CurrentPitch.IdealContactTime, 1e-12, "four-seam preset thrown");
-            // Independent of any frame: the pitch was released at the Space press and the swing started at its press.
+            // Independent of any frame: the pitch was released DeliveryLead after the Space press and the swing started at its press.
             Assert.AreEqual(swingAt, _lab.LastSwing.Value.StartTime, 1e-9, "swing time from event timestamps (playback 1×)");
             // Independent of any frame: the PCI at the swing is exactly where the trace put it (on the ball).
             Assert.AreEqual(ball.X, _lab.LastSwing.Value.PciX, 1e-9);

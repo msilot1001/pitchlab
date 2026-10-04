@@ -1,12 +1,7 @@
 {
-    "name": "Pitchlab.Sandbox",
-    "rootNamespace": "Pitchlab.Sandbox",
-    "references": [
-        "Pitchlab.Simulation",
-        "Pitchlab.Gameplay",
-        "Pitchlab.Presentation",
-        "Unity.InputSystem"
-    ],
+    "name": "Pitchlab.Presentation",
+    "rootNamespace": "Pitchlab.Presentation",
+    "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

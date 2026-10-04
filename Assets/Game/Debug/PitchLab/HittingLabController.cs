@@ -16,7 +16,9 @@ namespace Pitchlab.Sandbox
     /// contact result does not depend on when frames happen. Frames only render. Contact is resolved by the
     /// deterministic <see cref="ContactResolver"/> (no colliders).
     /// Controls: Space / gamepad South = throw (when idle) or swing (during a pitch); WASD / left stick = move PCI;
-    /// Left/Right or D-pad = previous/next pitch type; 1/2 = playback speed 1×/0.5×.
+    /// Left/Right or D-pad = previous/next pitch type; 1/2 = playback speed 1×/0.5×; T = trajectory lines; H = panel.
+    /// A throw press starts the pitcher's delivery; the authoritative release follows <see cref="DeliveryLead"/> later
+    /// (presentation fits the wind-up into that time). A press during the delivery is an (early) swing.
     /// </summary>
     public sealed class HittingLabController : MonoBehaviour
     {
@@ -25,6 +27,10 @@ namespace Pitchlab.Sandbox
 
         [SerializeField] private SwingParameters _swing = SwingParameters.Default;
         [SerializeField, Range(0.1f, 1f)] private float _playbackSpeed = 1f;
+        /// <summary>Simulation time from the throw press to the authoritative release, s (the pitcher's wind-up; real time = lead ÷ playback speed).</summary>
+        [SerializeField, Min(0f)] private float _deliveryLead = 1.1f;
+        [SerializeField] private bool _showDebugPaths;
+        [SerializeField] private bool _showPanel = true;
 
         [Header("Scene references")]
         [SerializeField] private Transform _ball;
@@ -38,7 +44,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction;
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction, _pathsAction, _panelAction;
         private int _presetIndex;
         private PciTrack _pciTrack;
         private double _pitchStartRealtime = double.NaN;
@@ -65,6 +71,11 @@ namespace Pitchlab.Sandbox
         public bool PitchInFlight => CurrentPitch != null && !_swung && SimTime < CurrentPitch.Flight.Duration;
         public double SimTime => ToSimTime(Clock());
         public Transform BallTransform => _ball;
+        public double DeliveryLead => _deliveryLead;
+        /// <summary>Simulation time last used to render the ball (<see cref="FrameUpdate"/>).</summary>
+        public double RenderedSimTime { get; private set; }
+        /// <summary>One-line outcome of the last swing for the HUD (empty before a swing).</summary>
+        public string ResultSummary { get; private set; } = string.Empty;
 
         /// <summary>Simulation time (s after release) of a moment on the real-time clock shared with input events.</summary>
         public double ToSimTime(double realtime) => double.IsNaN(_pitchStartRealtime) ? 0.0 : (realtime - _pitchStartRealtime) * _pitchPlaybackSpeed;
@@ -102,6 +113,8 @@ namespace Pitchlab.Sandbox
             _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", _ => _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length);
             _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
             _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
+            _pathsAction = Button("<Keyboard>/t", null, _ => SetDebugPaths(!_showDebugPaths));
+            _panelAction = Button("<Keyboard>/h", null, _ => _showPanel = !_showPanel);
         }
 
         private static InputAction Button(string binding, string secondBinding, Action<InputAction.CallbackContext> onPress)
@@ -120,6 +133,8 @@ namespace Pitchlab.Sandbox
             _previousPresetAction?.Enable();
             _normalSpeedAction?.Enable();
             _slowSpeedAction?.Enable();
+            _pathsAction?.Enable();
+            _panelAction?.Enable();
         }
 
         private void OnDisable()
@@ -130,6 +145,8 @@ namespace Pitchlab.Sandbox
             _previousPresetAction?.Disable();
             _normalSpeedAction?.Disable();
             _slowSpeedAction?.Disable();
+            _pathsAction?.Disable();
+            _panelAction?.Disable();
         }
 
         private void OnDestroy()
@@ -140,13 +157,13 @@ namespace Pitchlab.Sandbox
             _previousPresetAction?.Dispose();
             _normalSpeedAction?.Dispose();
             _slowSpeedAction?.Dispose();
+            _pathsAction?.Dispose();
+            _panelAction?.Dispose();
         }
 
         private void Start()
         {
-            PlaceField();
-            _camera.transform.SetPositionAndRotation(new Vector3(0f, 1.1f, -2.5f), Quaternion.Euler(-1f, 0f, 0f));
-            _camera.fieldOfView = 40f;
+            PlaceField();   // the camera is placed by the scene's presentation (BaseballCamera)
             ShowIdle();
         }
 
@@ -164,6 +181,7 @@ namespace Pitchlab.Sandbox
             LastResult = null;
             LastSwing = null;
             LastBattedBall = null;
+            ResultSummary = string.Empty;
             PitchesThrown++;
             _pitchPath.enabled = false;
             _exitRay.enabled = false;
@@ -200,7 +218,7 @@ namespace Pitchlab.Sandbox
         {
             if (CurrentPitch == null || _swung || ToSimTime(eventRealtime) >= CurrentPitch.Flight.Duration)
             {
-                ThrowPitch(_presetIndex, eventRealtime);
+                ThrowPitch(_presetIndex, eventRealtime + _deliveryLead / _playbackSpeed);
                 return;
             }
 
@@ -226,14 +244,10 @@ namespace Pitchlab.Sandbox
             if (CurrentPitch == null) return;
 
             double t = ToSimTime(now);
-            if (_swung && LastResult.HasValue && LastResult.Value.IsContact && t >= LastResult.Value.BattedBall.Time)
-            {
-                // Freeze the pitch at the contact point; the batted-ball flight is drawn as a path (no fielding yet).
-                _ball.position = SimulationSpace.ToUnity(LastResult.Value.BattedBall.Position);
-                return;
-            }
-
-            _ball.position = SimulationSpace.ToUnity(CurrentPitch.Flight.StateAt(t).Position);
+            RenderedSimTime = t;
+            // Authoritative samples only: the pitch, then (after contact) the batted ball until it lands and rests there.
+            TrajectoryResult flight = LastBattedBall != null && t >= LastBattedBall.Flight.First.Time ? LastBattedBall.Flight : CurrentPitch.Flight;
+            _ball.position = SimulationSpace.ToUnity(flight.StateAt(t).Position);
         }
 
         private void ShowResult(ContactResult r)
@@ -254,18 +268,29 @@ namespace Pitchlab.Sandbox
                     $"\nFlight: {Units.MetersToFeet(flight.Distance):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft";
                 Vector3 contact = SimulationSpace.ToUnity(r.BattedBall.Position);
                 _contactMarker.position = contact;
-                _contactMarker.gameObject.SetActive(true);
+                _contactMarker.gameObject.SetActive(_showDebugPaths);
                 SetPath(_exitRay, LastBattedBall.Flight);
-                _exitRay.enabled = true;
+                _exitRay.enabled = _showDebugPaths;
+                ResultSummary = $"{Units.MetersPerSecondToMph(r.ExitSpeed):0} mph · {r.LaunchAngleDegrees:0}° · {Units.MetersToFeet(flight.Distance):0} ft";
             }
             else
             {
+                ResultSummary = r.Outcome == ContactOutcome.MissTiming ? (r.TimingError < 0 ? "Swing and miss — early" : "Swing and miss — late") : "Swing and miss";
                 _readout = $"{_pitchLabel}  timing {timing}\nMISS: {r.Outcome}" +
                            (double.IsNaN(r.VerticalOffset) ? "" : $" (barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in)");
             }
 
             SetPath(_pitchPath, CurrentPitch.Flight);
-            _pitchPath.enabled = true;
+            _pitchPath.enabled = _showDebugPaths;
+        }
+
+        private void SetDebugPaths(bool show)
+        {
+            _showDebugPaths = show;
+            bool swung = LastResult.HasValue;
+            _pitchPath.enabled = show && swung;
+            _exitRay.enabled = show && LastBattedBall != null;
+            _contactMarker.gameObject.SetActive(show && LastBattedBall != null);
         }
 
         private void ShowIdle() => _readout = $"Next: {Presets[_presetIndex].Label}. Press Space / A to throw.";
@@ -311,17 +336,21 @@ namespace Pitchlab.Sandbox
             _strikeZone.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(x, y, PitchingGeometry.DefaultZoneTop)));
             _strikeZone.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(-x, y, PitchingGeometry.DefaultZoneTop)));
 
-            float diameter = (float)(2.0 * BallProperties.Baseball.Radius);
-            _ball.localScale = new Vector3(diameter, diameter, diameter);
             _ball.position = SimulationSpace.ToUnity(Presets[0].ToInitialState().Position);
         }
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 470, 220), GUI.skin.box);
-            GUILayout.Label($"HittingLab — pitch: {Presets[_presetIndex].Label}   playback {_playbackSpeed:0.0}×   pitches {PitchesThrown}");
+            if (!_showPanel)
+            {
+                GUI.Label(new Rect(10, 6, 300, 22), "H: debug panel");
+                return;
+            }
+
+            GUILayout.BeginArea(new Rect(10, 10, 440, 175), GUI.skin.box);
+            GUILayout.Label($"Pitch: {Presets[_presetIndex].Label}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
             GUILayout.Label(_readout);
-            GUILayout.Label("Space/A: throw or swing · WASD/stick: PCI · ←/→: pitch type · 1/2: speed 1×/0.5×");
+            GUILayout.Label("Space/A throw·swing  WASD/stick PCI  ←/→ pitch  1/2 speed  T paths  H panel");
             GUILayout.EndArea();
         }
     }

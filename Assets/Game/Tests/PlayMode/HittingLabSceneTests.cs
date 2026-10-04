@@ -31,7 +31,7 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator WellTimedCentredSwingMakesHardContactAndFreezesBallAtContact()
+        public IEnumerator WellTimedCentredSwingMakesHardContactAndBallFollowsTheBattedTrajectory()
         {
             _lab.ThrowPitch(0);
             HittingPitch pitch = _lab.CurrentPitch;
@@ -45,25 +45,45 @@ namespace Pitchlab.Tests
             while (_lab.SimTime < result.BattedBall.Time + 0.05 && Time.realtimeSinceStartup < timeout) yield return null;
             Assert.GreaterOrEqual(_lab.SimTime, result.BattedBall.Time, "playback reached the contact time");
             yield return null;
-            Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(result.BattedBall.Position), _lab.BallTransform.position), 1e-4f, "ball shown at the contact point");
+            // After contact the rendered ball is the authoritative batted-ball sample for the rendered time (TASK-004.6; it
+            // used to freeze at the contact point).
+            Vector3 expected = SimulationSpace.ToUnity(_lab.LastBattedBall.Flight.StateAt(_lab.RenderedSimTime).Position);
+            Assert.Less(Vector3.Distance(expected, _lab.BallTransform.position), 1e-4f, "ball on the batted-ball trajectory");
         }
 
         [UnityTest]
         public IEnumerator SwingButtonThrowsWhenIdleSwingsDuringFlightAndRethrowsAfter()
         {
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
             int before = _lab.PitchesThrown;
-            _lab.PressSwingButton(Time.realtimeSinceStartupAsDouble);
-            Assert.AreEqual(before + 1, _lab.PitchesThrown, "idle → throw");
+            _lab.PressSwingButton(now);
+            Assert.AreEqual(before + 1, _lab.PitchesThrown, "idle → throw (the delivery starts)");
             Assert.IsFalse(_lab.LastResult.HasValue);
+            Assert.AreEqual(-_lab.DeliveryLead, _lab.ToSimTime(now), 1e-9, "released DeliveryLead after the press");
             yield return null;
 
-            _lab.PressSwingButton(Time.realtimeSinceStartupAsDouble);
+            now += _lab.DeliveryLead + 0.2;
+            _lab.PressSwingButton(now);
             Assert.AreEqual(before + 1, _lab.PitchesThrown, "in flight → swing, not a new pitch");
             Assert.IsTrue(_lab.LastResult.HasValue);
             yield return null;
 
-            _lab.PressSwingButton(Time.realtimeSinceStartupAsDouble);
+            _lab.PressSwingButton(now);
             Assert.AreEqual(before + 2, _lab.PitchesThrown, "after the swing → next pitch");
+        }
+
+        [UnityTest]
+        public IEnumerator PressDuringTheDeliveryIsAnEarlySwing()
+        {
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            _lab.PressSwingButton(now);                 // throw
+            now += 0.5 * _lab.DeliveryLead;
+            _lab.PressSwingButton(now);                 // before release: swinging at nothing
+            Assert.AreEqual(ContactOutcome.MissTiming, _lab.LastResult.Value.Outcome);
+            Assert.Less(_lab.LastResult.Value.TimingError, 0.0, "early");
+            yield return null;
         }
 
         [UnityTest]

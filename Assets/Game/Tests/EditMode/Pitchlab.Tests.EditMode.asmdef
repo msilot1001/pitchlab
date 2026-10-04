@@ -4,6 +4,7 @@
     "references": [
         "Pitchlab.Simulation",
         "Pitchlab.Gameplay",
+        "Pitchlab.Presentation",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
