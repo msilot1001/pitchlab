@@ -8,7 +8,8 @@ namespace Pitchlab.Simulation.Batting
     /// Batted-ball launch described in baseball terms (Statcast-style), converted to an SI simulation state.
     /// Spray: degrees from straight-away centre field, + toward first base / right field (+X).
     /// Backspin: rpm about the horizontal axis ⟂ to the horizontal launch direction (positive lifts the ball).
-    /// Sidespin: rpm about the vertical axis; positive curves the ball toward +X (right field).
+    /// Sidespin: rpm about the axis ⟂ to both the launch velocity and the backspin axis (Nathan 2017, Eq. 4; vertical
+    /// for a level launch); positive curves the ball toward +X (right field) — the opposite sign of Nathan's ω_s.
     /// </summary>
     public readonly struct BattedBallLaunch
     {
@@ -32,7 +33,9 @@ namespace Pitchlab.Simulation.Batting
             Vector3d velocity = speed * (Math.Cos(launch) * horizontal + Math.Sin(launch) * new Vector3d(0.0, 0.0, 1.0));
             // Backspin axis = horizontal direction × up (for a ball moving +Y: +X, so ω × v points up).
             Vector3d backspinAxis = Vector3d.Cross(horizontal, new Vector3d(0.0, 0.0, 1.0));
-            Vector3d spin = Units.RpmToRadiansPerSecond(BackspinRpm) * backspinAxis - Units.RpmToRadiansPerSecond(SidespinRpm) * new Vector3d(0.0, 0.0, 1.0);
+            // Sidespin axis = backspin axis × velocity direction (Nathan's ω̂_s = ω̂_b × ω̂_g), so all launch spin is transverse.
+            Vector3d sidespinAxis = Math.Cos(launch) * new Vector3d(0.0, 0.0, 1.0) - Math.Sin(launch) * horizontal;
+            Vector3d spin = Units.RpmToRadiansPerSecond(BackspinRpm) * backspinAxis - Units.RpmToRadiansPerSecond(SidespinRpm) * sidespinAxis;
             return new BallState(0.0, contactPosition, velocity, spin);
         }
     }

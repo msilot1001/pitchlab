@@ -99,7 +99,7 @@ namespace Pitchlab.Sandbox
                       $"Landing x {Units.MetersToFeet(m.LandingX):+0;-0} ft, y {Units.MetersToFeet(m.LandingY):0} ft" +
                       (Math.Abs(Math.Atan2(m.LandingX, m.LandingY)) > Math.PI / 4.0 ? "   FOUL" : "")
                     : "Still in the air at the time limit") +
-                "\nNote: this model carries fly balls ≈ 30 ft further than 2024 Statcast (Docs/VALIDATION_TASK004.md).";
+                "\nFlight model matches 2024 Statcast with average spin incl. sidespin; presets have no sidespin and carry further (Docs/VALIDATION_TASK004.md).";
         }
 
         private void Update()
@@ -172,7 +172,7 @@ namespace Pitchlab.Sandbox
             changed |= Slider("Launch angle (°)", ref _launchAngle, -20, 70);
             changed |= Slider("Spray angle (°, + = RF)", ref _sprayAngle, -50, 50);
             changed |= Slider("Backspin (rpm, − = topspin)", ref _backspinRpm, -2000, 5000);
-            changed |= Slider("Sidespin (rpm, + curves to RF)", ref _sidespinRpm, -3000, 3000);
+            changed |= Slider("Sidespin (rpm, + curves to RF)", ref _sidespinRpm, -4500, 4500);
             changed |= Slider("Temperature (°C)", ref _temperatureCelsius, -20, 50);
             changed |= Slider("Elevation (m)", ref _elevationMeters, 0, 3000);
             if (GUILayout.Button("Launch (Space)") || changed) Launch();

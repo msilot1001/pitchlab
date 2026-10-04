@@ -251,7 +251,7 @@ namespace Pitchlab.Sandbox
                     $"Spin {Units.RadiansPerSecondToRpm(r.BattedBall.Spin.Length):0} rpm   q {r.CollisionEfficiency:0.00}" +
                     (Math.Abs(r.SprayAngleDegrees) > 45.0 ? "   FOUL" : "") +
                     $"\nFlight: {Units.MetersToFeet(flight.Distance):0} ft, hang {flight.HangTime:0.00} s, apex {Units.MetersToFeet(flight.ApexHeight):0} ft" +
-                    " (model carries ≈ 30 ft long vs 2024 Statcast)";
+                    " (contact spin not yet validated: ±≈ 25 ft)";
                 Vector3 contact = SimulationSpace.ToUnity(r.BattedBall.Position);
                 _contactMarker.position = contact;
                 _contactMarker.gameObject.SetActive(true);
