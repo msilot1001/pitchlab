@@ -21,6 +21,11 @@ namespace Pitchlab.Gameplay.Hitting
         public double BatSpeed;
         /// <summary>Upward angle of the bat's path at contact, radians.</summary>
         public double AttackAngle;
+        /// <summary>
+        /// Vertical bat angle at contact: how far the barrel tip is below the knob, radians (the barrel is tilted about
+        /// the swing direction). Tilts the undercut direction, so undercut balls get slicing sidespin.
+        /// </summary>
+        public double VerticalBatAngle;
         /// <summary>Time from swing start (button) to the bat reaching the contact plane, s.</summary>
         public double SwingDuration;
         /// <summary>Barrel radius, m.</summary>
@@ -41,7 +46,7 @@ namespace Pitchlab.Gameplay.Hitting
         public double TangentialRestitution;
         /// <summary>
         /// Tangential recoil factor r_x of the bat (Kensrud, Nathan &amp; Smith 2017): the tangential impulse is divided by
-        /// 1 + r_x. ≈ 0.18 from rough wood-bat mass, inertia and barrel radius (an approximation).
+        /// 1 + r_x, r_x = (m·α/(1+α))·(1/M + b²/I₀ + R²/I_z), α = 0.4; dominated by the bat rolling about its long axis.
         /// </summary>
         public double TangentialRecoil;
         /// <summary>Ball–bat friction coefficient capping the tangential impulse at μ × normal impulse.</summary>
@@ -52,6 +57,7 @@ namespace Pitchlab.Gameplay.Hitting
         {
             Require(BatSpeed > 0.0 && Finite(BatSpeed), nameof(BatSpeed));
             Require(Math.Abs(AttackAngle) < 0.5 * Math.PI, nameof(AttackAngle));
+            Require(Math.Abs(VerticalBatAngle) < 0.5 * Math.PI, nameof(VerticalBatAngle));
             Require(SwingDuration >= 0.0 && Finite(SwingDuration), nameof(SwingDuration));
             Require(BarrelRadius > 0.0 && Finite(BarrelRadius), nameof(BarrelRadius));
             Require(SweetSpotEfficiency >= 0.0 && SweetSpotEfficiency <= 1.0, nameof(SweetSpotEfficiency));
@@ -79,6 +85,7 @@ namespace Pitchlab.Gameplay.Hitting
             Side = BatterSide.Right,
             BatSpeed = Units.MphToMetersPerSecond(72.0),
             AttackAngle = Units.DegreesToRadians(10.0),
+            VerticalBatAngle = Units.DegreesToRadians(32.0),
             SwingDuration = 0.150,
             BarrelRadius = Units.InchesToMeters(2.61) / 2.0,
             SweetSpotEfficiency = 0.21,
@@ -87,8 +94,8 @@ namespace Pitchlab.Gameplay.Hitting
             BarrelHalfLength = Units.InchesToMeters(5.0),
             SprayRate = Units.DegreesToRadians(1.2) / 0.001,
             MaxTimingError = 0.035,
-            TangentialRestitution = 0.40,
-            TangentialRecoil = 0.18,
+            TangentialRestitution = 0.30,
+            TangentialRecoil = 0.30,
             Friction = 0.20,
         };
     }

@@ -49,7 +49,7 @@ namespace Pitchlab.Gameplay.Hitting
         /// <summary>Bat arrival minus ball arrival at the contact plane, s. Negative = early.</summary>
         public readonly double TimingError;
         /// <summary>
-        /// Ball centre relative to the bat's sweet spot at contact time, in the bat's frame (m): along the barrel axis
+        /// Ball centre relative to the bat's sweet spot at contact time, in the level bat frame (m): along the barrel axis
         /// (+ = toward first base for an unyawed bat) and perpendicular to barrel and swing direction (+ = bat under ball).
         /// </summary>
         public readonly double OffsetAlongBarrel, VerticalOffset;
@@ -85,8 +85,10 @@ namespace Pitchlab.Gameplay.Hitting
     /// Deterministic ball–bat contact (Docs/HITTING.md). Timing decides when the bat meets the ball (and so where the
     /// ball is and how the bat is yawed); the PCI decides where on the bat. Normal direction (line of centres): collision
     /// efficiency q, exit = q·incoming + (1+q)·bat (Nathan 2003). Tangential: contact-point slip reverses by e_x
-    /// (Kensrud, Nathan &amp; Smith 2017), limited by Coulomb friction; this sets tangential exit velocity and spin.
-    /// Incoming spin is ignored (its effect nearly cancels for e_x ≈ 0.4; Nathan et al. 2012). No Unity physics.
+    /// (Kensrud, Nathan &amp; Smith 2017), limited by Coulomb friction; this sets tangential exit velocity and spin. The
+    /// barrel is tilted by the vertical bat angle, so spin is a full 3D vector: undercut → backspin plus slice, bat yaw
+    /// (timing) → hook or slice. Incoming spin ⟂ the line of centres takes part in the slip (Nathan et al. 2012, Eq. 3,
+    /// generalised to a recoiling bat). No Unity physics.
     /// </summary>
     public static class ContactResolver
     {
@@ -113,6 +115,12 @@ namespace Pitchlab.Gameplay.Hitting
             Vector3d swingDirection = Math.Cos(p.AttackAngle) * horizontal + Math.Sin(p.AttackAngle) * new Vector3d(0.0, 0.0, 1.0);
             Vector3d barrelAxis = Vector3d.Cross(horizontal, new Vector3d(0.0, 0.0, 1.0));      // horizontal, ⟂ swing
             Vector3d up = Vector3d.Cross(barrelAxis, swingDirection).Normalized;               // ⟂ barrel and swing, upward
+            // The real barrel is tilted: its tip (+X for a right-handed hitter, −X for a left-handed one) is lowered by the
+            // vertical bat angle, a rotation about the swing direction. PCI offsets stay in the level frame above (the PCI
+            // is the barrel as the player sees it), so the tilt only turns the direction of undercut and overcut.
+            double tilt = pullSign * p.VerticalBatAngle;
+            Vector3d tiltedBarrel = Math.Cos(tilt) * barrelAxis + Math.Sin(tilt) * Vector3d.Cross(swingDirection, barrelAxis);
+            Vector3d tiltedUp = Vector3d.Cross(tiltedBarrel, swingDirection).Normalized;
 
             // The bat's sweet spot travels along its swing plane, through the PCI point at the contact plane: early
             // contact happens further out front and, with an upward attack angle, higher. Offsets are measured in the
@@ -128,7 +136,7 @@ namespace Pitchlab.Gameplay.Hitting
 
             // Line of centres from bat axis to ball centre: tilted up when the bat is under the ball (vertical > 0).
             double phi = Math.Asin(vertical / centres);
-            Vector3d normal = Math.Cos(phi) * swingDirection + Math.Sin(phi) * up;
+            Vector3d normal = Math.Cos(phi) * swingDirection + Math.Sin(phi) * tiltedUp;
 
             // Barrel tip points toward first base (+X) for a right-handed hitter, third base for a left-handed one.
             bool towardTip = alongBarrel * pullSign > 0.0;
@@ -140,18 +148,23 @@ namespace Pitchlab.Gameplay.Hitting
             Vector3d relative = ball.Velocity - batVelocity;
             Vector3d relativeTangential = relative - Vector3d.Dot(relative, normal) * normal;
             Vector3d batTangential = batVelocity - Vector3d.Dot(batVelocity, normal) * normal;
+            // Incoming spin ⟂ the line of centres moves the ball's contact point (−r·n̂) and so enters the slip; with bat
+            // recoil 1 − (5/7)(1 + e_x)/(1 + r_x) of it survives (2/7 at e_x = r_x = 0.3). Spin about n̂ itself is not
+            // touched by a tangential impulse; torsional friction over the contact patch can remove it, so it is dropped [Approx].
+            Vector3d incomingSpin = ball.Spin - Vector3d.Dot(ball.Spin, normal) * normal;
+            Vector3d contactSlip = relativeTangential + Vector3d.Cross(incomingSpin, -BallProperties.Baseball.Radius * normal);
             // Tangential impulse per unit mass J: a sphere with I = 0.4·m·r² changes its contact-point slip by (7/2)·J, so
             // reversing the slip by e_x needs J = (2/7)(1 + e_x)·slip, reduced by the bat's recoil 1/(1 + r_x);
             // friction caps J at μ·(normal impulse).
-            double slip = relativeTangential.Length;
+            double slip = contactSlip.Length;
             double normalImpulse = outNormal + incomingNormal;
             if (!(normalImpulse > 0.0)) return new ContactResult(ContactOutcome.MissGlancing, timingError, alongBarrel, vertical, q, default);
             double tangentialImpulse = Math.Min((2.0 / 7.0) * (1.0 + p.TangentialRestitution) / (1.0 + p.TangentialRecoil) * slip,
                 p.Friction * normalImpulse);
-            Vector3d slipDirection = slip > 0.0 ? relativeTangential / slip : Vector3d.Zero;
+            Vector3d slipDirection = slip > 0.0 ? contactSlip / slip : Vector3d.Zero;
             Vector3d outVelocity = outNormal * normal + batTangential + relativeTangential - tangentialImpulse * slipDirection;
             // The impulse −J·t̂ acts at the contact point −r·n̂, spinning the ball about n̂ × t̂ (ω = (5/2)·J/r).
-            Vector3d spin = 2.5 * tangentialImpulse / BallProperties.Baseball.Radius * Vector3d.Cross(normal, slipDirection);
+            Vector3d spin = incomingSpin + 2.5 * tangentialImpulse / BallProperties.Baseball.Radius * Vector3d.Cross(normal, slipDirection);
 
             var batted = new BallState(contactTime, ball.Position, outVelocity, spin);
             return new ContactResult(ContactOutcome.Contact, timingError, alongBarrel, vertical, q, batted);

@@ -23,7 +23,7 @@ No push, no merge to main, no history rewrite, no broad process termination (exa
 - B [x] TASK-002: B1 field research, B2 fixture, B3 adapter, B4 replay, B5 report, B6 systematic errors, B7 evidence-based changes, B8 holdout, B9 tests
 - C [x] Baseline decision (physics-reviewer), classification, PHYSICS.md, ADR only if warranted
 - D [x] TASK-003 Hitting Sandbox
-- E [ ] TASK-004 Batted-ball physics (optional)
+- E [~] TASK-004 Batted-ball physics — PARTIAL: implemented, visualised, tested; pre-registered Statcast validation FAILED (≈ +30 ft), cause unresolved
 
 ## B pre-registered analysis (written before any replay was run)
 Public Statcast has no per-pitch spin efficiency, so spin rate + axis alone cannot predict each pitch's plate location. Analyses and acceptance thresholds, fixed before looking at replay results:
@@ -33,6 +33,12 @@ Public Statcast has no per-pitch spin efficiency, so spin rate + axis alone cann
 4. Plate replay: (a) consistency replay with per-pitch implied ε and Statcast spin_axis: median 2D plate error ≤ 1 in; (b) holdout prediction with ε = median implied ε of the same family from the development game (an input estimate in the validation harness only; never in the simulator): report median 2D error, expectation ≤ 3 in.
 5. pfx definition: candidate definitions computed from the 9P fit vs CSV pfx_x/pfx_z; the definition with median |Δ| ≤ 1 in is adopted for comparisons.
 Dataset split: one game = development, a different game = holdout.
+
+## E pre-registered analysis (written before any batted-ball replay)
+Model: `AerodynamicModel.BattedBall` = Nathan (2017) Eqs. 10–11 jointly fitted pair (C_D = 0.297 + 0.0292·ω/1000 rpm, C_L = 1.12S/(0.583+2.333S)), spin decay τ = 30 s. Fixture: 459 balls in play, 9 Tropicana Field 2024 games (dome, 72 °F, 15 ft, no wind; 5 development / 4 holdout games). Spin is not public → validation spin model ω_back = 100 rpm/° × (LA − 7°), clamped to [0, 4500] rpm, no sidespin (Nathan 2020 Fig. 4 medians). Imputed EV/LA (pairs repeated within the fixture) dropped. Statcast `hit_distance_sc` compared to our horizontal distance at ground contact.
+1. Primary set = fly balls/line drives with EV ≥ 90 mph and 20° ≤ LA ≤ 35° (Nathan's fit range). Development and holdout separately: |mean(model − Statcast)| ≤ 10 ft and RMS ≤ 25 ft.
+2. Model sensitivities at 103 mph / 27° / 2000 rpm, 70 °F, sea level: distance 400 ± 20 ft (Nathan's Statcast-based table); EV slope 4.9 ft/mph ± 30 % (100 → 105 mph at 27°); temperature +3.3 ft per 10 °F ± 30 %; elevation +5.9 ft per 1000 ft ± 30 %; distance-maximising launch angle between 25° and 32° at 100 mph (with the validation spin model).
+3. Report-only: all airborne balls 10–45° LA, per launch-angle bucket.
 
 ## Verification
 ### A
@@ -63,6 +69,14 @@ Dataset split: one game = development, a different game = holdout.
 - `Scripts/test.sh` EditMode 96 total, 91 passed, 0 failed (5 ignored pre-registered); PlayMode 7/7.
 - MCP HittingLab: 15 + 11 scripted pitches through the live controller (perfect ≈ 102–105 mph / 11–13°, under → 25°, over → −9°, early pulls −15..−20°, late +18..+28°, timing/over/off-barrel misses); real keyboard path via simulate_key (Space throws, Space swings with event timestamp 0.0198 s < frame clock 0.032 s); Game View capture shows zone, PCI, contact point, exit ray, pitch path, readout; console 0 errors/0 warnings during play.
 
+### E
+- physics-researcher: Nathan 2017 batted-ball pair (C_D 0.297 + 0.0292/krpm, same C_L; Tropicana 2016), spin decay τ ≈ 30 s (Nathan 2008: minor), Statcast-era benchmarks (4.9 ft/mph, 3.3 ft/10 °F, 5.9 ft/1000 ft, peak 25–30°, ≈ 400 ft at 103/27), spin-vs-LA medians (Nathan 2020 Fig. 4), hit_distance_sc definition ambiguity.
+- Generalisation (additive, pitch results bit-identical): `AerodynamicModel` spin-dependent drag + spin decay; RK4 evaluates spin at stage times; `Pitchlab.Simulation.Batting` (BattedBallLaunch, BattedBallSimulation, BattedBallMetrics).
+- Fixture: 459 balls in play, 9 Tropicana Field games (dome), `Tools/statcast/make_batted_fixture.py`.
+- Pre-registered results: primary set mean +28.8 ft (dev) / +34.6 ft (holdout) vs ≤ 10 → FAIL; reference 426.5 ft vs 400 ± 20 → FAIL; EV slope, temperature, elevation, optimal LA → pass. Bias uniform across LA/EV buckets; residual scatter ≈ 15 ft. Diagnostic sweeps: an exit-speed offset of −5…−6 mph flattens residuals best; C_D scale leaves an LA trend; spin scaling rejected. No calibration adopted (underdetermined).
+- HittingLab now flies the batted ball (distance/hang/apex + caveat); BattedBallLab scene (MCP-built): presets ground ball 27 ft / line drive 299 ft (2.74 s) / fly 386 ft (5.30 s, apex 88 ft) / deep fly 451 ft (5.71 s); overhead capture confirms landing beyond the 400 ft arc in left field for −20° spray; console 0/0.
+- Tests: 8 batted-ball EditMode (launch conversion, vacuum range exact, spin decay exact, sidespin, sensitivities; 1 ignored pre-registered) + validation (2 ignored pre-registered, 2 post-hoc bias guards); PlayMode BattedBallLab preset ordering.
+
 ## Discoveries
 - Savant `plate_x/plate_z` are at the plate front (y = 17/12 ft); 9P constant-acceleration fit with t = 0 at y = 50 ft reproduces plate_x/z exactly (researcher, one row). Savant pfx (feet) on 2 rows matched Nathan's drag-corrected Magnus deviation over release→plate, not the old 40 ft window — to confirm on a larger sample in B.
 - Savant `spin_axis` is the measured (Hawk-Eye) axis, not movement-inferred (contradicts the first research report): deviation from movement mirrors by throwing hand.
@@ -81,3 +95,5 @@ Dataset split: one game = development, a different game = holdout.
 - B: Statcast boundary = `Pitchlab.Simulation.Tracking` (StatcastPitch, StatcastNinePointFit, StatcastAdapter); simulator untouched. CSV parsing and analysis live in the EditMode test assembly.
 
 ## Remaining risks
+- Batted-ball distances ≈ 30 ft long vs 2024 Statcast; cause unresolved (exit-speed definition, drag/ball lot, spin model; hit_distance_sc catch-height semantics ruled out — home runs show the same bias). Blocks distance-dependent gameplay.
+- Breaking-ball lift vs measured active spin (accepted via effective-spin inputs, ADR 0003); mechanism unresolved.

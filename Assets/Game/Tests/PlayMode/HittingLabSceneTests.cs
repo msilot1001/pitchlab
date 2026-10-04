@@ -22,6 +22,14 @@ namespace Pitchlab.Tests
             Assert.IsNotNull(_lab, "HittingLab scene must contain a HittingLabController");
         }
 
+        [Test]
+        public void SceneSwingIsTheValidatedDefault()
+        {
+            // The scene serializes its own copy of the swing; it must not silently keep stale physics (TASK-004.5 found
+            // the old e_x/r_x and no bat tilt here). Change SwingParameters.Default and the scene together.
+            Assert.AreEqual(SwingParameters.Default, _lab.Swing);
+        }
+
         [UnityTest]
         public IEnumerator WellTimedCentredSwingMakesHardContactAndFreezesBallAtContact()
         {

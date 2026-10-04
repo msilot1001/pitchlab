@@ -1,0 +1,10 @@
+role,game_pk,date,venue,elevation_ft,temp_f,condition,wind
+development,745101,2024-05-03,Tropicana Field,15,72,Dome,"0 mph, None"
+development,745100,2024-05-04,Tropicana Field,15,72,Dome,"0 mph, None"
+development,745103,2024-05-05,Tropicana Field,15,72,Dome,"0 mph, None"
+development,745098,2024-05-06,Tropicana Field,15,72,Dome,"0 mph, None"
+development,745095,2024-05-07,Tropicana Field,15,72,Dome,"0 mph, None"
+holdout,745097,2024-05-08,Tropicana Field,15,72,Dome,"0 mph, None"
+holdout,745094,2024-05-10,Tropicana Field,15,72,Dome,"0 mph, None"
+holdout,745096,2024-05-11,Tropicana Field,15,72,Dome,"0 mph, None"
+holdout,745092,2024-05-12,Tropicana Field,15,72,Dome,"0 mph, None"
