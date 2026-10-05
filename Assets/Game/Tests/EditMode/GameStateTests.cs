@@ -102,6 +102,7 @@ namespace Pitchlab.Tests
             game.Pitch(PitchOutcome.Ball);
             Assert.AreEqual(new Count(3, 1), game.Count);
             Assert.AreEqual(PlateAppearanceEnd.Walk, game.Pitch(PitchOutcome.Ball));
+            Assert.IsFalse(game.IsOver, "a walk-off only in the 9th or later");
             Assert.AreEqual((2, BaseOccupancy.Loaded, 1, 2, 1), (game.Outs, game.Bases, game.AwayScore, game.HomeScore, game.CompletedPlateAppearances), "forced in: the home team scores");
             Assert.AreEqual(new Count(), game.Count, "the next batter starts 0–0");
             StringAssert.Contains("walk, 1 run", game.Log.Last());

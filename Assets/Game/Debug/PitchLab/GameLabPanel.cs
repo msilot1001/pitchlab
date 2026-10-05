@@ -94,7 +94,12 @@ namespace Pitchlab.Sandbox
             }
 
             GUILayout.BeginHorizontal();
+            bool enabled = GUI.enabled;
+            GUI.enabled = enabled && !game.IsOver;
             if (GUILayout.Button("START PA")) _lab.StartPlateAppearance();
+            GUI.enabled = true;   // a new game is always possible, mid-play too (the pitch on screen is dropped unapplied)
+            if (GUILayout.Button("NEW GAME")) _lab.NewGame();
+            GUI.enabled = enabled;
             if (GUILayout.Button("RESET PA")) game.ResetPlateAppearance();
             GUILayout.EndHorizontal();
             GUI.enabled = true;

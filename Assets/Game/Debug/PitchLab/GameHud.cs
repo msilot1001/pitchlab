@@ -61,6 +61,8 @@ namespace Pitchlab.Sandbox
         /// <summary>The plate appearance whose pitches are shown: the one the last pitch belonged to until the loop is ready
         /// again, then the current one.</summary>
         public PlateAppearance Shown { get; private set; }
+        /// <summary>The final (score and how it ended) once the game is over and its last call has been shown; else empty.</summary>
+        public string FinalText { get; private set; } = string.Empty;
         public bool ShowLog { get; set; }
         public bool ShowPlot { get; set; } = true;
 
@@ -93,7 +95,8 @@ namespace Pitchlab.Sandbox
             bool ready = _lab.CurrentPitch == null || _lab.StateAt(realtime) == BattingState.Ready;
             // The call of the last pitch stays up through the result pause: its plate appearance's end, or the pitch itself.
             string flash = string.Empty;
-            PlateAppearance shown = g.Current;
+            // After the end the last plate appearance stays (there is no next batter).
+            PlateAppearance shown = g.IsOver && g.CompletedPlateAppearances > 0 ? g.Completed[g.CompletedPlateAppearances - 1] : g.Current;
             if (!ready && _lab.LastOutcome is PitchOutcome o)
             {
                 if (_lab.LastEnd != PlateAppearanceEnd.None && g.CompletedPlateAppearances > 0)
@@ -104,15 +107,20 @@ namespace Pitchlab.Sandbox
                 else flash = PitchOutcomes.Describe(o);
             }
 
+            bool final = g.IsOver && ready;
+            if (final) flash = FinalFlash;
             if (ReferenceEquals(g, _built.Game) && g.Version == _built.Version && ReferenceEquals(shown, _built.Shown) && flash == _built.Flash) return;
             _built = (g, g.Version, shown, flash);
-            Rebuild(g, shown, flash);
+            Rebuild(g, shown, flash, final);
         }
 
-        private void Rebuild(GameState g, PlateAppearance shown, string flash)
+        private void Rebuild(GameState g, PlateAppearance shown, string flash, bool final)
         {
             Shown = shown;
             Flash = flash;
+            FinalText = final
+                ? $"FINAL\n{g.LineupOf(TeamSide.Away).Team.ToUpperInvariant()} {g.Result.Away}   {g.LineupOf(TeamSide.Home).Team.ToUpperInvariant()} {g.Result.Home}\n{g.Result.Reason}\n\nSpace / A: new game"
+                : string.Empty;
             InningText = $"{(g.Half == Half.Top ? "TOP" : "BOT")} {g.Inning}";
             AwayText = $"{g.LineupOf(TeamSide.Away).Team.ToUpperInvariant()}  {g.AwayScore}";
             HomeText = $"{g.LineupOf(TeamSide.Home).Team.ToUpperInvariant()}  {g.HomeScore}";
@@ -127,8 +135,8 @@ namespace Pitchlab.Sandbox
             BatterText = $"#{at.Slot}  {at.Batter.Name}  ({(at.Batter.Bats == BatterSide.Left ? "L" : "R")})";
             if (shown.IsComplete && shown.Pitches.Count > 0)
             {
-                Count final = shown.Pitches[shown.Pitches.Count - 1].Before;
-                (Balls, Strikes) = (final.Balls, final.Strikes);
+                Count lastCount = shown.Pitches[shown.Pitches.Count - 1].Before;
+                (Balls, Strikes) = (lastCount.Balls, lastCount.Strikes);
             }
 
             _plot.Clear();
@@ -166,6 +174,9 @@ namespace Pitchlab.Sandbox
             _ => string.Empty,
         };
 
+        /// <summary>The flash slot while the final is up (the final has its own panel).</summary>
+        private const string FinalFlash = "FINAL";
+
         private static string Short(string label) => label.EndsWith("-like") ? label.Substring(0, label.Length - 5) : label;
 
         // ------------------------------------------------------------------ drawing
@@ -192,7 +203,13 @@ namespace Pitchlab.Sandbox
             }
 
             DrawScorebug(new Rect(12f, Screen.height - Band - 134f, 300f, 134f));
-            if (Flash.Length > 0) GUI.Label(new Rect(Screen.width * 0.5f - 250f, 54f, 500f, 44f), Flash, _flash);
+            if (FinalText.Length > 0)
+            {
+                var final = new Rect(Screen.width * 0.5f - 210f, Screen.height * 0.5f - 110f, 420f, 190f);
+                Fill(final, Panel);
+                GUI.Label(final, FinalText, _big);
+            }
+            else if (Flash.Length > 0) GUI.Label(new Rect(Screen.width * 0.5f - 250f, 54f, 500f, 44f), Flash, _flash);
             float right = Screen.width - 12f;
             if (History.Count > 0)
             {

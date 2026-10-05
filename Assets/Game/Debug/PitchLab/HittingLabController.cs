@@ -153,7 +153,7 @@ namespace Pitchlab.Sandbox
 
         /// <summary>The batter at the plate at real time <paramref name="realtime"/> (GameLab; null in the HittingLab).</summary>
         public PlayerProfile BatterAt(double realtime) =>
-            Game != null && (CurrentPitch == null || StateAt(realtime) == BattingState.Ready && !_resultPending) ? Game.Batter : PitchBatter;
+            Game != null && !(Game.IsOver && PitchBatter != null) && (CurrentPitch == null || StateAt(realtime) == BattingState.Ready && !_resultPending) ? Game.Batter : PitchBatter;
 
         /// <summary>The real time the controller last rendered (<see cref="FrameUpdate"/>).</summary>
         public double RenderedRealtime { get; private set; } = double.NegativeInfinity;
@@ -422,6 +422,7 @@ namespace Pitchlab.Sandbox
             if (!_gameMode) throw new InvalidOperationException("Only the GameLab plays a game.");
             Game = game ?? new GameState();
             _resultPending = false;
+            _autoArmed = Clock();   // auto pitching (if on) resumes AutoPitchDelay from now
             ClearPitch();
             CurrentPitch = null;
             PitchBatter = null;
@@ -435,6 +436,7 @@ namespace Pitchlab.Sandbox
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
             ApplyResult();   // a press during a play skips its remainder: its result stands
+            if (Game != null && Game.IsOver) return;   // the game is over: no more pitches (NewGame starts the next)
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
             // The game's batter (GameLab): his side for the swing, his zone for the call — fixed for this pitch.
             PitchBatter = Game?.Batter;
@@ -504,6 +506,13 @@ namespace Pitchlab.Sandbox
             return result;
         }
 
+        /// <summary>The final stays up at least this long (real s) before a press starts a new game (no mashing through it).</summary>
+        public const double FinalDwell = 1.0;
+
+        /// <summary>How long (real s) the loop has been ready since the game's last pitch — the final shown (∞ with no pitch).</summary>
+        private double ShowingFinalSince(double realtime) => CurrentPitch == null ? double.PositiveInfinity
+            : realtime - (_pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed);
+
         /// <summary>Presses this soon after contact are ignored (s): double clicks, switch bounce.</summary>
         public const double DoublePressGrace = 0.3;
 
@@ -535,6 +544,14 @@ namespace Pitchlab.Sandbox
                 case BattingState.BallInPlay when ToSimTime(eventRealtime) < LastResult.Value.BattedBall.Time + DoublePressGrace:
                     return;   // a double click or switch bounce just after a hit must not throw the hit away
                 default:
+                    // After the final (and its call), a press starts a new game; until then it throws (or, when the game has
+                    // just ended, does nothing).
+                    if (Game != null && Game.IsOver && !_resultPending && StateAt(eventRealtime) == BattingState.Ready && ShowingFinalSince(eventRealtime) >= FinalDwell)
+                    {
+                        NewGame();
+                        return;
+                    }
+
                     ThrowPitch(_presetIndex, eventRealtime + _deliveryLead / _playbackSpeed);
                     return;
             }
@@ -563,34 +580,33 @@ namespace Pitchlab.Sandbox
                 _zoneBatter = atBat;
                 DrawZone((atBat.ZoneBottom, atBat.ZoneTop));   // the outline follows the batter who steps in
             }
-            if (CurrentPitch == null) return;
-
-            double t = ToSimTime(now);
-            RenderedSimTime = t;
-            double grace = LastSwing.HasValue ? 0.0 : InputGrace * _pitchPlaybackSpeed;   // a take waits for late swing events
-            if (_resultPending && t >= BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + grace) ApplyResult();
-
-            // The auto pitcher's next press: AutoPitchDelay after the loop is ready (or after auto was switched on), at that
-            // exact time — not this frame's — unless the frame is far later (a pause): then now. Before rendering, so the new
-            // pitch is drawn at its own time.
-            if (AutoPitch && Game != null && !_resultPending)
+            // The result of the pitch on screen, once decided (a take waits InputGrace for a late swing event).
+            if (CurrentPitch != null && _resultPending)
             {
-                double ready = _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
+                double grace = LastSwing.HasValue ? 0.0 : InputGrace * _pitchPlaybackSpeed;
+                if (ToSimTime(now) >= BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + grace) ApplyResult();
+            }
+
+            // The auto pitcher's next press: AutoPitchDelay after the loop is ready (or after auto was switched on, or a new game
+            // began), at that exact time — not this frame's — unless the frame is far later (a pause): then now. Before
+            // rendering, so the new pitch is drawn at its own time.
+            if (AutoPitch && Game != null && !Game.IsOver && !_resultPending)
+            {
+                double ready = CurrentPitch == null ? double.NegativeInfinity
+                    : _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
                 double press = Math.Max(ready, _autoArmed) + AutoPitchDelay;
                 if (now - press > AutoHitchTolerance) press = now;
-                if (now >= press)
-                {
-                    ThrowPitch(_presetIndex, press + _deliveryLead / _playbackSpeed);
-                    t = ToSimTime(now);
-                    RenderedSimTime = t;
-                }
+                if (now >= press) ThrowPitch(_presetIndex, press + _deliveryLead / _playbackSpeed);
             }
+
+            if (CurrentPitch == null) return;
+            double t = ToSimTime(now);
+            RenderedSimTime = t;
             // Authoritative samples only: the pitch, then (after contact) the ball in play until it rests or leaves play.
             // After contact: free on its trajectory until a defender possesses it, then carried (FieldingPlay).
             _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
                 ? LastDefense.BallPositionAt(t)
                 : CurrentPitch.Flight.StateAt(t).Position);
-
         }
 
         /// <summary>The pitch's result into the game (once; when it is decided — the end of the pitch or the swing, the play's
