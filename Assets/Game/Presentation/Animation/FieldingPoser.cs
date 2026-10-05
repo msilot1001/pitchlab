@@ -13,6 +13,10 @@ namespace Pitchlab.Presentation
         public float GloveWeight;
         /// <summary>Ball in the glove: both hands together in front of the chest.</summary>
         public bool HoldingBall;
+        /// <summary>Throwing motion (0–1 weight): throwing hand at <see cref="ThrowHand"/> (figure frame), torso turned by
+        /// <see cref="ThrowTwist"/> degrees (− closed, + open), glove arm leading toward the target.</summary>
+        public float ThrowWeight, ThrowTwist;
+        public Vector3 ThrowHand;
     }
 
     /// <summary>
@@ -66,6 +70,25 @@ namespace Pitchlab.Presentation
             pose.RightForearm = Dir(Mathf.Lerp(-5f, 0f, run), Mathf.Lerp(-10f, 15f, run) + swing);
             pose.LeftUpperArm = Dir(Mathf.Lerp(-15f, -8f, run), Mathf.Lerp(-55f, -70f, run) - swing);
             pose.LeftForearm = Dir(Mathf.Lerp(5f, 0f, run), Mathf.Lerp(-10f, 15f, run) - swing);
+
+            if (input.ThrowWeight > 0f)
+            {
+                // Throw: stride toward the target, hips and chest closed then whipping open, the throwing hand on the
+                // authoritative ball path (before the release) or following through, the glove arm leading then tucking.
+                float w = Mathf.Clamp01(input.ThrowWeight);
+                pose.LeftFoot += new Vector3(0.05f * w, 0f, 0.45f * w);
+                pose.RightFoot += new Vector3(0f, 0f, -0.15f * w);
+                pose.Pelvis += new Vector3(0f, 0.6f * input.ThrowTwist * w, 0f);
+                pose.Chest += new Vector3(0f, 0.6f * input.ThrowTwist * w, 0f);
+                pose.Spine += new Vector3(8f * w, 0f, 0f);
+                pose.RightHandWeight = 1f;
+                pose.RightHand = input.ThrowHand;
+                pose.RightElbowHint = new Vector3(1f, 0.4f, -0.6f);
+                pose.LeftHandWeight = 1f;
+                pose.LeftHand = Vector3.Lerp(new Vector3(-0.35f, 1.35f, 0.45f), new Vector3(-0.15f, 1.05f, 0.25f), Mathf.Clamp01(input.ThrowTwist / 30f + 0.5f));
+                pose.LeftElbowHint = new Vector3(-1f, -0.3f, 0f);
+                return;
+            }
 
             if (input.HoldingBall)
             {

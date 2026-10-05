@@ -24,6 +24,8 @@ namespace Pitchlab.Gameplay.Fielding
         FreeBall,
         /// <summary>A defender holds it.</summary>
         Possessed,
+        /// <summary>Thrown by a defender: its throw flight moves it until a catch (or its first ground contact).</summary>
+        Thrown,
     }
 
     /// <summary>

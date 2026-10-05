@@ -84,7 +84,9 @@ namespace Pitchlab.Sandbox
         /// <summary>The defense's response to <see cref="LastPlay"/> (TASK-005): who fields it, where, when; possession.</summary>
         public FieldingPlay LastFielding { get; private set; }
         /// <summary>When the ball in play is over (possession, or rest / out of play); NaN without one.</summary>
-        public double PlayEnd => LastFielding?.EndTime ?? LastPlay?.EndTime ?? double.NaN;
+        public double PlayEnd => LastDefense?.EndTime ?? LastPlay?.EndTime ?? double.NaN;
+        /// <summary>The fielding play plus the default throw (TASK-006A): the ball's authority at every instant.</summary>
+        public DefensivePlay LastDefense { get; private set; }
         /// <summary>Distance to show for the hit: carry (first bounce), or the projected distance off or over the fence.</summary>
         public double ShownCarry => LastPlay == null ? double.NaN : LastPlay.ReachedFenceInTheAir ? LastBattedBall.Metrics.Distance : LastPlay.CarryDistance;
         public static readonly FieldLayout Field = FieldLayout.Standard;
@@ -285,6 +287,7 @@ namespace Pitchlab.Sandbox
             LastPlay = null;
             LastCall = null;
             LastFielding = null;
+            LastDefense = null;
             ResultSummary = string.Empty;
             PitchesThrown++;
             _pitchPath.enabled = false;
@@ -373,8 +376,8 @@ namespace Pitchlab.Sandbox
             RenderedSimTime = t;
             // Authoritative samples only: the pitch, then (after contact) the ball in play until it rests or leaves play.
             // After contact: free on its trajectory until a defender possesses it, then carried (FieldingPlay).
-            _ball.position = SimulationSpace.ToUnity(LastFielding != null && t >= LastPlay.First.Time
-                ? LastFielding.BallPositionAt(t)
+            _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
+                ? LastDefense.BallPositionAt(t)
                 : CurrentPitch.Flight.StateAt(t).Position);
         }
 
@@ -388,6 +391,7 @@ namespace Pitchlab.Sandbox
                 LastPlay = BallInPlaySimulation.Run(r.BattedBall, Environment, Field);
                 LastCall = FairFoul.Call(LastPlay);
                 LastFielding = FieldingSolver.Solve(LastPlay);
+                LastDefense = ThrowPlanner.Plan(LastFielding, ThrowPlanner.DefaultTarget(LastFielding));
                 BattedBallMetrics flight = LastBattedBall.Metrics;
                 // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.
                 double carry = LastPlay.ReachedFenceInTheAir ? flight.Distance : LastPlay.CarryDistance;

@@ -171,7 +171,9 @@ namespace Pitchlab.Sandbox
             if (held) ball.position = _pitcher.BallAnchor.position;
             BallInPlay inPlay = _lab.LastPlay;
             double possession = _lab.LastFielding?.PossessionTime ?? double.PositiveInfinity;
-            bool moving = inPlay == null || (t < inPlay.EndTime && t < possession);
+            DefensivePlay defense = _lab.LastDefense;
+            bool moving = defense != null ? defense.AuthorityAt(t) != BallAuthority.Possessed && t < defense.EndTime
+                : inPlay == null || t < inPlay.EndTime;
             _trail.emitting = !held && moving;
             // Keep the ball a few pixels wide however far it flies (centre stays on the authoritative trajectory).
             float distance = Vector3.Distance(_view.transform.position, ball.position);
@@ -179,7 +181,7 @@ namespace Pitchlab.Sandbox
             ball.localScale = new Vector3(d, d, d);
             _trail.widthMultiplier = 0.8f * d;
             _trail.time = _contactShown ? 0.6f : 0.18f;
-            bool shadow = _contactShown && t < possession && ball.position.y > 0.15f && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;   // airborne only
+            bool shadow = _contactShown && (defense == null ? t < possession : defense.AuthorityAt(t) != BallAuthority.Possessed) && ball.position.y > 0.15f && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;   // airborne only
             _shadow.gameObject.SetActive(shadow);
             if (shadow)
             {
@@ -209,8 +211,8 @@ namespace Pitchlab.Sandbox
             // he plays the ball (a dribbler); the primary defender is framed with the ball, which sits in his glove from
             // the possession moment.
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C;
-            _defense.Show(_lab.LastFielding, t, _lab.BallTransform, _lab.DebugView);
-            _baseballCamera.FollowAlso(_contactShown ? _defense.Primary : null);
+            _defense.Show(_lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
+            _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
         }
 
         /// <summary>
@@ -245,9 +247,13 @@ namespace Pitchlab.Sandbox
             if (t >= possession && fielding.Primary is DefensivePosition by)
                 line += $" · {(fielding.Intercept.Kind == InterceptKind.FlyCatch ? "caught" : "fielded")} by {Abbreviation(by)}";
             else if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
+            if (_lab.LastDefense?.Throw is ThrowPlay th && t >= th.ReleaseTime)
+                line += $" · throw to {Abbreviation(th.Target)}{(th.Caught ? t >= th.Catch.Time ? " ✓" : "" : t >= th.FirstContactTime ? " — not caught" : "")}";
             if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime && t < possession) line += " · ground-rule double";
             return line;
         }
+
+        public static string Abbreviation(Base b) => b switch { Base.First => "1B", Base.Second => "2B", Base.Third => "3B", _ => "home" };
 
         public static string Abbreviation(DefensivePosition p) => p switch
         {

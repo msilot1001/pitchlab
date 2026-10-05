@@ -9,6 +9,14 @@ namespace Pitchlab.Simulation.Field
     /// fence is a generic polyline (330 ft lines, 375 ft alleys, 400 ft centre), 8 ft high, with a 15 ft warning
     /// track inside it between the foul lines. See Docs/SURFACE_PHYSICS.md.
     /// </summary>
+    public enum Base
+    {
+        Home,
+        First,
+        Second,
+        Third,
+    }
+
     public sealed class FieldLayout
     {
         private const double Ft = 0.3048;
@@ -33,6 +41,26 @@ namespace Pitchlab.Simulation.Field
             }
 
             WallHeight = wallHeight;
+        }
+
+        /// <summary>Side of a base bag (18 in, Official Baseball Rules 2.03 since 2023).</summary>
+        public static readonly double BaseBagSide = 18.0 * 0.0254;
+
+        /// <summary>
+        /// Centre of a base (ground level, Z = 0). Official Baseball Rules diamond: first and third base bags lie wholly in
+        /// fair territory with their outer corners 90 ft from the plate's rear point along the foul lines; second base is
+        /// centred 127 ft 3⅜ in from it; home is the centre of the plate (17 in wide, rear point at the origin).
+        /// </summary>
+        public static Vector3d BasePosition(Base b)
+        {
+            double s = Math.Sqrt(0.5), half = BaseBagSide / 2.0;
+            switch (b)
+            {
+                case Base.First: return new Vector3d(s * (BaseDistance - half) - s * half, s * (BaseDistance - half) + s * half, 0.0);
+                case Base.Third: return new Vector3d(-(s * (BaseDistance - half) - s * half), s * (BaseDistance - half) + s * half, 0.0);
+                case Base.Second: return new Vector3d(0.0, (127.0 + 3.375 / 12.0) * Ft, 0.0);
+                default: return new Vector3d(0.0, 0.5 * 17.0 * 0.0254, 0.0);   // home: plate centre (8.5 in in front of the rear point)
+            }
         }
 
         public static FieldLayout Standard => new FieldLayout(330.0, 375.0, 400.0, 375.0, 330.0, 8.0 * Ft);
