@@ -30,7 +30,7 @@ A fielder possesses the ball → transfers → throws toward a base → the ball
 - [x] Base geometry; throw solver; receiver; DefensivePlay with authority; EditMode tests.
 - [x] Presentation (throw motion, receiver, camera); FieldingLab controls and scenarios; HittingLab default.
 - [x] Runtime scenarios; reviews; check.sh; commit.
-- [ ] Codex review (merge only with no blockers).
+- [x] Codex review: B (3 findings, fixed in 19f38bf), follow-up A — merged.
 
 ## Verification
 - **check.sh:** EditMode 440 passed / 446 (6 skipped, unchanged), PlayMode 41/41.
