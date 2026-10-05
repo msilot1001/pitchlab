@@ -40,16 +40,21 @@ namespace Pitchlab.Gameplay.Hitting
         }
 
         /// <summary>Is the ball (centre <paramref name="x"/>, <paramref name="z"/> at the plate's front plane) in the zone?</summary>
-        public static bool Contains(double x, double z)
+        public static bool Contains(double x, double z) => Contains(x, z, Bottom, Top);
+
+        /// <summary>The same for a batter whose zone runs from <paramref name="bottom"/> to <paramref name="top"/> (m).</summary>
+        public static bool Contains(double x, double z, double bottom, double top)
         {
             double r = BallProperties.Baseball.Radius;
-            return Math.Abs(x) <= HalfWidth + r && z >= Bottom - r && z <= Top + r;
+            return Math.Abs(x) <= HalfWidth + r && z >= bottom - r && z <= top + r;
         }
 
-        public static bool IsStrike(HittingPitch pitch)
+        public static bool IsStrike(HittingPitch pitch) => IsStrike(pitch, Bottom, Top);
+
+        public static bool IsStrike(HittingPitch pitch, double bottom, double top)
         {
             (double x, double z) = Crossing(pitch);
-            return !double.IsNaN(x) && Contains(x, z);
+            return !double.IsNaN(x) && Contains(x, z, bottom, top);
         }
     }
 
@@ -59,13 +64,26 @@ namespace Pitchlab.Gameplay.Hitting
         /// The pitch's result from the authoritative pitch, swing, contact and play: no swing → the zone call; a swing without
         /// contact → swinging strike; contact whose play ends dead without an award → foul; otherwise in play.
         /// </summary>
-        public static PitchOutcome Of(HittingPitch pitch, SwingInput? swing, ContactResult? result, LivePlay play)
+        public static PitchOutcome Of(HittingPitch pitch, SwingInput? swing, ContactResult? result, LivePlay play) =>
+            Of(pitch, swing, result, play, StrikeZone.Bottom, StrikeZone.Top);
+
+        /// <summary>The same against a batter whose zone runs from <paramref name="zoneBottom"/> to <paramref name="zoneTop"/>.</summary>
+        public static PitchOutcome Of(HittingPitch pitch, SwingInput? swing, ContactResult? result, LivePlay play, double zoneBottom, double zoneTop)
         {
             if (pitch == null) throw new ArgumentNullException(nameof(pitch));
-            if (!swing.HasValue) return StrikeZone.IsStrike(pitch) ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
+            if (!swing.HasValue) return StrikeZone.IsStrike(pitch, zoneBottom, zoneTop) ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
             if (!(result is ContactResult r) || !r.IsContact) return PitchOutcome.SwingingStrike;
             if (play == null) throw new ArgumentNullException(nameof(play), "a batted ball has a play");
             return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
         }
+
+        public static string Describe(PitchOutcome o) => o switch
+        {
+            PitchOutcome.Ball => "BALL",
+            PitchOutcome.CalledStrike => "CALLED STRIKE",
+            PitchOutcome.SwingingStrike => "SWINGING STRIKE",
+            PitchOutcome.Foul => "FOUL",
+            _ => "IN PLAY",
+        };
     }
 }

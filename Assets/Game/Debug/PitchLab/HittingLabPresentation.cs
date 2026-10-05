@@ -170,6 +170,8 @@ namespace Pitchlab.Sandbox
         {
             double t = _lab.CurrentPitch == null ? double.NegativeInfinity : _lab.RenderedSimTime;
             if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
+            // The next batter steps in (from his side) once the last plate appearance is over and the loop is ready.
+            if (_batter.LeftHanded != (_lab.BatterSideAt(_lab.Clock()) == BatterSide.Left)) PlaceBatter(_lab.BatterSideAt(_lab.Clock()));
             if (_lab.LastSwing.HasValue && !_swing.HasValue) OnSwing(_lab.LastSwing.Value, _lab.LastResult.Value);
 
             if (!_defense.DrivesPitcher(_lab.LastDefense, t)) AnimatePitcher(t);
@@ -275,7 +277,7 @@ namespace Pitchlab.Sandbox
             if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
             BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration);
             if (state == BattingState.Ready) return "Click to pitch";
-            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? (StrikeZone.IsStrike(_pitch) ? "Take · called strike" : "Take · ball") : string.Empty;
+            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? (StrikeZone.IsStrike(_pitch, _lab.Zone.Bottom, _lab.Zone.Top) ? "Take · called strike" : "Take · ball") : string.Empty;
             string timing = ContactFeedback.Timing(r);
             if (!r.IsContact)
                 return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;
@@ -385,9 +387,11 @@ namespace Pitchlab.Sandbox
             foreach (Mesh mesh in _builtMeshes) if (mesh != null) Destroy(mesh);   // runtime meshes are not owned by their GameObjects
         }
 
-        private void PlaceBatter()
+        private void PlaceBatter() => PlaceBatter(_lab.Swing.Side);
+
+        private void PlaceBatter(BatterSide side)
         {
-            bool left = _lab.Swing.Side == BatterSide.Left;
+            bool left = side == BatterSide.Left;
             _batter.LeftHanded = left;
             // Stance position (Baseball Savant batter positioning, reference hitter 2024): hips 24.7 in behind the front of
             // the plate and 27.7 in off its inside edge; the figure faces the pitcher, plate on its right (mirrored for lefties).

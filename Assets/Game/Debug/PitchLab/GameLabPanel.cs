@@ -1,4 +1,5 @@
 using Pitchlab.Gameplay.Play;
+using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Rules;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -26,7 +27,15 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>The panel's screen area (GUI coordinates, origin top-left).</summary>
-        private Rect PanelRect => new Rect(Screen.width - 330, 10, 320, _showEditor ? 382 : 46);
+        /// <summary>Everything the panel draws (state box, and the editor below it when open): clicks there are not swings.</summary>
+        private Rect PanelRect
+        {
+            get
+            {
+                float state = 66f + 18f * (_lab.Game?.Current.Pitches.Count ?? 0);
+                return new Rect(Screen.width - 330, 10, 320, state + (_showEditor ? 336f : 0f));
+            }
+        }
 
         private void Update()
         {
@@ -37,13 +46,16 @@ namespace Pitchlab.Sandbox
         {
             GameState game = _lab != null ? _lab.Game : null;
             if (game == null) return;
-            var state = new Rect(Screen.width - 330, 10, 320, 46);
+            PlateAppearance pa = game.Current;
+            var state = new Rect(Screen.width - 330, 10, 320, 66 + 18 * pa.Pitches.Count);
             GUI.Box(state, GUIContent.none);
-            GUI.Label(new Rect(state.x + 8, state.y + 4, 310, 20), $"{game.HalfName} {game.Inning}   {game.Outs} out   {Bases(game.Bases)}   PA {game.PlateAppearance + 1}   {game.Count.Balls}-{game.Count.Strikes}");
+            GUI.Label(new Rect(state.x + 8, state.y + 4, 310, 20), $"{game.HalfName} {game.Inning}   {game.Outs} out   {Bases(game.Bases)}   PA {game.CompletedPlateAppearances + 1}   {game.Count.Balls}-{game.Count.Strikes}");
             GUI.Label(new Rect(state.x + 8, state.y + 24, 310, 20), $"Away {game.AwayScore} – Home {game.HomeScore}   {(_lab.EditorLocked ? "live" : "ready")}   {End(_lab.LastEnd)}G editor");
+            GUI.Label(new Rect(state.x + 8, state.y + 44, 310, 20), $"{pa.Team} #{pa.Slot} {pa.Batter.Name} ({(pa.Batter.Bats == BatterSide.Left ? "L" : "R")})");
+            for (int i = 0; i < pa.Pitches.Count; i++) GUI.Label(new Rect(state.x + 16, state.y + 62 + 18 * i, 300, 20), pa.Pitches[i].ToString());
             if (!_showEditor) return;
 
-            GUILayout.BeginArea(new Rect(Screen.width - 330, 62, 320, 330), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(Screen.width - 330, state.yMax + 6, 320, 330), GUI.skin.box);
             GUI.enabled = !_lab.EditorLocked;
             int inning = game.Inning, outs = game.Outs, away = game.AwayScore, home = game.HomeScore;
             Half half = game.Half;

@@ -43,7 +43,7 @@ namespace Pitchlab.Tests
                 Assert.AreEqual(LivePlay.BallKind.Dead, foul.Kind);
                 Assert.AreEqual(PlateAppearanceEnd.None, game.Apply(foul));
                 Assert.AreEqual(new Count(0, Math.Min(i, 2)), game.Count, "a strike until two strikes");
-                Assert.AreEqual((1, new BaseOccupancy(true, false, false), 0), (game.Outs, game.Bases, game.PlateAppearance), "same batter, runner back");
+                Assert.AreEqual((1, new BaseOccupancy(true, false, false), 0), (game.Outs, game.Bases, game.CompletedPlateAppearances), "same batter, runner back");
             }
         }
 
@@ -71,12 +71,12 @@ namespace Pitchlab.Tests
             for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);   // walk: PA 1 over
             game.Pitch(PitchOutcome.Ball);
             game.ResetPlateAppearance();
-            Assert.AreEqual((new BaseOccupancy(true, false, false), new Count(), 1, 1), (game.Bases, game.Count, game.PlateAppearance, game.Log.Count), "back to PA 2's start, the walk stands");
+            Assert.AreEqual((new BaseOccupancy(true, false, false), new Count(), 1, 1), (game.Bases, game.Count, game.CompletedPlateAppearances, game.Log.Count), "back to PA 2's start, the walk stands");
             game.Apply(Single(game));
             game.Apply(Foul(game));
             Assert.AreEqual(new Count(0, 1), game.Count);
             game.ResetPlateAppearance();
-            Assert.AreEqual((new BaseOccupancy(true, true, false), new Count(), 2), (game.Bases, game.Count, game.PlateAppearance), "back to after the single");
+            Assert.AreEqual((new BaseOccupancy(true, true, false), new Count(), 2), (game.Bases, game.Count, game.CompletedPlateAppearances), "back to after the single");
         }
 
         [Test]
@@ -102,7 +102,7 @@ namespace Pitchlab.Tests
             game.Pitch(PitchOutcome.Ball);
             Assert.AreEqual(new Count(3, 1), game.Count);
             Assert.AreEqual(PlateAppearanceEnd.Walk, game.Pitch(PitchOutcome.Ball));
-            Assert.AreEqual((2, BaseOccupancy.Loaded, 1, 2, 1), (game.Outs, game.Bases, game.AwayScore, game.HomeScore, game.PlateAppearance), "forced in: the home team scores");
+            Assert.AreEqual((2, BaseOccupancy.Loaded, 1, 2, 1), (game.Outs, game.Bases, game.AwayScore, game.HomeScore, game.CompletedPlateAppearances), "forced in: the home team scores");
             Assert.AreEqual(new Count(), game.Count, "the next batter starts 0–0");
             StringAssert.Contains("walk, 1 run", game.Log.Last());
         }
@@ -142,7 +142,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(new BaseOccupancy(true, true, false), game.Bases);
             game.ResetPlateAppearance();
             Assert.AreEqual(start, game.ToString(), "after the walk: the walk is replayed from 0–0");
-            Assert.AreEqual((0, 0), (game.PlateAppearance, game.Log.Count));
+            Assert.AreEqual((0, 0), (game.CompletedPlateAppearances, game.Log.Count));
         }
 
         [Test]
@@ -150,14 +150,14 @@ namespace Pitchlab.Tests
         {
             var game = new GameState();
             game.Apply(Single(game));
-            Assert.AreEqual(1, game.PlateAppearance);
+            Assert.AreEqual(1, game.CompletedPlateAppearances);
             Assert.AreEqual(new BaseOccupancy(true, false, false), game.Bases, "the batter is on first");
             Assert.AreEqual(0, game.Outs);
             // The next plate appearance starts from there: a grounder to short is a double play from double-play depth.
             LivePlay dp = Grounder(game);
             Assert.AreEqual(DefensiveAlignment.DoublePlayDepth[DefensivePosition.Shortstop], dp.Fielding.Motion(DefensivePosition.Shortstop).Start);
             game.Apply(dp);
-            Assert.AreEqual((2, BaseOccupancy.Empty, 2), (game.Outs, game.Bases, game.PlateAppearance));
+            Assert.AreEqual((2, BaseOccupancy.Empty, 2), (game.Outs, game.Bases, game.CompletedPlateAppearances));
         }
 
         [Test]
@@ -208,7 +208,7 @@ namespace Pitchlab.Tests
             Assert.AreNotEqual(start, game.ToString());
             game.ResetPlateAppearance();
             Assert.AreEqual(start, game.ToString());
-            Assert.AreEqual(0, game.PlateAppearance, "the plate appearance is replayed");
+            Assert.AreEqual(0, game.CompletedPlateAppearances, "the plate appearance is replayed");
             Assert.AreEqual(0, game.Log.Count, "and its log line removed");
         }
 
@@ -220,7 +220,7 @@ namespace Pitchlab.Tests
             LivePlay hr = HomeRun(game);
             game.Apply(hr);
             Assert.Throws<InvalidOperationException>(() => game.Apply(hr));
-            Assert.AreEqual((1, 1), (game.AwayScore, game.PlateAppearance));
+            Assert.AreEqual((1, 1), (game.AwayScore, game.CompletedPlateAppearances));
         }
 
         [Test]

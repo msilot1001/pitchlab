@@ -112,6 +112,17 @@ namespace Pitchlab.Sandbox
         /// <summary>The last pitch's result once it is decided (GameLab: applied to the game), and how it ended the plate
         /// appearance.</summary>
         public PitchOutcome? LastOutcome { get; private set; }
+        /// <summary>
+        /// The side the batter at the plate bats from at real time <paramref name="realtime"/>: the current pitch's batter
+        /// until the loop is ready again, then (GameLab) the game's batter — the next one once a plate appearance is over.
+        /// </summary>
+        public BatterSide BatterSideAt(double realtime) =>
+            Game != null && StateAt(realtime) == BattingState.Ready && !_resultPending ? Game.Batter.Bats : _swing.Side;
+
+        /// <summary>The batter the current pitch is thrown to (GameLab; null in the HittingLab).</summary>
+        public PlayerProfile PitchBatter { get; private set; }
+        /// <summary>The current pitch's strike zone (bottom, top; m): the batter's, or the default one.</summary>
+        public (double Bottom, double Top) Zone => PitchBatter != null ? (PitchBatter.ZoneBottom, PitchBatter.ZoneTop) : (StrikeZone.Bottom, StrikeZone.Top);
         public PlateAppearanceEnd LastEnd { get; private set; }
         /// <summary>The play under the rules (TASK-006B; bases empty in the batting loop): the defense's decision and the
         /// OUT/SAFE events. The batting loop observes its end; it holds no rules itself.</summary>
@@ -327,15 +338,45 @@ namespace Pitchlab.Sandbox
         /// must not capture the mouse or throw/swing (the GameLab's Situation Editor).</summary>
         public Func<Vector2, bool> ClickBlocked { get; set; }
 
+        /// <summary>
+        /// GameLab: starts <paramref name="game"/> (a new standard game when null). The pitch and play on screen are dropped
+        /// unapplied — they belonged to the old game — and the loop waits for the first pitch.
+        /// </summary>
+        public void NewGame(GameState game = null)
+        {
+            if (!_gameMode) throw new InvalidOperationException("Only the GameLab plays a game.");
+            Game = game ?? new GameState();
+            _resultPending = false;
+            ClearPitch();
+            CurrentPitch = null;
+            PitchBatter = null;
+            DrawZone(Zone);
+            ShowIdle();
+        }
+
         /// <summary>Simulates the selected pitch; it is released at <paramref name="releaseRealtime"/> on the shared clock.</summary>
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
             ApplyResult();   // a press during a play skips its remainder: its result stands
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
+            // The game's batter (GameLab): his side for the swing, his zone for the call — fixed for this pitch.
+            PitchBatter = Game?.Batter;
+            if (PitchBatter != null) _swing.Side = PitchBatter.Bats;
+            DrawZone(Zone);
             PitchLocation location = PitchLocation.All[LocationIndex];
             CurrentPitch = HittingPitch.Create(location.Aim(Presets[_presetIndex]), Environment);
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
+            ClearPitch();
+            _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
+            PitchesThrown++;
+            _pitchLabel = $"{Presets[_presetIndex].Label} ({location})";
+            _readout = $"{_pitchLabel}: swing (Space / A)!";
+        }
+
+        /// <summary>Forgets the last pitch's swing, contact, play and result (not the pitch itself).</summary>
+        private void ClearPitch()
+        {
             LastResult = null;
             LastSwing = null;
             LastBattedBall = null;
@@ -345,14 +386,10 @@ namespace Pitchlab.Sandbox
             LastLive = null;
             LastOutcome = null;
             LastEnd = PlateAppearanceEnd.None;
-            _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
             ResultSummary = string.Empty;
-            PitchesThrown++;
             _pitchPath.enabled = false;
             _exitRay.enabled = false;
             _contactMarker.gameObject.SetActive(false);
-            _pitchLabel = $"{Presets[_presetIndex].Label} ({location})";
-            _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 
         /// <summary>Places the PCI (contact-plane metres) at the current clock time, keeping any aim motion (debug/test entry point).</summary>
@@ -447,9 +484,11 @@ namespace Pitchlab.Sandbox
         {
             if (!_resultPending) return;
             _resultPending = false;
-            PitchOutcome outcome = PitchOutcomes.Of(CurrentPitch, LastSwing, LastResult, LastLive);
+            (double bottom, double top) = Zone;
+            PitchOutcome outcome = PitchOutcomes.Of(CurrentPitch, LastSwing, LastResult, LastLive, bottom, top);
             LastOutcome = outcome;
-            LastEnd = outcome == PitchOutcome.Foul || outcome == PitchOutcome.InPlay ? Game.Apply(LastLive) : Game.Pitch(outcome);
+            PitchInfo info = PitchInfo.Of(Presets[_presetIndex].Label, CurrentPitch);
+            LastEnd = outcome == PitchOutcome.Foul || outcome == PitchOutcome.InPlay ? Game.Apply(LastLive, info) : Game.Pitch(outcome, info);
         }
 
         private void ShowResult(ContactResult r)
@@ -548,6 +587,16 @@ namespace Pitchlab.Sandbox
             line.SetPositions(_pathBuffer);
         }
 
+        /// <summary>The strike-zone outline at the front of the plate (the batter's zone; presentation of the rule's input).</summary>
+        private void DrawZone((double Bottom, double Top) zone)
+        {
+            double x = PitchingGeometry.PlateHalfWidth, y = PitchingGeometry.PlateFrontY;
+            _strikeZone.SetPosition(0, SimulationSpace.ToUnity(new Vector3d(-x, y, zone.Bottom)));
+            _strikeZone.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(x, y, zone.Bottom)));
+            _strikeZone.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(x, y, zone.Top)));
+            _strikeZone.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(-x, y, zone.Top)));
+        }
+
         private void PlaceField()
         {
             double rubberDepth = Units.InchesToMeters(6.0);
@@ -561,10 +610,7 @@ namespace Pitchlab.Sandbox
             double y = PitchingGeometry.PlateFrontY;
             _strikeZone.loop = true;
             _strikeZone.positionCount = 4;
-            _strikeZone.SetPosition(0, SimulationSpace.ToUnity(new Vector3d(-x, y, PitchingGeometry.DefaultZoneBottom)));
-            _strikeZone.SetPosition(1, SimulationSpace.ToUnity(new Vector3d(x, y, PitchingGeometry.DefaultZoneBottom)));
-            _strikeZone.SetPosition(2, SimulationSpace.ToUnity(new Vector3d(x, y, PitchingGeometry.DefaultZoneTop)));
-            _strikeZone.SetPosition(3, SimulationSpace.ToUnity(new Vector3d(-x, y, PitchingGeometry.DefaultZoneTop)));
+            DrawZone(Zone);
 
             _ball.position = SimulationSpace.ToUnity(Presets[0].ToInitialState().Position);
         }
