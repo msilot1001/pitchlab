@@ -43,7 +43,7 @@ Claude Code (sole writer); reviewers and Codex read-only.
   the play banner, off-chart dots skipped, editor hidden by default in code; tests: pre-application, shown index at each
   strikeout, event-log headers/runs/window, press during a play, plot = recorded crossings, allocation check with a working
   probe (Unity's allocation constraint), camera modes through the normal player loop.
-- [ ] Codex, merge.
+- [x] Codex: B — pitch history capped to the latest 12 rows ("… n earlier"), the frame-schedule test asserts the recorded play result; also only recorded crossings are plotted (PitchInfo.HasCrossing). Merge.
 
 ## Limitations
 - Results are descriptive (no hit/error judgement, no RBI/earned runs); the infield fly rule is not modelled.

@@ -133,11 +133,16 @@ namespace Pitchlab.Sandbox
 
             _plot.Clear();
             foreach (PitchEvent p in shown.Pitches)
-                if (!double.IsNaN(p.Info.PlateX)) _plot.Add(new PlotPoint(p.Number, p.Info.PlateX, p.Info.PlateZ, p.Outcome));
+                if (p.Info.HasCrossing) _plot.Add(new PlotPoint(p.Number, p.Info.PlateX, p.Info.PlateZ, p.Outcome));
             HistoryTitle = $"PA {shown.Number}  ·  #{shown.Slot} {shown.Batter.Name}";
             _history.Clear();
-            foreach (PitchEvent p in shown.Pitches)
+            int from = System.Math.Max(0, shown.Pitches.Count - MaxHistoryRows);
+            if (from > 0) _history.Add($"     … {from} earlier");
+            for (int i = from; i < shown.Pitches.Count; i++)
+            {
+                PitchEvent p = shown.Pitches[i];
                 _history.Add($"{p.Number,2}  {Short(p.Info.Label)} {p.Info.SpeedMph:0}  {PitchOutcomes.Describe(p.Outcome)}");
+            }
             if (shown.IsComplete) _history.Add($"     {EndText(shown)}");
             PlateAppearance last = g.CompletedPlateAppearances == 0 ? null : g.Completed[g.CompletedPlateAppearances - 1];
             LastResult = last == null ? string.Empty : $"LAST  #{last.Slot} {last.Batter.Name} — {EndText(last)}";
@@ -167,6 +172,8 @@ namespace Pitchlab.Sandbox
 
         /// <summary>The HUD's bottom panels end this far (px) above the screen's bottom: above the play banner and result line.</summary>
         public const float Band = 78f;
+        /// <summary>The history shows at most this many pitches (the latest; a line counts the earlier ones).</summary>
+        public const int MaxHistoryRows = 12;
 
         private GUIStyle _small, _big, _score, _flash;
         private static readonly string[] Numbers = { "", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20" };

@@ -74,7 +74,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual($"{(g.Half == Half.Top ? "TOP" : "BOT")} {g.Inning}", _hud.InningText, when);
             StringAssert.Contains(pa.Batter.Name, _hud.BatterText, when);
             StringAssert.StartsWith($"#{pa.Slot} ", _hud.BatterText, when);
-            Assert.AreEqual(_hud.Plot.Count, pa.Pitches.Count(p => !double.IsNaN(p.Info.PlateX)), when);
+            Assert.AreEqual(_hud.Plot.Count, pa.Pitches.Count(p => p.Info.HasCrossing), when);
             for (int i = 0; i < _hud.Plot.Count; i++)
                 Assert.AreEqual((pa.Pitches[i].Info.PlateX, pa.Pitches[i].Info.PlateZ, pa.Pitches[i].Outcome), (_hud.Plot[i].X, _hud.Plot[i].Z, _hud.Plot[i].Outcome), $"{when}: the plot is the recorded crossings");
         }
@@ -225,6 +225,38 @@ namespace Pitchlab.Tests
             Assert.AreEqual(1, _lab.Game.CompletedPlateAppearances);
             StringAssert.EndsWith(GameHud.EndText(_lab.Game.Completed[0]), _hud.LastResult);
             AssertMatchesGame("new pitch");
+        }
+
+        [UnityTest]
+        public IEnumerator ALongPlateAppearanceKeepsItsLatestPitchesOnScreen()
+        {
+            yield return null;
+            GameState game = _lab.Game;
+            // Recorded straight into the game (fouls need a play): 2 balls, 2 strikes, 12 fouls, 1 more ball.
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.CalledStrike);
+            game.Pitch(PitchOutcome.CalledStrike);
+            for (int i = 0; i < 12; i++) game.Apply(FoulPlay(game));
+            game.Pitch(PitchOutcome.Ball);
+            Frame(_now);
+            Assert.AreEqual(17, game.Current.Pitches.Count);
+            Assert.AreEqual(GameHud.MaxHistoryRows + 1, _hud.History.Count, "the latest pitches and a line for the rest");
+            Assert.AreEqual("     … 5 earlier", _hud.History[0]);
+            StringAssert.StartsWith("17  ", _hud.History[_hud.History.Count - 1]);
+            Assert.AreEqual((3, 2), (_hud.Balls, _hud.Strikes));
+            Assert.AreEqual(0, _hud.Plot.Count, "pitches recorded without a flight are not plotted (no fake crossings)");
+        }
+
+        private static LivePlay FoulPlay(GameState game)
+        {
+            Situation s = game.Situation;
+            var ball = Simulation.Field.BallInPlaySimulation.Run(new Simulation.Batting.BattedBallLaunch(85.0, 35.0, 50.0, 2000.0).ToState(new Simulation.Core.Vector3d(0.0, 0.7, 0.8)),
+                Simulation.BallFlight.EnvironmentState.Standard, Simulation.Field.FieldLayout.Standard);
+            var play = new LivePlay(Gameplay.Fielding.FieldingSolver.Solve(ball, s.Alignment, Gameplay.Fielding.FielderProfile.For, Simulation.Field.FieldLayout.Standard), s);
+            play.RunToEnd();
+            Assert.IsTrue(play.IsFoul);
+            return play;
         }
 
         [UnityTest]

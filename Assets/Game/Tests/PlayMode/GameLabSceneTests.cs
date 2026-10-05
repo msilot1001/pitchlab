@@ -252,6 +252,8 @@ namespace Pitchlab.Tests
             string at30 = Run(1.0 / 30.0), at144 = Run(1.0 / 144.0);
             StringAssert.Contains("walk", at30);
             StringAssert.Contains("IN PLAY", at30);
+            Assert.IsTrue(_lab.Game.Completed.Any(p => p.End == PlateAppearanceEnd.InPlay && p.PlayResult.HasValue), "the play's result is recorded");
+            StringAssert.Contains(PlayResults.Describe(_lab.Game.Completed.First(p => p.PlayResult.HasValue).PlayResult.Value), at30, "and logged");
             Assert.AreEqual(at30, at144);
         }
 

@@ -112,6 +112,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Where it crossed the front plane of the plate (m; NaN if it never did).</summary>
         public double PlateX { get; }
         public double PlateZ { get; }
+        /// <summary>Was a flight recorded that crossed the plate (not a pitch recorded without its info)?</summary>
+        public bool HasCrossing => SpeedMph > 0.0 && !double.IsNaN(PlateX) && !double.IsNaN(PlateZ);
 
         public static PitchInfo Of(string label, HittingPitch pitch)
         {
