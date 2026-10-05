@@ -62,14 +62,37 @@ Claude Code (sole writer); unity-reviewer, test-reviewer, rules/research reviewe
 - Playback 1× / 0.5× / 0.25× in both labs.
 
 ## Milestones
-- [ ] 011.5 shared motion (MotionTrack, gait, facing, lean, planting, ground).
-- [ ] 011.6 FieldingAction + dive model + defensive presentation; Docs/FIELDING_MOTION_REFERENCE.md.
-- [ ] 011.7 runner presentation + trot; Docs/BASERUNNING_MOTION_REFERENCE.md.
-- [ ] 011.8 integration tests, overlay, slow motion, runtime scenarios.
+- [x] 011.5 shared motion (MotionTrack, gait, facing, lean, planted stride, mound feet).
+- [x] 011.6 FieldingAction + dive model + defensive presentation; Docs/FIELDING_MOTION_REFERENCE.md.
+- [x] 011.7 runner presentation + trot; Docs/BASERUNNING_MOTION_REFERENCE.md.
+- [x] 011.8 integration tests, overlay (M), slow motion (S: 1/0.5/0.25× FieldingLab; 1/2/3 HittingLab/GameLab), runtime inspection.
 - [ ] Reviews (unity, test, rules/research), check.sh, Codex, merge.
 
 ## Verification
-(filled in as it runs)
+- check.sh: EditMode 547/553 (6 skipped, pre-existing), PlayMode 63/63.
+- Action distribution on a 420-ball grid: centred 86, forehand 60, backhand 42, charging 35, short hop 23, standing 70,
+  running 37, over-shoulder 23, sliding 12, hop 16, wall 6, jumping 4, diving 6. Catch rate 34.8 % → 36.2 % with dives
+  (1.4 % of fielded balls; test bounds dives < 5 %).
+- Objective alignment (tests): glove–ball ≤ 0.10 m on pickups, ≤ 0.20 m on catches/receptions for every preset incl. dive and
+  slide; shown ball never moves more than 0.47 m in a 120 Hz tick; standing feet drift < 2 cm; sprint stance foot < 15 % of
+  body speed; slide lead foot – bag < 0.45 m at the authoritative arrival; tag glove – runner < 0.5 m; safe foot – bag < 0.6 m;
+  poses identical (< 1 mm) at 30 fps, 144 fps and in one jump; home-run trot 19.5–24.5 s.
+- Runtime inspection (FieldingLab, frozen clock, close-up InspectionCamera): SS running pickup (lunge, two hands), backhand,
+  charge, slide catch, dive (airborne at the catch, prone, up), jump at the wall, over-the-shoulder, 1B stretch, tag at 3B,
+  6-4-3 pivot, crow hop and overhand throw, throw on the run, runner slide into 3B, slide at home, rounding 2B, head-first
+  back, home-run trot, tag-up from 3B; GameLab tactical camera during a bases-loaded hit.
 
 ## Decisions / discoveries
-(filled in as it runs)
+- Presentation stays a pure function of play time (fixed-grid MotionTrack): slow motion and scrubbing are free.
+- Running pickups at full speed (the gameplay run-through take) need a lunge with a waist bend, not a squat over a 2 m stride.
+- The action geometry is frozen at the take (the gameplay fielder keeps moving afterwards).
+- Fielders and runners standing on the same bag are shown on its opposite edges (0.3 m each, home 0.25 m) — documented
+  presentation offsets, tested.
+- Arm action blends from the hold over ≥ 0.15 s (the gameplay transfer can leave 0.05 s between secure and arm start).
+- Dive: the only gameplay change on the fielding side — 1.0 m extra reach, 0.15–1.2 m ball, ≥ 6 m run-up, only when nobody
+  can catch it normally, +0.8 s recovery before the throw. Home-run trot: the other gameplay change (awarded advances).
+
+## Limitations
+- Throws on the run stay overhand (the gameplay release point is fixed at 1.8 m; no sidearm without a gameplay change).
+- Running pickups at 7 m/s slip the feet briefly in the lunge (the gameplay take does not slow the fielder).
+- No dive misses (a deterministic envelope: inside it the catch is made).
