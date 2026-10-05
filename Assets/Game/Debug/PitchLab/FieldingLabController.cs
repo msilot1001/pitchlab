@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Presentation;
 using Pitchlab.Simulation.BallFlight;
@@ -28,8 +29,9 @@ namespace Pitchlab.Sandbox
         /// contact (tag plays; TASK-007 adds runner decisions) and a forced choice of action (to show a tag play).</summary>
         public readonly struct Scenario
         {
-            public Scenario(string name, BattedBallLaunch launch, BaseOccupancy bases = default, Base? runsOnContact = null, Base? tagAt = null)
+            public Scenario(string name, BattedBallLaunch launch, BaseOccupancy bases = default, Base? runsOnContact = null, Base? tagAt = null, int outs = 0)
             {
+                Outs = outs;
                 Name = name;
                 Launch = launch;
                 Bases = bases;
@@ -42,6 +44,7 @@ namespace Pitchlab.Sandbox
             public BaseOccupancy Bases { get; }
             public Base? RunsOnContact { get; }
             public Base? TagAt { get; }
+            public int Outs { get; }
         }
 
         private static readonly BaseOccupancy OnFirst = new BaseOccupancy(true, false, false), OnSecond = new BaseOccupancy(false, true, false);
@@ -72,6 +75,12 @@ namespace Pitchlab.Sandbox
             new Scenario("2B grounder", new BattedBallLaunch(80.0, -7.0, 18.0, -900.0)),
             new Scenario("LF single", new BattedBallLaunch(98.0, 9.0, -24.0, 900.0)),
             new Scenario("CF single, runner on 3B runs home", new BattedBallLaunch(95.0, 6.0, 0.0, 700.0), new BaseOccupancy(false, false, true), Base.Third),
+            // TASK-007 baserunning.
+            new Scenario("Runner on 3B, 1 out, deep fly: tag-up", new BattedBallLaunch(95.0, 30.0, -10.0, 2200.0), new BaseOccupancy(false, false, true), outs: 1),
+            new Scenario("Runner on 2B, single to LF", new BattedBallLaunch(98.0, 9.0, -24.0, 900.0), OnSecond),
+            new Scenario("Runner on 1B, ball off the wall", new BattedBallLaunch(105.0, 14.0, -20.0, 1800.0), OnFirst),
+            new Scenario("Runners 1B & 3B, 1 out, CF single", new BattedBallLaunch(95.0, 6.0, 0.0, 700.0), new BaseOccupancy(true, false, true), outs: 1),
+            new Scenario("Runner on 1B, 2 out, deep fly", new BattedBallLaunch(95.0, 30.0, -10.0, 2200.0), OnFirst, outs: 2),
         };
 
         public static int IndexOf(string name) => Array.FindIndex(Presets, p => p.Name == name);
@@ -85,6 +94,7 @@ namespace Pitchlab.Sandbox
 
         private readonly List<Mesh> _meshes = new List<Mesh>();
         private DefenseView _defense;
+        private RunnerView _runners;
         private TrailRenderer _trail;
         private double _launchRealtime;
         private float _speed = 1f;
@@ -96,10 +106,13 @@ namespace Pitchlab.Sandbox
         public int PresetIndex { get; private set; }
         public BallInPlay Play { get; private set; }
         public FieldingPlay Fielding { get; private set; }
-        /// <summary>The play under the rules: candidates, the chosen action, events and outs.</summary>
-        public RulesPlay Rules { get; private set; }
+        /// <summary>The live play (runners, defense, events, outs, runs).</summary>
+        public LivePlay Live { get; private set; }
+        /// <summary>The defense's decision at contact: candidates and the chosen action.</summary>
+        public RulesPlay Rules => Live?.Rules;
         /// <summary>The chosen action's defensive play: the ball's authority at every instant.</summary>
-        public DefensivePlay DefensivePlay => Rules?.Defense;
+        public DefensivePlay DefensivePlay => Live?.Defense;
+        public RunnerView Runners => _runners;
         private static readonly (Key, Base?)[] ThrowKeys = { (Key.Z, Base.First), (Key.X, Base.Second), (Key.C, Base.Third), (Key.V, Base.Home), (Key.N, null) };
         /// <summary>Action override (debug controls Z/X/C/V = throw to 1B/2B/3B/home, N = hold, B = the defense's decision).</summary>
         public Base? TargetOverride { get; set; }
@@ -123,6 +136,9 @@ namespace Pitchlab.Sandbox
             _defense = new GameObject("Defense").AddComponent<DefenseView>();
             _defense.transform.SetParent(transform, false);
             _defense.Build(_mannequinPrefab, null, null, null, DefensiveAlignment.Standard);
+            _runners = new GameObject("Runners").AddComponent<RunnerView>();
+            _runners.transform.SetParent(transform, false);
+            _runners.Build(_mannequinPrefab);
             _meshes.AddRange(OutfieldDressing.Build(transform, FieldLayout.Standard));
             float d = (float)(2.0 * BallProperties.Baseball.Radius) * 2.5f;   // drawn larger for readability; centre on the trajectory
             _ball.localScale = new Vector3(d, d, d);
@@ -151,12 +167,15 @@ namespace Pitchlab.Sandbox
             Func<IReadOnlyList<DefensiveAction>, DefensiveAction> choose = null;
             if (UseOverride) choose = cs => Override(cs, fielding, TargetOverride);
             else if (sc.TagAt is Base tagAt) choose = cs => cs.First(a => a.Kind == DefensiveActionKind.TagRunner && a.Target == tagAt && a.Play.Throw != null);
-            RulesPlay rules = PlayResolver.Resolve(fielding, sc.Bases, 0, ReferenceRunnerTiming.Instance,
-                sc.RunsOnContact is Base runs ? r => r.From == runs : (Func<Runner, bool>)null, choose);
+            // The live play (TASK-007) with real runners, resolved at once: every motion keeps its history, so it renders
+            // exactly at any later time.
+            var live = new LivePlay(fielding, new Situation(sc.Outs, sc.Bases), null, choose,
+                sc.RunsOnContact is Base runs ? r => r.From == runs : (Func<Runner, bool>)null);
+            live.RunToEnd();
             PresetIndex = i;
             Play = play;
             Fielding = fielding;
-            Rules = rules;
+            Live = live;
             _launchRealtime = Clock();
             _ball.position = SimulationSpace.ToUnity(ContactPoint);   // move first, then clear: no streak from the last play
             _trail.Clear();
@@ -225,11 +244,12 @@ namespace Pitchlab.Sandbox
             _ball.position = SimulationSpace.ToUnity(DefensivePlay.BallPositionAt(t));
             _trail.emitting = DefensivePlay.AuthorityAt(t) != BallAuthority.Possessed;
             _defense.Show(DefensivePlay, t, _ball, _debug);
+            _runners.Show(Live, t);
             _camera.FollowAlso(_defense.Focus);
         }
 
         /// <summary>The result so far, as shown: the latest OUT/SAFE call (empty before any).</summary>
-        public string ResultText => Rules == null ? "" : RulesText.Latest(Rules, PlayTime);
+        public string ResultText => LiveText.Calls(Live, PlayTime);
 
         private void OnGUI()
         {
@@ -243,7 +263,8 @@ namespace Pitchlab.Sandbox
                 BattedBallLaunch l = Presets[PresetIndex].Launch;
                 text.AppendLine($"\n{l.ExitSpeedMph:0} mph · {l.LaunchAngleDegrees:+0;-0}° · spray {l.SprayAngleDegrees:+0;-0}° · spin {l.BackspinRpm:0} rpm · {_speed:0.0}×");
                 text.AppendLine(Report(Fielding));
-                text.Append(RulesText.Report(Rules, PlayTime));
+                text.Append(RulesText.Report(Rules, PlayTime).Split(new[] { "chosen:" }, StringSplitOptions.None)[0]);
+                text.Append(LiveText.Report(Live, PlayTime));
             }
 
             GUI.Label(new Rect(10f, 10f, 420f, 640f), text.ToString(), _style);
