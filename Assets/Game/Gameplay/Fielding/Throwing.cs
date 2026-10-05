@@ -122,24 +122,26 @@ namespace Pitchlab.Gameplay.Fielding
 
             // Illinois regula falsi on [lo, hi] (bisection while an end is −∞: the throw landed short); deterministic, a few
             // flight integrations instead of thirty.
+            // The interpolation weights (wLo, wHi) are halved Illinois-style; the true errors (eLo, eHi) decide termination.
             int side = 0;
+            double wLo = eLo, wHi = eHi;
             for (int i = 0; i < 60 && hi - lo > 1e-9 && eHi > 1e-9; i++)
             {
-                double mid = double.IsInfinity(eLo) ? 0.5 * (lo + hi) : (lo * eHi - hi * eLo) / (eHi - eLo);
+                double mid = double.IsInfinity(wLo) ? 0.5 * (lo + hi) : (lo * wHi - hi * wLo) / (wHi - wLo);
                 if (!(mid > lo && mid < hi)) mid = 0.5 * (lo + hi);
                 double eMid = Error(mid);
                 if (eMid < 0.0)
                 {
                     lo = mid;
-                    eLo = eMid;
-                    if (side == -1 && !double.IsInfinity(eHi)) eHi *= 0.5;
+                    eLo = wLo = eMid;
+                    if (side == -1) wHi *= 0.5;
                     side = -1;
                 }
                 else
                 {
                     hi = mid;
-                    eHi = eMid;
-                    if (side == 1 && !double.IsInfinity(eLo)) eLo *= 0.5;
+                    eHi = wHi = eMid;
+                    if (side == 1 && !double.IsInfinity(wLo)) wLo *= 0.5;
                     side = 1;
                 }
             }
