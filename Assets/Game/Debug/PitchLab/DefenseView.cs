@@ -124,6 +124,7 @@ namespace Pitchlab.Sandbox
                 _returnStart = Clock();
                 _pitcherReturning = DrivesPitcher(_defense, _time);
                 _returnHolder = _defense.HolderAt(double.MaxValue);   // whoever ends up with it
+                _returnKeys[0] = new object();   // the jog back: a new motion track for every figure
             }
 
             if (!ReferenceEquals(defense, _defense)) _pitcherTakeover = double.NaN;
@@ -165,61 +166,182 @@ namespace Pitchlab.Sandbox
         /// plays the ball), else null.</summary>
         public Transform Focus => _defense?.FocusAt(_time) is DefensivePosition p ? _figures[(int)p].transform : null;
 
-        private void Pose(DefensivePosition position, PlayerMannequin figure, LiveDefense d, double time, Transform ball)
+        /// <summary>A defender's part in the play at a moment: the take he is reaching for or has just made, the throw he is
+        /// making, whether he holds the ball — all from the authoritative defense.</summary>
+        private readonly struct Context
         {
-            Vector3d at = d?.FielderPositionAt(position, time) ?? _alignment[position];
-            float speed = d == null ? 0f : (float)d.FielderSpeedAt(position, time);
-            if (d == null)
+            public Context(LiveDefense d, DefensivePosition position, double time)
             {
-                // Jogging back from where the last play left him.
-                double u = (Clock() - _returnStart) / ReturnTime;
-                if (u < 1.0)
-                {
-                    Vector3d from = _returnFrom[(int)position], to = at;
-                    // The adopted pitcher goes back to where the delivery has him (the rubber), which then takes over.
-                    if (position == DefensivePosition.P && figure == _adoptedPitcher) to = SimulationSpace.ToSimulation(_takeoverRoot);
-                    at = from + Mathf.SmoothStep(0f, 1f, (float)u) * (to - from);
-                    speed = (to - from).Length > 0.5 ? 3f : 0f;
-                }
-            }
-
-            Vector3 root = SimulationSpace.ToUnity(new Vector3d(at.X, at.Y, 0.0));
-            root.y = FieldDressing.MoundHeight(root.x, root.z);   // stand on the mound, not in it (presentation only)
-            var input = new FieldingPoseInput { Speed = speed, Distance = d == null ? 0f : (float)d.FielderDistanceAt(position, time) };
-
-            // His takes and throws around now: the take he is reaching for (or has just made), the throw he is making.
-            BallTake? take = null;
-            if (d != null)
+                Take = null;
+                Throw = null;
                 foreach (BallTake k in d.Takes)
-                    if (k.Fielder == position && k.Time - GloveLead <= time && (take == null || k.Time > take.Value.Time)) take = k;
-            LiveThrow th = null;
-            if (d != null)
+                    if (k.Fielder == position && k.Time - GloveLead <= time && (Take == null || k.Time > Take.Value.Time)) Take = k;
                 foreach (LiveThrow x in d.Throws)
-                    if (x.Thrower == position && (take == null || x.ReleaseTime >= take.Value.Time) && time <= x.ReleaseTime + FollowThrough)
+                    if (x.Thrower == position && (Take == null || x.ReleaseTime >= Take.Value.Time) && time <= x.ReleaseTime + FollowThrough + StrideRecovery)
                     {
-                        th = x;
+                        Throw = x;
                         break;
                     }
 
-            double sinceTake = take == null ? double.NegativeInfinity : time - take.Value.Time;
-            bool holding = d?.HolderAt(time) == position;
-            double release = th?.ReleaseTime ?? double.PositiveInfinity;
-            double armStart = release - DefensivePlay.ArmAction;
+                SinceTake = Take == null ? double.NegativeInfinity : time - Take.Value.Time;
+                Holding = d.HolderAt(time) == position;
+                Release = Throw?.ReleaseTime ?? double.PositiveInfinity;
+            }
 
-            // Heading, turned smoothly with speed: toward the incoming ball, toward the target while throwing, toward the
-            // infield while holding; into the run direction as he speeds up.
+            public BallTake? Take { get; }
+            public LiveThrow Throw { get; }
+            public double SinceTake { get; }
+            public bool Holding { get; }
+            public double Release { get; }
+            public double ArmStart => Release - DefensivePlay.ArmAction;
+            /// <summary>When the throwing motion starts (never before the ball is secured).</summary>
+            public double WindStart => Take == null ? ArmStart - 0.15 : Math.Max(ArmStart - 0.15, Take.Value.Time + FieldingPlay.SecureTime);
+        }
+
+        /// <summary>A throw released while running faster than this (m/s) is a throw on the run (no planted stride).</summary>
+        private const double MovingThrowSpeed = 2.5;
+        /// <summary>The outfielder's crow hop before the arm action (s).</summary>
+        private const double CrowHopTime = 0.35;
+        /// <summary>The tag: the glove goes down this long before the authoritative tag and comes back over this long (s).</summary>
+        private const double TagLead = 0.25, TagHold = 0.35;
+
+        private static ReadyStyle ReadyOf(DefensivePosition p) => p switch
+        {
+            DefensivePosition.FirstBase or DefensivePosition.ThirdBase => ReadyStyle.CornerInfield,
+            DefensivePosition.LeftField or DefensivePosition.CenterField or DefensivePosition.RightField => ReadyStyle.Outfield,
+            DefensivePosition.P => ReadyStyle.Pitcher,
+            DefensivePosition.C => ReadyStyle.Catcher,
+            _ => ReadyStyle.Infield,
+        };
+
+        /// <summary>The body action for a take (the gameplay classification decides; this only maps it to a body shape). A
+        /// throw caught by a defender standing on a base is a stretch.</summary>
+        private static BodyAction BodyOf(FieldingAction action, LiveDefense d, DefensivePosition position, BallTake take) => action switch
+        {
+            FieldingAction.CenteredPickup => BodyAction.Pickup,
+            FieldingAction.ForehandPickup => BodyAction.Forehand,
+            FieldingAction.BackhandPickup => BodyAction.Backhand,
+            FieldingAction.ShortHopPickup => BodyAction.ShortHop,
+            FieldingAction.ChargingPickup => BodyAction.Charge,
+            FieldingAction.SlidingCatch => BodyAction.Slide,
+            FieldingAction.DivingCatch => BodyAction.Dive,
+            FieldingAction.JumpingCatch => BodyAction.Jump,
+            FieldingAction.ReceiveThrow when OnABase(d.FielderPositionAt(position, take.Time)) => BodyAction.Stretch,
+            FieldingAction.None => BodyAction.None,
+            _ => BodyAction.Reach,
+        };
+
+        private static bool OnABase(Vector3d at)
+        {
+            foreach (Simulation.Field.Base b in new[] { Simulation.Field.Base.First, Simulation.Field.Base.Second, Simulation.Field.Base.Third, Simulation.Field.Base.Home })
+                if (Gameplay.Rules.BaseTouch.IsTouching(at, b)) return true;
+            return false;
+        }
+
+        /// <summary>The planted throwing stride comes back (the fielder recovers) over this long after the follow-through (s).</summary>
+        private const double StrideRecovery = 0.3;
+        /// <summary>Turn-rate limits (°/s): running and reading the ball, and the quick turn to throw.</summary>
+        private const float TurnRate = 540f, ThrowTurnRate = 900f;
+
+        private readonly MotionTrack[] _motion = Enumerable.Range(0, DefensiveAlignment.Count).Select(_ => new MotionTrack()).ToArray();
+        private readonly float[] _shownYaw = new float[DefensiveAlignment.Count];
+        private readonly object[] _returnKeys = new object[1];
+
+        /// <summary>Where a defender wants to face at <paramref name="time"/>, from authoritative state only: the target while
+        /// throwing, the ball before a take, the infield while holding it, the ball otherwise — turned into the run direction
+        /// as he speeds up (a fielder sprinting for a ball over his head runs facing his route, not backward).</summary>
+        private static MotionSample Desired(LiveDefense d, DefensivePosition position, double time)
+        {
+            var c = new Context(d, position, time);
+            Vector3 root = Flat(SimulationSpace.ToUnity(d.FielderPositionAt(position, time)));
+            Vector3 ballAt = SimulationSpace.ToUnity(d.BallPositionAt(time));
             Vector3 face;
-            if (th != null && (holding || time >= release && time <= release + FollowThrough)) face = SimulationSpace.ToUnity(th.AimPoint) - root;
-            else if (take != null && sinceTake < 0.0 && ball != null) face = ball.position - root;
-            else if (holding || ball == null) face = -root;
-            else face = ball.position - root;
+            bool throwing = c.Throw != null && time >= c.WindStart && time <= c.Release + FollowThrough;
+            if (throwing) face = SimulationSpace.ToUnity(c.Throw.AimPoint) - root;
+            else if (c.Take != null && c.SinceTake < 0.0) face = ballAt - root;
+            else if (c.Holding) face = -root;
+            else face = ballAt - root;
             face.y = 0f;
-            Vector3 run = d != null ? SimulationSpace.ToUnity(d.FielderDirectionAt(position, time)) : Vector3.zero;
-            float w = Mathf.SmoothStep(0f, 1f, speed / 2.5f);
-            Vector3 look = face.sqrMagnitude > 1e-4f && run.sqrMagnitude > 1e-4f
-                ? Vector3.Slerp(face.normalized, run.normalized, w)
-                : run.sqrMagnitude > 1e-4f ? run : face;
-            Quaternion rotation = look.sqrMagnitude > 1e-6f ? Quaternion.LookRotation(look) : figure.transform.rotation;
+            Vector3 velocity = Flat(SimulationSpace.ToUnity(d.FielderVelocityAt(position, time)));
+            float speed = velocity.magnitude;
+            float w = throwing ? 0f : Mathf.SmoothStep(0f, 1f, (speed - 1.5f) / 3f);
+            Vector3 look = face.sqrMagnitude > 1e-4f && speed > 1e-3f ? Vector3.Slerp(face.normalized, velocity / speed, w) : speed > 1e-3f ? velocity / speed : face;
+            return new MotionSample { Velocity = velocity, Facing = look, MaxTurnRate = throwing ? ThrowTurnRate : TurnRate };
+        }
+
+        private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
+
+        private static float YawOf(Vector3 v) => Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg;
+
+        /// <summary>The figure's ready heading at its spot: toward home plate (the pitcher's too).</summary>
+        private float ReadyYaw(DefensivePosition position) => YawOf(-SimulationSpace.ToUnity(_alignment[position]));
+
+        private void Pose(DefensivePosition position, PlayerMannequin figure, LiveDefense d, double time, Transform ball)
+        {
+            int i = (int)position;
+            Vector3d at = d?.FielderPositionAt(position, time) ?? _alignment[position];
+            float speed = d == null ? 0f : (float)d.FielderSpeedAt(position, time);
+            float yaw, phase = 0f, accel = 0f, lateral = 0f;
+            Vector3 velocity = Vector3.zero;
+            if (d != null)
+            {
+                MotionTrack track = _motion[i];
+                // A new play starts every figure's track from the heading it was shown with (the delivery's pitcher from his own).
+                float initial = position == DefensivePosition.P && figure == _adoptedPitcher ? figure.transform.eulerAngles.y : _shownYaw[i];
+                if (!track.Follows(d)) track.Follow(d, d.StartTime, initial, t => Desired(d, position, t));
+                (phase, yaw) = track.At(time);
+                velocity = Flat(SimulationSpace.ToUnity(d.FielderVelocityAt(position, time)));
+                accel = (float)((d.FielderSpeedAt(position, time + 0.05) - d.FielderSpeedAt(position, Math.Max(d.StartTime, time - 0.05))) / 0.1);
+                lateral = speed * track.TurnRate(time) * Mathf.Deg2Rad;
+            }
+            else
+            {
+                // Between plays: jogging back from where the last play left him, then ready at his spot facing home.
+                yaw = ReadyYaw(position);
+                double u = (Clock() - _returnStart) / ReturnTime;
+                if (u < 1.0)
+                {
+                    Vector3d from = _returnFrom[i], to = at;
+                    // The adopted pitcher goes back to where the delivery has him (the rubber), which then takes over.
+                    if (position == DefensivePosition.P && figure == _adoptedPitcher) to = SimulationSpace.ToSimulation(_takeoverRoot);
+                    at = from + Mathf.SmoothStep(0f, 1f, (float)u) * (to - from);
+                    MotionTrack track = _motion[i];
+                    object key = _returnKeys[0];
+                    if (!track.Follows(key))
+                        track.Follow(key, _returnStart, _shownYaw[i], t =>
+                        {
+                            double v = (t - _returnStart) / ReturnTime;
+                            Vector3 travel = Flat(SimulationSpace.ToUnity(to - from)) * (float)(6.0 * v * (1.0 - v) / ReturnTime);   // d/dt smoothstep
+                            Vector3 facing = v < 0.85 && travel.sqrMagnitude > 0.01f ? travel : -SimulationSpace.ToUnity(to);
+                            return new MotionSample { Velocity = v < 1.0 ? travel : Vector3.zero, Facing = facing, MaxTurnRate = TurnRate };
+                        });
+                    double now = Clock();
+                    (phase, yaw) = track.At(now);
+                    velocity = Flat(SimulationSpace.ToUnity(to - from)) * (float)(6.0 * u * (1.0 - u) / ReturnTime);
+                    speed = velocity.magnitude;
+                }
+            }
+
+            _shownYaw[i] = yaw;
+            Vector3 root = SimulationSpace.ToUnity(new Vector3d(at.X, at.Y, 0.0)) + BagSide(at, speed);
+            root.y = FieldDressing.MoundHeight(root.x, root.z);   // stand on the mound, not in it (presentation only)
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+            Vector3 local = Quaternion.Inverse(rotation) * velocity;
+            var input = new FieldingPoseInput
+            {
+                Speed = speed,
+                GaitPhase = phase,
+                MoveDir = speed > 0.05f ? new Vector2(local.x, local.z) : Vector2.zero,
+                Accel = accel,
+                LateralAccel = lateral,
+            };
+
+            var c = d != null ? new Context(d, position, time) : default;
+            BallTake? take = c.Take;
+            LiveThrow th = c.Throw;
+            double sinceTake = c.SinceTake;
+            bool holding = d != null && c.Holding;
+            double release = c.Release, armStart = c.ArmStart;
             bool adopted = position == DefensivePosition.P && figure == _adoptedPitcher;
             if (adopted && d != null && double.IsNaN(_pitcherTakeover))
             {
@@ -229,6 +351,28 @@ namespace Pitchlab.Sandbox
             }
 
             figure.transform.SetPositionAndRotation(root, rotation);
+            input.Ready = ReadyOf(position);
+            input.ActionTime = float.NaN;
+            if (take != null)
+            {
+                // The body around the take, from the gameplay classification (a slide or dive stays down for its recovery).
+                input.Action = BodyOf(take.Value.Action, d, position, take.Value);
+                input.ActionTime = (float)sinceTake;
+                input.ActionPoint = figure.WorldToFigurePoint(SimulationSpace.ToUnity(take.Value.BallPoint));
+                input.Recovery = take.Value.Action == FieldingAction.DivingCatch ? (float)FieldingActions.DiveRecovery : take.Value.Action == FieldingAction.SlidingCatch ? 0.35f : 0f;
+            }
+
+            if (d != null)
+                foreach (var tag in d.Tags)
+                    if (tag.Fielder == position && holding && time > tag.Time - TagLead && time < tag.Time + TagHold)
+                    {
+                        // The tag: the glove with the ball sweeps down to where the runner is at the authoritative tag — only once
+                        // he has the ball (a tag right after a catch starts at the catch).
+                        double from = Math.Max(tag.Time - TagLead, take?.Time ?? double.NegativeInfinity);
+                        double u = time < tag.Time ? (time - from) / Math.Max(1e-3, tag.Time - from) : 1.0 - (time - tag.Time) / TagHold;
+                        input.TagWeight = Mathf.SmoothStep(0f, 1f, (float)u);
+                        input.TagTarget = figure.WorldToFigurePoint(SimulationSpace.ToUnity(tag.Runner) + new Vector3(0f, 0.35f, 0f));
+                    }
 
             if (take != null && sinceTake < FieldingPlay.SecureTime)
             {
@@ -237,17 +381,25 @@ namespace Pitchlab.Sandbox
                 input.GloveWeight = sinceTake >= 0.0 ? 1f : Mathf.SmoothStep(0f, 1f, (float)(1.0 - lead / GloveLead));
                 Vector3 point = figure.WorldToFigurePoint(SimulationSpace.ToUnity(take.Value.BallPoint));
                 float secure = sinceTake >= 0.0 ? Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)) : 0f;
-                input.GloveTarget = Vector3.Lerp(point, FieldingPoser.HoldGlove, secure);   // ends exactly in the hold pose
+                input.GloveTarget = Vector3.Lerp(point, FieldingPoser.HoldPoint(input), secure);   // ends exactly in the hold pose
             }
             else if (th != null && sinceTake >= FieldingPlay.SecureTime)
             {
-                double windStart = Math.Max(armStart - 0.15, take.Value.Time + FieldingPlay.SecureTime);   // never before the ball is secured
+                double windStart = c.WindStart;
                 if (time >= windStart)
                 {
-                    // Throw: the throwing hand carries the authoritative ball to the release point, then follows through.
+                    // Throw: the throwing hand carries the authoritative ball to the release point, then follows through. The
+                    // stride steps as the arm loads and stays planted through the release and the follow-through.
                     float wind = Mathf.SmoothStep(0f, 1f, (float)((time - windStart) / Math.Max(1e-3, armStart - windStart)));
                     float after = Mathf.Clamp01((float)((time - release) / 0.35));
-                    input.ThrowWeight = wind * (1f - Mathf.SmoothStep(0f, 1f, (float)((time - release - 0.35) / 0.4)));
+                    input.ThrowWeight = time > release + FollowThrough ? 0f : wind * (1f - Mathf.SmoothStep(0f, 1f, (float)((time - release - 0.35) / 0.4)));
+                    // On the move (gameplay releases while he still runs) there is no planted stride: the gait carries him.
+                    bool moving = d.FielderSpeedAt(position, release) > MovingThrowSpeed;
+                    input.ThrowStride = moving ? 0f : Mathf.SmoothStep(0f, 1f, (float)((time - windStart) / Math.Max(1e-3, release - windStart)))
+                                        * (1f - Mathf.SmoothStep(0f, 1f, (float)((time - release - FollowThrough) / StrideRecovery)));
+                    // Outfielders crow-hop into a planted throw.
+                    if (!moving && Gameplay.Rules.DefensiveDecision.IsOutfielder(position) && time < armStart)
+                        input.CrowHop = Mathf.Clamp01((float)((time - (armStart - CrowHopTime)) / CrowHopTime));
                     Vector3 hand = time < release
                         ? figure.WorldToFigurePoint(SimulationSpace.ToUnity(d.BallPositionAt(time)))
                         : Vector3.Lerp(figure.WorldToFigurePoint(SimulationSpace.ToUnity(th.ReleasePoint)), new Vector3(-0.25f, 0.95f, 0.55f), Mathf.SmoothStep(0f, 1f, after));
@@ -260,6 +412,7 @@ namespace Pitchlab.Sandbox
             else input.HoldingBall = holding;
 
             FieldingPoser.Compose(input, _pose);
+            GroundFeet(root, rotation);
             if (adopted && d != null)
             {
                 // Take the sandbox pitcher over from wherever and however he stood (root, heading and pose blend together).
@@ -294,6 +447,42 @@ namespace Pitchlab.Sandbox
             else if (th != null && time >= armStart)
                 ball.position = Vector3.Lerp(glove, ball.position, Mathf.SmoothStep(0f, 1f, (float)((time - armStart) / 0.12)));
             else ball.position = glove;
+        }
+
+        /// <summary>
+        /// A fielder standing on a base is shown on its infield (mound) side edge — a foot on the bag, the base path clear for the
+        /// runner — rather than on the bag's centre where gameplay puts him (and the runner): presentation only, faded in as
+        /// he settles on the bag so nothing jumps.
+        /// </summary>
+        public static Vector3 BagSide(Vector3d at, float speed)
+        {
+            foreach (Simulation.Field.Base b in Bags)
+            {
+                Vector3d bag = Simulation.Field.FieldLayout.BasePosition(b);
+                double d = new Vector3d(at.X - bag.X, at.Y - bag.Y, 0.0).Length;
+                if (d > BagSideZone) continue;
+                float near = Mathf.SmoothStep(0f, 1f, (float)((BagSideZone - d) / BagSideZone)) * (1f - Mathf.SmoothStep(0f, 1f, speed / 3f));
+                Vector3 towardMound = (Mound - SimulationSpace.ToUnity(new Vector3d(bag.X, bag.Y, 0.0))).normalized;
+                return towardMound * ((b == Simulation.Field.Base.Home ? HomeSideOffset : BagSideOffset) * near);
+            }
+
+            return Vector3.zero;
+        }
+
+        private static readonly Simulation.Field.Base[] Bags = { Simulation.Field.Base.First, Simulation.Field.Base.Second, Simulation.Field.Base.Third, Simulation.Field.Base.Home };
+        private static readonly Vector3 Mound = new Vector3(0f, 0f, 18.44f);
+        /// <summary>Within this distance of a bag's centre (m) the fielder is shown this far toward its infield edge (m).</summary>
+        private const double BagSideZone = 0.8;
+        private const float BagSideOffset = 0.3f, HomeSideOffset = 0.25f;
+
+        /// <summary>Feet on the ground where it is not flat (the mound): each ankle target is raised or lowered by the ground
+        /// height under it relative to the root's.</summary>
+        private void GroundFeet(Vector3 root, Quaternion rotation)
+        {
+            float under = FieldDressing.MoundHeight(root.x, root.z);
+            Vector3 l = root + rotation * _pose.LeftFoot, r = root + rotation * _pose.RightFoot;
+            _pose.LeftFoot.y += FieldDressing.MoundHeight(l.x, l.z) - under;
+            _pose.RightFoot.y += FieldDressing.MoundHeight(r.x, r.z) - under;
         }
 
         private void OnGUI()

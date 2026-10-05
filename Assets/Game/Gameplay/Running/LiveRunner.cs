@@ -65,7 +65,8 @@ namespace Pitchlab.Gameplay.Running
         public bool IsDone => IsOut || HasScored;
 
         internal Segment Current => _segments[_segments.Count - 1];
-        internal IReadOnlyList<Segment> Segments => _segments;
+        /// <summary>His motions so far, in order (read-only; presentation finds his stops and slides here).</summary>
+        public IReadOnlyList<Segment> Segments => _segments;
 
         internal void Add(BaseLeg leg, PathMotion motion) => _segments.Add(new Segment(leg, motion));
 
@@ -77,6 +78,8 @@ namespace Pitchlab.Gameplay.Running
         }
 
         public BaseLeg LegAt(double time) => At(time).Leg;
+        /// <summary>The motion on the leg at <paramref name="time"/> (for presentation: when he brakes, slides, arrives).</summary>
+        public PathMotion MotionAt(double time) => At(time).Motion;
         public double DistanceAlongAt(double time) => At(time).Motion.DistanceAt(time);
 
         /// <summary>Ground position (simulation frame).</summary>
@@ -137,7 +140,7 @@ namespace Pitchlab.Gameplay.Running
         /// — ASSUMED).</summary>
         public const double TouchDistance = 0.3;
 
-        internal readonly struct Segment
+        public readonly struct Segment
         {
             public Segment(BaseLeg leg, PathMotion motion)
             {

@@ -39,6 +39,15 @@ namespace Pitchlab.Gameplay.Running
         public double ReadDelay { get; }
 
         public static RunnerProfile Standard => new RunnerProfile(27.0 * 0.3048, 0.69, 6.0, 0.8, 0.34, 0.25);
+
+        /// <summary>The trot speed as a fraction of the top speed: ≈ 5.2 m/s, giving the measured ≈ 22 s home-run trot
+        /// (SABR: 22.0–22.7 s average, Docs/BASERUNNING_MOTION_REFERENCE.md).</summary>
+        public const double TrotFactor = 0.64;
+
+        /// <summary>The same runner trotting (an awarded dead-ball advance: home run, ground-rule double): slower, keeping his
+        /// speed through the bases, the batter watching the ball a moment longer before he goes.</summary>
+        public RunnerProfile Trot() =>
+            new RunnerProfile(TrotFactor * MaxSpeed, AccelerationTime, BrakeDeceleration, 0.95, BatterStartDelay + 0.4, ReadDelay, SlideDeceleration);
     }
 
     /// <summary>
@@ -161,6 +170,8 @@ namespace Pitchlab.Gameplay.Running
         public double BrakeTime => StartTime + _reverse + _brakeStart;
         /// <summary>Direction of travel toward the target (+1 forward along the leg, −1 back toward its start).</summary>
         public double Sign => _sign;
+        /// <summary>Braking rate for the stop (m/s²): the profile's slide deceleration when he slides into the base.</summary>
+        public double Deceleration => _brake;
         /// <summary>When he comes to rest after the target (overrun) — the arrival when he stops on it.</summary>
         public double RestTime => ArrivalTime + EndSpeed / _brake;
 

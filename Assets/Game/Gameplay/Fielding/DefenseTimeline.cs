@@ -6,8 +6,9 @@ namespace Pitchlab.Gameplay.Fielding
     /// <summary>A defender taking the ball: a fielded batted ball, a caught throw, a retrieved loose ball.</summary>
     public readonly struct BallTake
     {
-        public BallTake(double time, DefensivePosition fielder, Vector3d ballPoint)
+        public BallTake(double time, DefensivePosition fielder, Vector3d ballPoint, FieldingAction action = FieldingAction.None)
         {
+            Action = action;
             Time = time;
             Fielder = fielder;
             BallPoint = ballPoint;
@@ -17,6 +18,8 @@ namespace Pitchlab.Gameplay.Fielding
         public DefensivePosition Fielder { get; }
         /// <summary>The ball's centre at the take (where the glove meets it).</summary>
         public Vector3d BallPoint { get; }
+        /// <summary>How he takes it (TASK-011.6).</summary>
+        public FieldingAction Action { get; }
     }
 
     /// <summary>
@@ -25,7 +28,11 @@ namespace Pitchlab.Gameplay.Fielding
     /// </summary>
     public interface IDefenseTimeline
     {
+        /// <summary>When the play started (contact).</summary>
+        double StartTime { get; }
         Vector3d FielderPositionAt(DefensivePosition p, double t);
+        /// <summary>Ground velocity (m/s).</summary>
+        Vector3d FielderVelocityAt(DefensivePosition p, double t);
         double FielderSpeedAt(DefensivePosition p, double t);
         double FielderDistanceAt(DefensivePosition p, double t);
         Vector3d FielderDirectionAt(DefensivePosition p, double t);

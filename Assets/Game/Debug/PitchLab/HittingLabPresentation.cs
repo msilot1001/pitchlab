@@ -256,7 +256,10 @@ namespace Pitchlab.Sandbox
                     _leadWalkStart = now;
                 }
 
-                _runners.ShowSituation(bases, Mathf.Clamp01((float)((now - _leadWalkStart) / LeadWalk)));
+                // During the delivery they settle into the secondary lead (in place), easing off after an unhit pitch.
+                float secondary = _pitch == null || double.IsNegativeInfinity(t) ? 0f
+                    : Mathf.SmoothStep(0f, 1f, (float)((t + 0.6) / 0.4)) * (1f - Mathf.SmoothStep(0f, 1f, (float)((t - _pitch.Flight.Duration) / 0.5)));
+                _runners.ShowSituation(bases, Mathf.Clamp01((float)((now - _leadWalkStart) / LeadWalk)), secondary);
             }
 
             if (live != null && !over) _situationShown = false;

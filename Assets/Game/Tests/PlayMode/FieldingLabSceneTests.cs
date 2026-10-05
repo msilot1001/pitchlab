@@ -6,6 +6,7 @@ using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Running;
 using Pitchlab.Presentation;
+using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Field;
 using Pitchlab.Sandbox;
 using UnityEngine;
@@ -102,7 +103,10 @@ namespace Pitchlab.Tests
                 foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
                 {
                     if (p == DefensivePosition.P || p == DefensivePosition.C) continue;
-                    Vector3 shown = Flat(_lab.Defense.Figure(p).transform.position), gameplay = Flat(SimulationSpace.ToUnity(_lab.Team.FielderPositionAt(p, t0 + t)));
+                    // Exactly the gameplay defender — plus the documented bag-side offset of a fielder standing on a base (TASK-011.6).
+                    Vector3d at = _lab.Team.FielderPositionAt(p, t0 + t);
+                    Vector3 shown = Flat(_lab.Defense.Figure(p).transform.position);
+                    Vector3 gameplay = Flat(SimulationSpace.ToUnity(at) + DefenseView.BagSide(at, (float)_lab.Team.FielderSpeedAt(p, t0 + t)));
                     Assert.Less(Vector3.Distance(shown, gameplay), 1e-3f, $"{p} at +{t:0.00}");
                 }
             }
@@ -289,8 +293,11 @@ namespace Pitchlab.Tests
                         Assert.AreEqual(!gone, m.gameObject.activeSelf, $"{name}: {r.Id} shown at +{t - t0:0.0}");
                         if (gone) continue;
                         Assert.Less(Vector3.Distance(Flat(m.transform.position), Flat(SimulationSpace.ToUnity(r.PositionAt(t)))), 1e-4f, $"{name}: {r.Id} at +{t - t0:0.0}");
-                        if (r.SpeedAt(t) > 1.0)
-                            Assert.Greater(Vector3.Dot(m.transform.forward, SimulationSpace.ToUnity(r.HeadingAt(t)).normalized), 0.99f, "faces his run");
+                        // Faces where he runs once he has been running that way for a moment (TASK-011.5: the figure turns at a
+                        // limited rate — no instant 180° — so right after the break or a reversal it is still turning).
+                        Vector3 now = SimulationSpace.ToUnity(r.HeadingAt(t)).normalized, before = SimulationSpace.ToUnity(r.HeadingAt(t - 0.3)).normalized;
+                        if (r.SpeedAt(t) > 1.0 && r.SpeedAt(t - 0.3) > 1.0 && Vector3.Dot(now, before) > 0.97f)
+                            Assert.Greater(Vector3.Dot(m.transform.forward, now), 0.99f, $"{name}: {r.Id} faces his run at +{t - t0:0.0}");
                     }
                 }
             }
