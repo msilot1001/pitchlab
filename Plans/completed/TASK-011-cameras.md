@@ -23,9 +23,16 @@ Claude Code (sole writer); reviewers and Codex read-only.
 - [x] Controller, scenes, label.
 - [x] PlayMode tests (4): views + Tab, tactical-only controls (and arrow ownership), mode kept across PAs with fixed views
   turning to the ball, identical play in two modes.
-- [ ] Review; Codex; merge.
+- [x] Reviews (Unity, Codex B) and fixes: catcher view behind the catcher's head (not inside him); the tactical camera takes
+  only the keyboard arrows (the D-pad still selects the pitch); per-mode label strings, no GUI layout; back to auto mid-play
+  re-aims at the ball; fixed views ignore a ball overhead or behind; key handling tested through the Input System (F1–F5,
+  Tab, arrows, [ ], PageDown, R; arrow ownership vs the D-pad).
+- [x] check.sh (EditMode 534/540, PlayMode 54/54); merge.
+
+## Limitations
+- No gamepad camera-mode switch (keyboard F-keys / Tab; on macOS F-keys may need Fn).
 
 ## Verification
-- check.sh: EditMode 534/540 (6 skipped, pre-existing), PlayMode 52/52.
+- check.sh: EditMode 534/540 (6 skipped, pre-existing), PlayMode 54/54.
 - Runtime (GameLab): tactical view of the whole field (bases loaded leading off, DP depth), offset view from the third-base
   side; label bottom right.

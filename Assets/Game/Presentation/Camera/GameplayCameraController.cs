@@ -42,7 +42,8 @@ namespace Pitchlab.Presentation
 
         // Unity frame: x toward first base, y up, z toward centre field; the plate's rear point at the origin.
         private static readonly View Umpire = new View(new Vector3(0f, 1.75f, -2.3f), new Vector3(0f, 1.0f, 12f), 42f);
-        private static readonly View Catcher = new View(new Vector3(0f, 0.95f, -1.1f), new Vector3(0f, 1.2f, 12f), 50f);
+        // Just behind and above the crouching catcher (he stands at z ≈ −0.76 and is shown when he plays the ball).
+        private static readonly View Catcher = new View(new Vector3(0f, 1.25f, -1.75f), new Vector3(0f, 1.1f, 12f), 48f);
         private static readonly View Offset = new View(new Vector3(-3.0f, 2.1f, -5.4f), new Vector3(0.8f, 1.0f, 13f), 34f);
 
         public static readonly Vector3 TacticalCentre = new Vector3(0f, 0f, 32f);
@@ -64,12 +65,19 @@ namespace Pitchlab.Presentation
         /// <summary>The arrow keys belong to the camera (tactical mode); other users of them must ignore them.</summary>
         public bool CapturesArrowKeys => _mode == CameraMode.Tactical;
         /// <summary>The short label shown in a corner.</summary>
-        public string Label => $"CAM {_mode}  ·  F1–F5 / Tab{(_mode == CameraMode.Tactical ? "  ·  arrows orbit, [ ] zoom, R reset" : "")}";
+        public string Label => Labels[(int)_mode];
+
+        private static readonly string[] Labels =
+        {
+            "CAM Umpire  ·  F1–F5 / Tab", "CAM Catcher  ·  F1–F5 / Tab", "CAM Offset  ·  F1–F5 / Tab",
+            "CAM Tactical  ·  F1–F5 / Tab  ·  arrows orbit, [ ] zoom, R reset", "CAM Auto  ·  F1–F5 / Tab",
+        };
 
         private void Awake()
         {
             _camera = GetComponent<Camera>();
             _auto = GetComponent<BaseballCamera>();
+            useGUILayout = false;
             SetMode(_mode);
         }
 
@@ -106,9 +114,12 @@ namespace Pitchlab.Presentation
             (_yaw, _pitch, _distance) = (TacticalYaw, TacticalPitch, TacticalDistance);
         }
 
-        private void Update()
+        private void Update() => ReadKeys(Keyboard.current, Time.unscaledDeltaTime);
+
+        /// <summary>The camera keys of <paramref name="k"/> this input update (<paramref name="dt"/>: the frame time, for the held
+        /// tactical keys).</summary>
+        public void ReadKeys(Keyboard k, float dt)
         {
-            Keyboard k = Keyboard.current;
             if (k == null) return;
             if (k.f1Key.wasPressedThisFrame) SetMode(CameraMode.Umpire);
             if (k.f2Key.wasPressedThisFrame) SetMode(CameraMode.Catcher);
@@ -117,7 +128,6 @@ namespace Pitchlab.Presentation
             if (k.f5Key.wasPressedThisFrame) SetMode(CameraMode.Auto);
             if (k.tabKey.wasPressedThisFrame) Cycle();
             if (_mode != CameraMode.Tactical) return;
-            float dt = Time.unscaledDeltaTime;
             Orbit(((k.rightArrowKey.isPressed ? 1f : 0f) - (k.leftArrowKey.isPressed ? 1f : 0f)) * OrbitSpeed * dt,
                 ((k.upArrowKey.isPressed ? 1f : 0f) - (k.downArrowKey.isPressed ? 1f : 0f)) * PitchSpeed * dt);
             float zoomIn = (k.pageUpKey.isPressed || k.leftBracketKey.isPressed ? 1f : 0f) - (k.pageDownKey.isPressed || k.rightBracketKey.isPressed ? 1f : 0f);
@@ -144,11 +154,18 @@ namespace Pitchlab.Presentation
                     View v = _mode == CameraMode.Umpire ? Umpire : _mode == CameraMode.Catcher ? Catcher : Offset;
                     // Between pitches the view's own framing; while the ball is in play it turns (smoothly) to keep it in frame.
                     Transform ball = _auto != null ? _auto.Target : null;
-                    Vector3 look = ball != null ? ball.position : v.LookAt;
+                    Vector3 look = v.LookAt;
+                    if (ball != null)
+                    {
+                        // Not a ball straight overhead or behind the camera (a foul pop): no spinning view.
+                        Vector3 toBall = (ball.position - v.Position).normalized;
+                        if (Vector3.Dot(toBall, (v.LookAt - v.Position).normalized) > 0.2f && toBall.y < 0.94f) look = ball.position;
+                    }
+
                     Quaternion want = Quaternion.LookRotation(look - v.Position);
                     _fixedRotation = _hasFixedRotation ? Quaternion.Slerp(_fixedRotation, want, 1f - Mathf.Exp(-8f * Time.unscaledDeltaTime)) : want;
                     _hasFixedRotation = true;
-                    if (ball == null) _fixedRotation = want;
+                    if (ball == null) _fixedRotation = want;   // between pitches: exactly the view's framing
                     transform.SetPositionAndRotation(v.Position, _fixedRotation);
                     _camera.fieldOfView = v.Fov;
                     return;

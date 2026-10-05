@@ -6,6 +6,8 @@ using Pitchlab.Gameplay.Play;
 using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
@@ -143,6 +145,114 @@ namespace Pitchlab.Tests
             Assert.AreEqual(auto.BattedBall.Position, tactical.BattedBall.Position);
             Assert.AreEqual(auto.BattedBall.Velocity, tactical.BattedBall.Velocity);
             Assert.AreEqual(string.Join("|", a.Log.Select(e => $"{e.Time - a.ContactTime:0.000000} {e.Text}")), string.Join("|", b.Log.Select(e => $"{e.Time - b.ContactTime:0.000000} {e.Text}")));
+        }
+    }
+
+    /// <summary>TASK-011 camera keys through the Input System (virtual devices, manual input updates).</summary>
+    public class CameraKeyTests
+    {
+        private HittingLabController _lab;
+        private GameplayCameraController _modes;
+        private Keyboard _keyboard;
+        private Gamepad _pad;
+        private InputSettings.UpdateMode _updateMode;
+        private InputSettings.EditorInputBehaviorInPlayMode _editorBehavior;
+        private InputSettings.BackgroundBehavior _background;
+        private readonly System.Collections.Generic.List<InputDevice> _disabled = new System.Collections.Generic.List<InputDevice>();
+
+        [UnitySetUp]
+        public IEnumerator SetUp()
+        {
+            yield return SceneManager.LoadSceneAsync("HittingLab", LoadSceneMode.Single);
+            yield return null;
+            _lab = Object.FindFirstObjectByType<HittingLabController>();
+            _modes = Object.FindFirstObjectByType<GameplayCameraController>();
+            InputSettings settings = InputSystem.settings;
+            (_updateMode, _editorBehavior, _background) = (settings.updateMode, settings.editorInputBehaviorInPlayMode, settings.backgroundBehavior);
+            settings.editorInputBehaviorInPlayMode = InputSettings.EditorInputBehaviorInPlayMode.AllDeviceInputAlwaysGoesToGameView;
+            settings.backgroundBehavior = InputSettings.BackgroundBehavior.IgnoreFocus;
+            settings.updateMode = InputSettings.UpdateMode.ProcessEventsManually;
+            _keyboard = InputSystem.AddDevice<Keyboard>("CameraTestKeyboard");
+            _pad = InputSystem.AddDevice<Gamepad>("CameraTestPad");
+            foreach (InputDevice device in InputSystem.devices)
+                if (device != _keyboard && device != _pad && device.enabled)
+                {
+                    InputSystem.DisableDevice(device);
+                    _disabled.Add(device);
+                }
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (_keyboard != null) InputSystem.RemoveDevice(_keyboard);
+            if (_pad != null) InputSystem.RemoveDevice(_pad);
+            foreach (InputDevice device in _disabled) if (device.added) InputSystem.EnableDevice(device);
+            _disabled.Clear();
+            InputSettings settings = InputSystem.settings;
+            (settings.updateMode, settings.editorInputBehaviorInPlayMode, settings.backgroundBehavior) = (_updateMode, _editorBehavior, _background);
+        }
+
+        /// <summary>One input update with <paramref name="keys"/> held, then the camera reads it (a 0.5 s frame).</summary>
+        private void Keys(params Key[] keys)
+        {
+            InputSystem.QueueStateEvent(_keyboard, new KeyboardState(keys));
+            InputSystem.Update();
+            _modes.ReadKeys(_keyboard, 0.5f);
+        }
+
+        private void Release() => Keys();
+
+        [UnityTest]
+        public IEnumerator FunctionKeysTabAndTheTacticalKeys()
+        {
+            yield return null;
+            foreach (var (key, mode) in new[] { (Key.F1, CameraMode.Umpire), (Key.F2, CameraMode.Catcher), (Key.F3, CameraMode.Offset), (Key.F5, CameraMode.Auto), (Key.F4, CameraMode.Tactical) })
+            {
+                Keys(key);
+                Release();
+                Assert.AreEqual(mode, _modes.Mode, key.ToString());
+            }
+
+            Keys(Key.RightArrow);
+            Assert.AreEqual(GameplayCameraController.OrbitSpeed * 0.5f, _modes.Yaw, 1e-3f, "→ orbits");
+            Keys(Key.UpArrow);
+            Assert.AreEqual(GameplayCameraController.TacticalPitch + GameplayCameraController.PitchSpeed * 0.5f, _modes.Pitch, 1e-3f, "↑ pitches");
+            Keys(Key.LeftBracket);
+            Assert.Less(_modes.Distance, GameplayCameraController.TacticalDistance, "[ zooms in");
+            Keys(Key.PageDown);
+            Keys(Key.PageDown);
+            Assert.Greater(_modes.Distance, GameplayCameraController.TacticalDistance, "PageDown zooms out");
+            Release();
+            Keys(Key.R);
+            Release();
+            Assert.AreEqual((GameplayCameraController.TacticalYaw, GameplayCameraController.TacticalPitch, GameplayCameraController.TacticalDistance), (_modes.Yaw, _modes.Pitch, _modes.Distance), "R resets");
+
+            Keys(Key.Tab);
+            Release();
+            Assert.AreEqual(CameraMode.Auto, _modes.Mode, "Tab: the next mode");
+            Keys(Key.RightArrow);
+            Release();
+            Assert.AreEqual(GameplayCameraController.TacticalYaw, _modes.Yaw, "no orbit outside tactical");
+        }
+
+        [UnityTest]
+        public IEnumerator TheTacticalCameraTakesTheKeyboardArrowsNotTheDPad()
+        {
+            yield return null;
+            int preset = _lab.PresetIndex;
+            Keys(Key.RightArrow);
+            Release();
+            Assert.AreEqual(preset + 1, _lab.PresetIndex, "auto: → chooses the next pitch");
+            _modes.SetMode(CameraMode.Tactical);
+            Keys(Key.RightArrow);
+            Release();
+            Assert.AreEqual(preset + 1, _lab.PresetIndex, "tactical: → orbits, the pitch stays");
+            InputSystem.QueueStateEvent(_pad, new GamepadState(GamepadButton.DpadRight));
+            InputSystem.Update();
+            InputSystem.QueueStateEvent(_pad, new GamepadState());
+            InputSystem.Update();
+            Assert.AreEqual(preset + 2, _lab.PresetIndex, "the D-pad still chooses the pitch");
         }
     }
 }

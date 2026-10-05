@@ -30,6 +30,12 @@ namespace Pitchlab.Presentation
         /// <summary>A second subject kept in frame with the ball while following (the defender playing it); null for none.</summary>
         public void FollowAlso(Transform second) => _second = second;
 
+        /// <summary>Re-enabled while following (back to the auto camera mid-play): aim at the ball now, not where it was.</summary>
+        private void OnEnable()
+        {
+            if (_target != null) _lookPoint = new Vector3(_target.position.x, 0.5f * Mathf.Max(_target.position.y, 0f), _target.position.z);
+        }
+
         private void Awake()
         {
             _camera = GetComponent<Camera>();
