@@ -12,5 +12,6 @@ namespace Pitchlab.Sandbox
         /// <summary>For positions and velocities (polar vectors). Angular velocity is an axial vector and would also
         /// need negating under this handedness flip; add a separate method if spin is ever drawn.</summary>
         public static Vector3 ToUnity(Vector3d p) => new Vector3((float)p.X, (float)p.Z, (float)p.Y);
+        public static Vector3d ToSimulation(Vector3 v) => new Vector3d(v.x, v.z, v.y);
     }
 }
