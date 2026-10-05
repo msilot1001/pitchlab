@@ -1,5 +1,6 @@
 using System;
 using Pitchlab.Simulation.BallFlight;
+using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Field;
 
@@ -67,7 +68,10 @@ namespace Pitchlab.Gameplay.Fielding
 
         /// <param name="playableUntil">Last ball time at which the ball is in play (when it clears the fence or lands beyond it;
         /// +∞ otherwise — a ball at rest stays there to be picked up).</param>
-        public static Intercept Solve(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double playableUntil)
+        /// <param name="fairBefore">Before this time the fair/foul call is not decided: a take there counts only over fair
+        /// ground (touching it over foul ground would make it a dead foul; the defense lets it go).</param>
+        public static Intercept Solve(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double playableUntil,
+            double fairBefore = double.NegativeInfinity)
         {
             double t0 = play.First.Time;
             double rest = play.EndTime;
@@ -78,7 +82,7 @@ namespace Pitchlab.Gameplay.Fielding
             double previous = t0;
             for (double t = t0 + SearchStep; t <= end + 1e-12; t += SearchStep)
             {
-                if (!Feasible(play, start, profile, field, t, out _))
+                if (!Feasible(play, start, profile, field, t, fairBefore, out _))
                 {
                     previous = t;
                     continue;
@@ -89,7 +93,7 @@ namespace Pitchlab.Gameplay.Fielding
                 for (int i = 0; i < 40; i++)
                 {
                     double mid = 0.5 * (lo + hi);
-                    if (Feasible(play, start, profile, field, mid, out _)) hi = mid;
+                    if (Feasible(play, start, profile, field, mid, fairBefore, out _)) hi = mid;
                     else lo = mid;
                 }
 
@@ -98,13 +102,13 @@ namespace Pitchlab.Gameplay.Fielding
                 BallState atWhen = play.StateAt(when);
                 if (BeforeFirstContact(play, when) && atWhen.Position.Z > ComfortCatchHeight && atWhen.Velocity.Z < 0.0)
                     for (double c = when + SearchStep; c <= end && BeforeFirstContact(play, c); c += SearchStep)
-                        if (play.StateAt(c).Position.Z <= ComfortCatchHeight && Feasible(play, start, profile, field, c, out _))
+                        if (play.StateAt(c).Position.Z <= ComfortCatchHeight && Feasible(play, start, profile, field, c, fairBefore, out _))
                         {
                             when = c;
                             break;
                         }
 
-                Feasible(play, start, profile, field, when, out Intercept found);
+                Feasible(play, start, profile, field, when, fairBefore, out Intercept found);
                 return found;
             }
 
@@ -112,11 +116,15 @@ namespace Pitchlab.Gameplay.Fielding
         }
 
         /// <summary>Can the defender take the ball at ball time <paramref name="t"/>?</summary>
-        public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, out Intercept intercept)
+        public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, out Intercept intercept) =>
+            Feasible(play, start, profile, field, t, double.NegativeInfinity, out intercept);
+
+        public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, double fairBefore, out Intercept intercept)
         {
             intercept = Intercept.None;
             BallState ball = play.StateAt(t);
             if (ball.Position.Z > profile.CatchHeightMax) return false;
+            if (t < fairBefore && !FairFoul.OverFairTerritory(ball.Position)) return false;
             Vector3d toBall = Ground(ball.Position - start);
             double gap = toBall.Length;
             double route = Math.Max(0.0, gap - profile.ReachAt(ball.Position.Z));

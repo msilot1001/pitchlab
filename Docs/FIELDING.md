@@ -79,10 +79,11 @@ These are generic positions, not a specific park.
 ## Possession and play semantics
 - **Possession:** `FieldingPlay.AuthorityAt(t)` is FreeBall until the intercept and Possessed afterwards.
   - The ball moves with the holder. Over the 0.3 s secure time it goes from where it was taken to his chest (1.2 m), with no jump.
-  - The visual ball sits in the glove, which follows the same path into the possession hold.
+  - The shown ball is exactly the gameplay ball at the take, then settles into the glove over the secure time. The glove follows the same path into the possession hold.
 - **Dead and out of play:**
   - A fly ball that comes down foul is dead and nobody fields it. Foul catches are not modelled yet (simplification).
-  - A ground ball that would settle or pass the base foul stays in play until then. A defender who takes it over fair ground makes it fair; over foul ground, it is dead.
+  - Until the call is decided, only takes over fair ground count. A defender never kills a would-be-fair ball by touching it foul, and a ground ball that would end foul becomes fair if taken over fair ground.
+  - A play nobody fields ends at its decisive event: the foul call for a dead foul, or the ball leaving the park.
   - Out of the park, nobody chases the ball once it has cleared the fence. A ball taken before it leaves (a catch at the wall) is fair and in play.
 - **Fair/foul with a defender:** a ball fielded before the call's decisive moment is judged where it was taken.
 - **Batting loop:** the play ends at possession (`FieldingPlay.EndTime`).

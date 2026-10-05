@@ -61,7 +61,12 @@ Pitch → hit → ball in play → defense reacts → primary fielder selected �
   - every preset must be fielded;
   - the ball stays free before possession.
 - [x] check.sh; commit `feat: add deterministic trajectory-based fielding`.
-- [ ] Codex review; merge.
+- [x] **Codex pre-merge review: B (small fixes).** Fixed:
+  - only fair-ground takes count before the call (candidates filtered in the search);
+  - the shown ball blends from the authoritative position into the glove (no jump at the take);
+  - dead fouls and out-of-park balls end the play at the decisive event;
+  - the pitcher-takeover blend source is sampled deterministically.
+- [x] Merge (non-fast-forward into main).
 
 ## Verification
 - **`Scripts/check.sh`:**

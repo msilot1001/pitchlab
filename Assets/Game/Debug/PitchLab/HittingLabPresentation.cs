@@ -142,7 +142,7 @@ namespace Pitchlab.Sandbox
             PlaceBatter();
             _defense = new GameObject("Defense").AddComponent<DefenseView>();
             _defense.transform.SetParent(transform, false);
-            _defense.Build(_mannequinPrefab, _pitcher, _pitcherShown, DefensiveAlignment.Standard);
+            _defense.Build(_mannequinPrefab, _pitcher, _pitcherShown, (t, pose) => _deliveryClip.Sample(_deliveryTime.U(t), pose), DefensiveAlignment.Standard);
             _builtMeshes.AddRange(OutfieldDressing.Build(transform, HittingLabController.Field));
             ResetForPitch(null);
         }

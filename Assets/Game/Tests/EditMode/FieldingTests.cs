@@ -283,6 +283,8 @@ namespace Pitchlab.Tests
             Assert.AreEqual(FieldingOutcome.OutOfPlay, f.Outcome);
             Assert.IsNull(f.Primary);
             Assert.AreEqual(BallInPlayCall.HomeRun, f.Call);
+            BallEvent cleared = Array.Find(Events(f.Ball), e => e.Kind == BallEventKind.ClearedFence);
+            Assert.AreEqual(cleared.Time, f.EndTime, 0.0, "the play is over when it leaves the park (Codex review)");
             foreach (DefensivePosition p in Enum.GetValues(typeof(DefensivePosition)))
                 Assert.AreEqual(DefensiveAlignment.Standard[p], f.Motion(p).PositionAt(30.0), p.ToString());
         }
@@ -294,6 +296,8 @@ namespace Pitchlab.Tests
             Assert.AreEqual(FieldingOutcome.DeadFoul, f.Outcome);
             Assert.IsNull(f.Primary);
             Assert.AreEqual(BallAuthority.FreeBall, f.AuthorityAt(100.0));
+            Assert.AreEqual(FairFoul.Call(f.Ball).At.Time, f.EndTime, 0.0, "a dead foul ends at its call, not when the ball stops");
+            Assert.Less(f.EndTime, f.Ball.EndTime);
             foreach (DefensivePosition p in Enum.GetValues(typeof(DefensivePosition)))
                 Assert.AreEqual(DefensiveAlignment.Standard[p], f.Motion(p).PositionAt(30.0), $"{p} holds on a dead ball");
         }
@@ -451,6 +455,25 @@ namespace Pitchlab.Tests
             FieldingPlay f = FieldingSolver.Solve(ball, new DefensiveAlignment(positions), Profiles, FieldLayout.Standard);
             Assert.Less((positions[(int)DefensivePosition.C] - rest).Length, (positions[(int)DefensivePosition.P] - rest).Length - 0.4);
             Assert.AreEqual(DefensivePosition.P, f.Primary);
+        }
+
+        [Test]
+        public void WouldBeFairBallIsNotTouchedOverFoulGround()
+        {
+            // Lands just foul of the third-base line, curls back and passes third base fair. A defender standing on the
+            // foul side could reach it early — over foul ground, which would kill it. Only fair-ground takes count before
+            // the call (Codex review): he takes it once it is back over fair ground, and it is fair.
+            double s = Math.Sqrt(0.5);
+            Vector3d Line(double along, double outside) => new Vector3d(-(s * along + s * outside), s * along - s * outside, R);
+            BallInPlay ball = Synthetic(new[] { new Vector3d(0.0, 0.7, 0.8), Line(12.0, 0.6), Line(16.0, 0.6), Line(22.0, -0.8), Line(34.0, -1.5) }, new BallEvent[0]);
+            Assert.AreEqual(BallInPlayCall.Fair, FairFoul.Call(ball).Call, "left alone it is fair");
+            var positions = new Vector3d[DefensiveAlignment.Count];
+            for (int i = 0; i < positions.Length; i++) positions[i] = new Vector3d(0.0, 200.0, 0.0);
+            positions[(int)DefensivePosition.ThirdBase] = Line(13.0, 1.5) - new Vector3d(0.0, 0.0, R);
+            FieldingPlay f = FieldingSolver.Solve(ball, new DefensiveAlignment(positions), FielderProfile.For, FieldLayout.Standard);
+            Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome);
+            Assert.IsTrue(FairFoul.OverFairTerritory(f.Intercept.Ball.Position), "taken over fair ground");
+            Assert.AreEqual(BallInPlayCall.Fair, f.Call);
         }
 
         private static BallEvent[] Events(BallInPlay ball)

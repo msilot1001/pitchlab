@@ -445,7 +445,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(f.EndTime, _lab.PlayEnd, 0.0);
             At(f.PossessionTime - 0.01);
             Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
-            At(f.PossessionTime + 0.2);
+            At(f.PossessionTime + FieldingPlay.SecureTime + 0.2);   // secured (the ball settles into the glove over the secure time)
             Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
             PlayerMannequin holder = _view.Defense.Figure(f.Primary.Value);
             Assert.Less(Vector3.Distance(_lab.BallTransform.position, holder.GloveAnchor.position), 1e-4f, "ball in the glove");

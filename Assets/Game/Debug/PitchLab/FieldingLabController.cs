@@ -71,7 +71,7 @@ namespace Pitchlab.Sandbox
 
             _defense = new GameObject("Defense").AddComponent<DefenseView>();
             _defense.transform.SetParent(transform, false);
-            _defense.Build(_mannequinPrefab, null, null, DefensiveAlignment.Standard);
+            _defense.Build(_mannequinPrefab, null, null, null, DefensiveAlignment.Standard);
             _meshes.AddRange(OutfieldDressing.Build(transform, FieldLayout.Standard));
             float d = (float)(2.0 * BallProperties.Baseball.Radius) * 2.5f;   // drawn larger for readability; centre on the trajectory
             _ball.localScale = new Vector3(d, d, d);

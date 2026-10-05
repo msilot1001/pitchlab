@@ -37,8 +37,9 @@ namespace Pitchlab.Gameplay.Fielding
         private readonly Intercept[] _candidates;
 
         internal FieldingPlay(BallInPlay ball, FieldingOutcome outcome, DefensivePosition? primary, Intercept intercept, FielderMotion[] motions,
-            Intercept[] candidates, BallInPlayCall call)
+            Intercept[] candidates, BallInPlayCall call, double endTime)
         {
+            EndTime = endTime;
             Ball = ball;
             Outcome = outcome;
             Primary = primary;
@@ -64,8 +65,9 @@ namespace Pitchlab.Gameplay.Fielding
         /// <summary>When a defender takes the ball (+∞ if nobody does).</summary>
         public double PossessionTime => Outcome == FieldingOutcome.Fielded ? Intercept.Time : double.PositiveInfinity;
 
-        /// <summary>When the play is over for the batting loop: possession, or the ball at rest / out of play.</summary>
-        public double EndTime => Outcome == FieldingOutcome.Fielded ? Intercept.Time : Ball.EndTime;
+        /// <summary>When the play is over for the batting loop: possession; the foul call for a dead foul; the ball leaving the
+        /// park (or coming to rest) when nobody takes it.</summary>
+        public double EndTime { get; }
 
         public FielderMotion Motion(DefensivePosition position) => _motions[(int)position];
 
@@ -120,7 +122,7 @@ namespace Pitchlab.Gameplay.Fielding
             // or pass the base foul is still in play until then: a defender who touches it over fair ground makes it fair.
             bool groundFoul = unfielded.Call == BallInPlayCall.Foul && (unfielded.Basis == CallBasis.Settled || unfielded.Basis == CallBasis.PassingBase);
             if (unfielded.Call == BallInPlayCall.Foul && !groundFoul)
-                return new FieldingPlay(ball, FieldingOutcome.DeadFoul, null, Intercept.None, motions, candidates, BallInPlayCall.Foul);
+                return new FieldingPlay(ball, FieldingOutcome.DeadFoul, null, Intercept.None, motions, candidates, BallInPlayCall.Foul, unfielded.At.Time);
 
             // In play until it leaves the park (clears the fence on the fly or on a bounce, or lands beyond it); a ball at
             // rest in the park stays there to be picked up. A foul roller only until the call.
@@ -133,15 +135,17 @@ namespace Pitchlab.Gameplay.Fielding
                 }
 
             if (groundFoul) playable = Math.Min(playable, unfielded.At.Time);
+            // Until the call is decided only takes over fair ground count (each defender's search applies it), so the
+            // primary is chosen among legal takes and a would-be-fair ball is never touched foul (Codex review).
             for (int i = 0; i < motions.Length; i++)
-                candidates[i] = InterceptSolver.Solve(ball, alignment[(DefensivePosition)i], profiles((DefensivePosition)i), field, playable);
+                candidates[i] = InterceptSolver.Solve(ball, alignment[(DefensivePosition)i], profiles((DefensivePosition)i), field, playable, unfielded.At.Time);
             int best = SelectPrimary(candidates);
-            if (best >= 0 && groundFoul && !FairFoul.OverFairTerritory(candidates[best].Ball.Position)) best = -1;   // touched foul: dead
 
             if (best < 0)
                 return groundFoul
-                    ? new FieldingPlay(ball, FieldingOutcome.DeadFoul, null, Intercept.None, motions, candidates, BallInPlayCall.Foul)
-                    : new FieldingPlay(ball, FieldingOutcome.OutOfPlay, null, Intercept.None, motions, candidates, unfielded.Call);
+                    ? new FieldingPlay(ball, FieldingOutcome.DeadFoul, null, Intercept.None, motions, candidates, BallInPlayCall.Foul, unfielded.At.Time)
+                    : new FieldingPlay(ball, FieldingOutcome.OutOfPlay, null, Intercept.None, motions, candidates, unfielded.Call,
+                        double.IsPositiveInfinity(playable) ? ball.EndTime : playable);
 
             var position = (DefensivePosition)best;
             Intercept intercept = candidates[best];
@@ -155,12 +159,10 @@ namespace Pitchlab.Gameplay.Fielding
                 ? new FielderMotion(profile, start, intercept.FielderTarget, reacts, true)
                 : new FielderMotion(profile, start, intercept.FielderTarget, intercept.Time - RunningLaw.RunThroughTime(profile, intercept.RouteDistance), false);
 
-            // Fielded before the call was decided (e.g. a slow roller taken before first base): judged where it was taken.
-            // (A ball taken before it leaves the park is always taken before the call, so a home run never survives a take.)
-            BallInPlayCall call = intercept.Time < unfielded.At.Time
-                ? FairFoul.OverFairTerritory(intercept.Ball.Position) ? BallInPlayCall.Fair : BallInPlayCall.Foul
-                : unfielded.Call;
-            return new FieldingPlay(ball, FieldingOutcome.Fielded, position, intercept, motions, candidates, call);
+            // Fielded before the call was decided (e.g. a slow roller taken before first base): judged where it was taken —
+            // fair, as only fair-ground takes are allowed then. A ball taken before it leaves the park is taken before the call.
+            BallInPlayCall call = intercept.Time < unfielded.At.Time ? BallInPlayCall.Fair : unfielded.Call;   // early takes are over fair ground
+            return new FieldingPlay(ball, FieldingOutcome.Fielded, position, intercept, motions, candidates, call, intercept.Time);
         }
 
         public static FieldingPlay Solve(BallInPlay ball) => Solve(ball, DefensiveAlignment.Standard, FielderProfile.For, FieldLayout.Standard);

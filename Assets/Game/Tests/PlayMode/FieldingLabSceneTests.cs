@@ -68,6 +68,9 @@ namespace Pitchlab.Tests
                 float d = Vector3.Distance(_lab.Defense.Figure(p).GloveAnchor.position, SimulationSpace.ToUnity(f.Intercept.Ball.Position));
                 log.AppendLine($"{FieldingLabController.Presets[k].Name}: {p} {f.Intercept.Kind} glove→ball {d:0.000} m");
                 Assert.Less(d, f.Intercept.Kind == InterceptKind.GroundPickup ? 0.10f : 0.20f, $"{FieldingLabController.Presets[k].Name}");
+                // At the take the shown ball is exactly the gameplay ball (no jump); once secured it sits in the glove.
+                At(t + 1e-5);
+                Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, "no jump at the take");
                 At(t + 0.5);
                 Assert.Less(Vector3.Distance(_lab.Ball.position, _lab.Defense.Figure(p).GloveAnchor.position), 1e-4f, "held in the glove");
             }

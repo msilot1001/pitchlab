@@ -23,7 +23,8 @@ namespace Pitchlab.Sandbox
         private readonly MannequinPose _from = new MannequinPose();
         private PlayerMannequin _prefab;
         private PlayerMannequin _adoptedPitcher;
-        private MannequinPose _pitcherShown;   // the sandbox's last shown pitcher pose (blend source at takeover)
+        private MannequinPose _pitcherShown;   // the sandbox's shown pitcher pose (written back while this view drives him)
+        private Action<double, MannequinPose> _pitcherPoseAt;   // the sandbox pitcher's pose at a play time (deterministic blend source)
         private DefensiveAlignment _alignment = DefensiveAlignment.Standard;
         private LineRenderer _route;
         private Transform _interceptMarker;
@@ -45,13 +46,16 @@ namespace Pitchlab.Sandbox
 
         /// <summary>
         /// Builds the defenders. <paramref name="pitcher"/>: an existing figure (the sandbox pitcher) that this view drives only
-        /// when the pitcher is the primary defender of a play (blending from <paramref name="pitcherShown"/>); null builds its own.
+        /// when the pitcher is the primary defender of a play (blending from his pose at the takeover, <paramref name="pitcherPoseAt"/>,
+        /// and writing what is shown back to <paramref name="pitcherShown"/>); null builds its own.
         /// </summary>
-        public void Build(PlayerMannequin prefab, PlayerMannequin pitcher, MannequinPose pitcherShown, DefensiveAlignment alignment)
+        public void Build(PlayerMannequin prefab, PlayerMannequin pitcher, MannequinPose pitcherShown, Action<double, MannequinPose> pitcherPoseAt,
+            DefensiveAlignment alignment)
         {
             _prefab = prefab;
             _adoptedPitcher = pitcher;
             _pitcherShown = pitcherShown;
+            _pitcherPoseAt = pitcherPoseAt;
             _alignment = alignment ?? DefensiveAlignment.Standard;
             foreach (DefensivePosition p in Enum.GetValues(typeof(DefensivePosition)))
             {
@@ -172,7 +176,10 @@ namespace Pitchlab.Sandbox
                 if (double.IsNaN(_pitcherTakeover))
                 {
                     _pitcherTakeover = TakeoverTime(play);
-                    MannequinPose.Blend(_pitcherShown, _pitcherShown, 0f, _from);
+                    // The blend source is the sandbox pitcher's pose at the takeover time itself, not whatever frame happened
+                    // to be shown last, so the takeover looks the same at any frame rate (Codex review).
+                    if (_pitcherPoseAt != null) _pitcherPoseAt(_pitcherTakeover, _from);
+                    else MannequinPose.Blend(_pitcherShown, _pitcherShown, 0f, _from);
                     _takeoverRoot = figure.transform.position;
                     _takeoverRotation = figure.transform.rotation;
                 }
@@ -190,8 +197,10 @@ namespace Pitchlab.Sandbox
             figure.ApplyPose(_pose);
             if (position == DefensivePosition.P && figure == _adoptedPitcher && _pitcherShown != null)
                 MannequinPose.Blend(_pose, _pose, 0f, _pitcherShown);   // the sandbox's next pitch blends from what was shown
-            // The ball sits in the glove from the authoritative possession moment (gameplay decided it; this only draws it).
-            if (sinceTake >= 0.0 && ball != null) ball.position = figure.GloveAnchor.position;
+            // From the authoritative possession moment the ball is drawn into the glove: at the take it is exactly where gameplay
+            // put it, over the secure time it settles into the glove (presentation; no jump at possession).
+            if (sinceTake >= 0.0 && ball != null)
+                ball.position = Vector3.Lerp(ball.position, figure.GloveAnchor.position, Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)));
         }
 
         private void OnGUI()
