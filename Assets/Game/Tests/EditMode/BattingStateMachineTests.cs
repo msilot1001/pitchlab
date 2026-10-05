@@ -14,10 +14,10 @@ namespace Pitchlab.Tests
         private static readonly SwingParameters Swing = SwingParameters.Default;
 
         private static BattingState At(double t, SwingInput? swing, ContactResult? result, BallInPlay play) =>
-            BattingStateMachine.At(t, Pitch, swing, result, play, Swing.SwingDuration);
+            BattingStateMachine.At(t, Pitch, swing, result, play?.EndTime ?? double.NaN, Swing.SwingDuration);
 
         [Test]
-        public void NoPitchIsReady() => Assert.AreEqual(BattingState.Ready, BattingStateMachine.At(5.0, null, null, null, null, 0.15));
+        public void NoPitchIsReady() => Assert.AreEqual(BattingState.Ready, BattingStateMachine.At(5.0, null, null, null, double.NaN, 0.15));
 
         [Test]
         public void HitGoesThroughEveryStateInOrder()
@@ -36,6 +36,19 @@ namespace Pitchlab.Tests
             Assert.AreEqual(BattingState.BallInPlay, At(play.EndTime - 0.01, swing, result, play));
             Assert.AreEqual(BattingState.Result, At(play.EndTime + 0.01, swing, result, play));
             Assert.AreEqual(BattingState.Ready, At(play.EndTime + BattingStateMachine.ResultPause + 0.01, swing, result, play));
+        }
+
+        [Test]
+        public void PlayEndsAtPossessionNotAtRest()
+        {
+            // TASK-005: a defender taking the ball ends the play even though the free ball would still be rolling.
+            var ball = Pitch.IdealContactState.Position;
+            var swing = new SwingInput(Pitch.IdealContactTime - Swing.SwingDuration, ball.X, ball.Z - 0.01);
+            ContactResult result = ContactResolver.Resolve(Pitch, swing, Swing);
+            double possession = result.BattedBall.Time + 1.0;
+            Assert.AreEqual(BattingState.BallInPlay, BattingStateMachine.At(possession - 0.01, Pitch, swing, result, possession, Swing.SwingDuration));
+            Assert.AreEqual(BattingState.Result, BattingStateMachine.At(possession + 0.01, Pitch, swing, result, possession, Swing.SwingDuration));
+            Assert.AreEqual(BattingState.Ready, BattingStateMachine.At(possession + BattingStateMachine.ResultPause + 0.01, Pitch, swing, result, possession, Swing.SwingDuration));
         }
 
         [Test]

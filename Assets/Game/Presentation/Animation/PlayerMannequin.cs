@@ -142,6 +142,9 @@ namespace Pitchlab.Presentation
         /// <summary>Figure-frame vector of a world vector (includes the left-handed mirror).</summary>
         public Vector3 WorldToFigure(Vector3 worldVector) => _visual.InverseTransformVector(worldVector);
 
+        /// <summary>Figure-frame point of a world position (includes the left-handed mirror).</summary>
+        public Vector3 WorldToFigurePoint(Vector3 worldPoint) => _visual.InverseTransformPoint(worldPoint);
+
         /// <summary>World position of a figure-frame point (includes the left-handed mirror).</summary>
         public Vector3 FigurePoint(Vector3 figurePoint) => _visual.TransformPoint(figurePoint);
 

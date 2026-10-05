@@ -19,11 +19,14 @@ namespace Pitchlab.Presentation
         [SerializeField] private float _followWindow = 70f;
 
         private Camera _camera;
-        private Transform _target;
+        private Transform _target, _second;
         private float _followSince = -1f, _shakeUntil, _shakeAmplitude, _shakeSeconds = 1f;
         private Vector3 _lookPoint, _basePosition;
 
         public bool IsFollowing => _target != null;
+
+        /// <summary>A second subject kept in frame with the ball while following (the defender playing it); null for none.</summary>
+        public void FollowAlso(Transform second) => _second = second;
 
         private void Awake()
         {
@@ -34,6 +37,7 @@ namespace Pitchlab.Presentation
         public void ShowBatting()
         {
             _target = null;
+            _second = null;
             _basePosition = _battingPosition;
             transform.SetPositionAndRotation(_battingPosition, Quaternion.LookRotation(_battingLookAt - _battingPosition));
             if (_camera != null) _camera.fieldOfView = _battingFov;
@@ -63,8 +67,17 @@ namespace Pitchlab.Presentation
                 float u = Mathf.SmoothStep(0f, 1f, (now - _followSince - _holdSeconds) / _blendSeconds);
                 // Aim between the ball and the ground below it so the field stays in frame while the ball climbs.
                 Vector3 ball = _target.position, aim = new Vector3(ball.x, 0.5f * Mathf.Max(ball.y, 0f), ball.z);
-                _lookPoint = Vector3.Lerp(_lookPoint, aim, 1f - Mathf.Exp(-12f * Time.unscaledDeltaTime));
                 float window = Mathf.Max(_followWindow, 1.6f * ball.y + 15f);
+                if (_second != null)
+                {
+                    // Frame the ball and the defender converging on it: aim between them, widen to keep both in view.
+                    Vector3 other = _second.position;
+                    aim = 0.5f * (aim + new Vector3(other.x, 0.5f, other.z));
+                    // Tighter than the free follow: the play is the ball and the defender, not the whole field.
+                    window = Mathf.Max(30f, 1.6f * ball.y + 15f, 1.4f * Vector3.Distance(new Vector3(ball.x, 0f, ball.z), new Vector3(other.x, 0f, other.z)) + 12f);
+                }
+
+                _lookPoint = Vector3.Lerp(_lookPoint, aim, 1f - Mathf.Exp(-12f * Time.unscaledDeltaTime));
                 Vector3 position = Vector3.Lerp(_battingPosition, _followPosition, u);
                 Vector3 look = Vector3.Lerp(_battingLookAt, _lookPoint, Mathf.Max(u, Mathf.Clamp01((now - _followSince) / _holdSeconds) * 0.35f));
                 float distance = Vector3.Distance(position, _lookPoint);

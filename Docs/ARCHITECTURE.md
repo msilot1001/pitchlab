@@ -89,3 +89,11 @@ Each call records its basis and the decisive state. `FairFoulTests` covers synth
     - the sweet-spot trail;
     - event markers at every bounce, wall impact, slide → roll and rest.
 - **Sound:** none beyond the existing contact crack (optional, not added).
+
+## Fielding (TASK-005)
+
+`Gameplay/Fielding` covers positions, profiles, the running law, the intercept solver and `FieldingPlay` / `FieldingSolver` (see Docs/FIELDING.md).
+- **Input:** the authoritative `BallInPlay` only.
+- **Output:** a play that is a pure function of time: every defender's motion, the primary's intercept, possession, and the fielder-aware call.
+- **Presentation:** the Sandbox `DefenseView` and the Presentation `FieldingPoser` read it and never write it.
+- **HittingLab:** the controller solves the defense at contact. The ball follows `FieldingPlay.BallPositionAt`, and the batting loop's play ends at possession.
