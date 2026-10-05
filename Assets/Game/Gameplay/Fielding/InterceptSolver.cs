@@ -142,8 +142,11 @@ namespace Pitchlab.Gameplay.Fielding
             double route = Math.Max(0.0, gap - profile.ReachAt(ball.Position.Z));
             Vector3d target = gap > 0.0 ? origin + toBall * (route / gap) : origin;
             if (!InsidePark(field, target)) return false;
+            // Reachable by t ⇔ the running law covers the route in the time available (Distance is monotone, so this equals
+            // RunThroughTime(route) ≤ t − start without its bisection on every probe).
+            double available = t - play.First.Time - profile.ReactionTime;
+            if (available < 0.0 || route > RunningLaw.Distance(profile, available)) return false;
             double arrival = play.First.Time + profile.ReactionTime + RunningLaw.RunThroughTime(profile, route);
-            if (arrival > t) return false;
             InterceptKind kind = BeforeFirstContact(play, t) ? InterceptKind.FlyCatch
                 : ball.Position.Z <= profile.PickupHeightMax ? InterceptKind.GroundPickup : InterceptKind.HopCatch;
             intercept = new Intercept(t, ball, target, route, arrival, kind);
