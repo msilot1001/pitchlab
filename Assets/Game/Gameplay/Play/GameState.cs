@@ -89,6 +89,9 @@ namespace Pitchlab.Gameplay.Play
         public int CompletedPlateAppearances => _completed.Count;
         /// <summary>One line per completed plate appearance and per half-inning change.</summary>
         public IReadOnlyList<string> Log => _log;
+        /// <summary>Changes whenever anything in the game changes (a pitch, a plate appearance, the editor, a reset): a cheap
+        /// way for views to know when to rebuild what they show.</summary>
+        public int Version { get; private set; }
         /// <summary>The situation the next pitch is thrown in.</summary>
         public Situation Situation => new Situation(Outs, Bases);
 
@@ -113,6 +116,7 @@ namespace Pitchlab.Gameplay.Play
             Current = NewPlateAppearance(old.Number);
             if (sameTeam) Current.CarryCount(old);
             _paStart = Capture(clearPitches: true);
+            Version++;
         }
 
         public void Set(SituationPreset preset) => Set(Inning, Half, preset.Outs, preset.Bases, AwayScore, HomeScore);
@@ -121,6 +125,7 @@ namespace Pitchlab.Gameplay.Play
         public void ResetPlateAppearance()
         {
             Restore(_paStart);
+            Version++;
         }
 
         /// <summary>
@@ -153,17 +158,19 @@ namespace Pitchlab.Gameplay.Play
             if (Current.Pitches.Count == 0) _paStart = Capture(clearPitches: false);   // the first pitch: where RESET PA returns
             if (play != null) _applied.Add(play);
             PitchEvent e = Current.Record(info, result);
+            Version++;
             switch (e.End)
             {
                 case PlateAppearanceEnd.Walk:
                     BaseOccupancy walked = Rules.Count.Walk(Bases, out int runs);
-                    End(e.End, "walk", runs, 0, walked);
+                    End(e.End, "walk", runs, 0, walked, null);
                     break;
                 case PlateAppearanceEnd.Strikeout:
-                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : "strikeout swinging", 0, 1, Bases);
+                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : "strikeout swinging", 0, 1, Bases, null);
                     break;
                 case PlateAppearanceEnd.InPlay:
-                    End(e.End, $"in play: {play.OutsMade} out{(play.OutsMade == 1 ? "" : "s")}", play.Runs, play.OutsMade, play.ResultingBases());
+                    PlayResultKind kind = PlayResults.Classify(play);
+                    End(e.End, PlayResults.Describe(kind), play.Runs, play.OutsMade, play.ResultingBases(), kind);
                     break;
             }
 
@@ -175,9 +182,9 @@ namespace Pitchlab.Gameplay.Play
         /// the last batter who completed his time at bat, 5.04(a)(3)); runs, then the outs and bases — or,
         /// on the third out, the next half — and the next batter comes up.
         /// </summary>
-        private void End(PlateAppearanceEnd end, string what, int runs, int outsMade, BaseOccupancy bases)
+        private void End(PlateAppearanceEnd end, string what, int runs, int outsMade, BaseOccupancy bases, PlayResultKind? kind)
         {
-            Current.Complete(end, what, runs, outsMade);
+            Current.Complete(end, what, runs, outsMade, kind);
             _completed.Add(Current);
             int team = (int)Batting;
             _upNext[team] = _upNext[team] % Lineup.Size + 1;

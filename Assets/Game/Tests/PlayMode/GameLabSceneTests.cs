@@ -251,7 +251,7 @@ namespace Pitchlab.Tests
 
             string at30 = Run(1.0 / 30.0), at144 = Run(1.0 / 144.0);
             StringAssert.Contains("walk", at30);
-            StringAssert.Contains("in play", at30);
+            StringAssert.Contains("IN PLAY", at30);
             Assert.AreEqual(at30, at144);
         }
 

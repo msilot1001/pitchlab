@@ -43,6 +43,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The result in words once complete ("walk", "strikeout looking", "in play: 1 out, 0 runs", …).</summary>
         public string Result { get; private set; } = string.Empty;
         public int Runs { get; private set; }
+        /// <summary>The fair ball's result when it ended in play (null for a walk or a strikeout).</summary>
+        public PlayResultKind? PlayResult { get; private set; }
         public int OutsMade { get; private set; }
 
         internal PitchEvent Record(PitchInfo info, PitchOutcome outcome)
@@ -55,8 +57,9 @@ namespace Pitchlab.Gameplay.Play
             return e;
         }
 
-        internal void Complete(PlateAppearanceEnd end, string result, int runs, int outsMade)
+        internal void Complete(PlateAppearanceEnd end, string result, int runs, int outsMade, PlayResultKind? playResult)
         {
+            PlayResult = playResult;
             End = end;
             Result = result;
             Runs = runs;
@@ -75,7 +78,7 @@ namespace Pitchlab.Gameplay.Play
         {
             var c = new PlateAppearance(Number, Team, Slot, Batter, Inning, Half, StartOuts, StartBases)
             {
-                Count = Count, End = End, Result = Result, Runs = Runs, OutsMade = OutsMade,
+                Count = Count, End = End, Result = Result, Runs = Runs, OutsMade = OutsMade, PlayResult = PlayResult,
             };
             c._pitches.AddRange(_pitches);
             return c;

@@ -484,7 +484,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Pitchlab.Sandbox::Pitchlab.Sandbox.GameLabPanel
   _lab: {fileID: 445068154}
-  _showEditor: 1
+  _showEditor: 0
 --- !u!1 &671174560
 GameObject:
   m_ObjectHideFlags: 0
