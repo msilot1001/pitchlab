@@ -351,14 +351,19 @@ namespace Pitchlab.Sandbox
             }
 
             figure.transform.SetPositionAndRotation(root, rotation);
-            input.Ready = ReadyOf(position);
+            // The catcher's crouch is his stance behind the plate before the pitch; in a play he is up like an infielder.
+            input.Ready = position == DefensivePosition.C && d != null ? ReadyStyle.Infield : ReadyOf(position);
             input.ActionTime = float.NaN;
             if (take != null)
             {
                 // The body around the take, from the gameplay classification (a slide or dive stays down for its recovery).
                 input.Action = BodyOf(take.Value.Action, d, position, take.Value);
                 input.ActionTime = (float)sinceTake;
-                input.ActionPoint = figure.WorldToFigurePoint(SimulationSpace.ToUnity(take.Value.BallPoint));
+                // The take point in the figure's frame at the take (frozen: after it he keeps moving, braking — the action's
+                // direction and reach must not swing as he passes the spot).
+                Vector3 takeRoot = SimulationSpace.ToUnity(new Vector3d(d.FielderPositionAt(position, take.Value.Time).X, d.FielderPositionAt(position, take.Value.Time).Y, 0.0));
+                float takeYaw = _motion[i].Follows(d) ? _motion[i].At(take.Value.Time).Yaw : yaw;
+                input.ActionPoint = Quaternion.Inverse(Quaternion.Euler(0f, takeYaw, 0f)) * (SimulationSpace.ToUnity(take.Value.BallPoint) - takeRoot);
                 input.Recovery = take.Value.Action == FieldingAction.DivingCatch ? (float)FieldingActions.DiveRecovery : take.Value.Action == FieldingAction.SlidingCatch ? 0.35f : 0f;
             }
 
@@ -390,7 +395,8 @@ namespace Pitchlab.Sandbox
                 {
                     // Throw: the throwing hand carries the authoritative ball to the release point, then follows through. The
                     // stride steps as the arm loads and stays planted through the release and the follow-through.
-                    float wind = Mathf.SmoothStep(0f, 1f, (float)((time - windStart) / Math.Max(1e-3, armStart - windStart)));
+                    // The wind-up ramps over at least 0.15 s (when the secure ends just before the arm action, it overlaps it).
+                    float wind = Mathf.SmoothStep(0f, 1f, (float)((time - windStart) / Math.Max(0.15, armStart - windStart)));
                     float after = Mathf.Clamp01((float)((time - release) / 0.35));
                     input.ThrowWeight = time > release + FollowThrough ? 0f : wind * (1f - Mathf.SmoothStep(0f, 1f, (float)((time - release - 0.35) / 0.4)));
                     // On the move (gameplay releases while he still runs) there is no planted stride: the gait carries him.
@@ -400,8 +406,10 @@ namespace Pitchlab.Sandbox
                     // Outfielders crow-hop into a planted throw.
                     if (!moving && Gameplay.Rules.DefensiveDecision.IsOutfielder(position) && time < armStart)
                         input.CrowHop = Mathf.Clamp01((float)((time - (armStart - CrowHopTime)) / CrowHopTime));
+                    // Through the arm action the ball (and the hand holding it) goes from the hold at the chest to the gameplay ball
+                    // path, arriving exactly on it at the release (the transfer, readable; no jump).
                     Vector3 hand = time < release
-                        ? figure.WorldToFigurePoint(SimulationSpace.ToUnity(d.BallPositionAt(time)))
+                        ? figure.WorldToFigurePoint(ArmBall(figure, input, d, time, armStart, release))
                         : Vector3.Lerp(figure.WorldToFigurePoint(SimulationSpace.ToUnity(th.ReleasePoint)), new Vector3(-0.25f, 0.95f, 0.55f), Mathf.SmoothStep(0f, 1f, after));
                     input.ThrowHand = hand;
                     input.ThrowTwist = time < release ? Mathf.Lerp(-35f, 25f, Mathf.SmoothStep(0f, 1f, (float)((time - armStart) / DefensivePlay.ArmAction))) : 25f;
@@ -445,7 +453,7 @@ namespace Pitchlab.Sandbox
             if (sinceTake < FieldingPlay.SecureTime)
                 ball.position = Vector3.Lerp(ball.position, glove, Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)));
             else if (th != null && time >= armStart)
-                ball.position = Vector3.Lerp(glove, ball.position, Mathf.SmoothStep(0f, 1f, (float)((time - armStart) / 0.12)));
+                ball.position = ArmBall(figure, input, d, time, armStart, release);
             else ball.position = glove;
         }
 
@@ -474,6 +482,15 @@ namespace Pitchlab.Sandbox
         /// <summary>Within this distance of a bag's centre (m) the fielder is shown this far toward its infield edge (m).</summary>
         private const double BagSideZone = 0.8;
         private const float BagSideOffset = 0.3f, HomeSideOffset = 0.25f;
+
+        /// <summary>The ball through the arm action: from the hold point (world) to the authoritative ball path, reaching it at the
+        /// release.</summary>
+        private static Vector3 ArmBall(PlayerMannequin figure, in FieldingPoseInput input, LiveDefense d, double time, double armStart, double release)
+        {
+            float s = Mathf.SmoothStep(0f, 1f, (float)((time - armStart) / Math.Max(1e-3, release - armStart)));
+            Vector3 hold = figure.FigurePoint(FieldingPoser.HoldPoint(input));
+            return Vector3.Lerp(hold, SimulationSpace.ToUnity(d.BallPositionAt(time)), s);
+        }
 
         /// <summary>Feet on the ground where it is not flat (the mound): each ankle target is raised or lowered by the ground
         /// height under it relative to the root's.</summary>

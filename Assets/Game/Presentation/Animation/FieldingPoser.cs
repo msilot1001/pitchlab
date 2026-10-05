@@ -130,7 +130,7 @@ namespace Pitchlab.Presentation
                 case BodyAction.HeadFirst:
                 {
                     (float a, float height, Vector3 dir, float reach) = DiveShape(input);
-                    return dir * ((reach + 0.35f) * a) + new Vector3(0f, height * a + 0.1f * a, 0f);
+                    return dir * ((reach + 0.35f) * a) + new Vector3(0f, height * a + 0.2f * a, 0f);
                 }
                 default:
                     return Vector3.zero;
@@ -156,7 +156,7 @@ namespace Pitchlab.Presentation
             // Shoulder ≈ 0.5 m beyond the pelvis when horizontal, the arm ≈ 0.6 m more: the pelvis goes the rest.
             float reach = Mathf.Clamp(toward.magnitude - 1.05f, 0f, 1.4f);
             const float standing = 0.91f;   // pelvis height of the ready figure (m)
-            float air = Mathf.Max(0.3f, p.y - 0.15f) - standing, prone = 0.22f - standing;
+            float air = Mathf.Max(0.3f, p.y - 0.15f) - standing, prone = 0.3f - standing;
             return (fly * (1f - up), Mathf.Lerp(air, prone, land), dir, reach);
         }
 
@@ -168,6 +168,15 @@ namespace Pitchlab.Presentation
         public const float GetUp = 0.5f;
 
         public static void Compose(in FieldingPoseInput input, MannequinPose pose)
+        {
+            ComposeCore(input, pose);
+            // On his feet the pelvis never sinks below a full squat (a catcher's crouch plus a tag must not put a shin in the
+            // ground); slides and dives are on the ground by design.
+            bool grounded = input.Action == BodyAction.Slide || input.Action == BodyAction.Dive || input.Action == BodyAction.HeadFirst;
+            if (!grounded || float.IsNaN(input.ActionTime)) pose.PelvisOffset.y = Mathf.Max(pose.PelvisOffset.y, SquatFloor);
+        }
+
+        private static void ComposeCore(in FieldingPoseInput input, MannequinPose pose)
         {
             MannequinPose.Blend(Base, Base, 0f, pose);   // reset every field
             float v = input.Speed;
@@ -254,11 +263,17 @@ namespace Pitchlab.Presentation
                 pose.Pelvis += new Vector3(0f, 0.6f * input.ThrowTwist * w, 0f);
                 pose.Chest += new Vector3(0f, 0.6f * input.ThrowTwist * w, 0f);
                 pose.Spine += new Vector3(8f * w, 0f, 0f);
+                // Blended from where the hands were (the hold at the chest while he has the ball; hands down in front after the
+                // follow-through), so starting and ending the throw never snaps the arms.
+                Vector3 hold = HoldPoint(input);
+                Vector3 baseLeft = input.HoldingBall || input.ThrowTwist < 25f ? hold : new Vector3(-0.22f, 0.95f, 0.3f);
+                Vector3 baseRight = input.HoldingBall || input.ThrowTwist < 25f ? hold + new Vector3(0.09f, 0.02f, -0.02f) : new Vector3(0.22f, 0.95f, 0.3f);
                 pose.RightHandWeight = 1f;
-                pose.RightHand = input.ThrowHand;
-                pose.RightElbowHint = new Vector3(1f, 0.4f, -0.6f);
+                pose.RightHand = Vector3.Lerp(baseRight, input.ThrowHand, w);
+                pose.RightElbowHint = Vector3.Slerp(new Vector3(1f, -0.6f, 0f), new Vector3(1f, 0.4f, -0.6f), w);
                 pose.LeftHandWeight = 1f;
-                pose.LeftHand = Vector3.Lerp(new Vector3(-0.35f, 1.35f, 0.45f), new Vector3(-0.15f, 1.05f, 0.25f), Mathf.Clamp01(input.ThrowTwist / 30f + 0.5f));
+                Vector3 lead = Vector3.Lerp(new Vector3(-0.35f, 1.35f, 0.45f), new Vector3(-0.15f, 1.05f, 0.25f), Mathf.Clamp01(input.ThrowTwist / 30f + 0.5f));
+                pose.LeftHand = Vector3.Lerp(baseLeft, lead, w);
                 pose.LeftElbowHint = new Vector3(-1f, -0.3f, 0f);
                 return;
             }
@@ -306,7 +321,8 @@ namespace Pitchlab.Presentation
                 // Out to the side or above: shift the body toward the ball (a step and lean, up to 0.45 m) and rise into a
                 // jump for balls above the standing reach (≈ 2.1 m for this figure), as a fielder does.
                 var flat = new Vector2(input.GloveTarget.x + 0.2f, input.GloveTarget.z);
-                float shift = Mathf.Clamp(flat.magnitude - 0.45f, 0f, 0.45f) * w;
+                bool laidOut = input.Action == BodyAction.Dive;   // the dive placed the whole body toward the ball
+                float shift = laidOut ? 0f : Mathf.Clamp(flat.magnitude - 0.45f, 0f, 0.45f) * w;
                 if (flat.sqrMagnitude > 1e-6f)
                 {
                     Vector2 d = flat.normalized * shift;
@@ -331,6 +347,9 @@ namespace Pitchlab.Presentation
                 }
             }
         }
+
+        /// <summary>The lowest the pelvis goes on its feet (offset, m): a full squat. Only slides and dives go below it.</summary>
+        public const float SquatFloor = -0.72f;
 
         /// <summary>
         /// The body of the action around the take (before the glove reach, which still meets the authoritative ball): returns
@@ -456,6 +475,14 @@ namespace Pitchlab.Presentation
                     pose.LeftFootPitch = Mathf.Lerp(pose.LeftFootPitch, 70f, a);
                     pose.RightFootPitch = Mathf.Lerp(pose.RightFootPitch, 70f, a);
                     pose.LeftKneeHint = pose.RightKneeHint = Vector3.Lerp(Vector3.forward, Vector3.down, a);
+                    if (input.Action == BodyAction.Dive)
+                    {
+                        // The free hand stays with the glove (no run swing while laid out or prone).
+                        pose.RightHandWeight = a;
+                        pose.RightHand = HoldPoint(input) + new Vector3(0.12f, 0.05f, -0.05f);
+                        pose.RightElbowHint = new Vector3(1f, 0.2f, 0f);
+                    }
+
                     if (input.Action == BodyAction.HeadFirst)
                     {
                         // Arms out to the base.
