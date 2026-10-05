@@ -87,7 +87,12 @@ namespace Pitchlab.Gameplay.Fielding
             double lo = MinElevation;
             reaches = best >= 0.0;
             if (!reaches) return State(release, dir, speed, hi, releaseTime);
-            if (Error(lo) >= 0.0) return State(release, dir, speed, lo, releaseTime);
+            if (Error(lo) > 0.0)
+            {
+                reaches = false;   // so close below the release that even the lowest throw passes over the target
+                return State(release, dir, speed, lo, releaseTime);
+            }
+
             for (int i = 0; i < 30; i++)   // 55° / 2^30 ≈ 5e-8°
             {
                 double mid = 0.5 * (lo + hi);
@@ -363,14 +368,14 @@ namespace Pitchlab.Gameplay.Fielding
             Intercept take = pass >= onBag && pass < firstContact && InterceptSolver.Feasible(flight, basePoint, atBag, field, pass, out Intercept onTheBag)
                              && onTheBag.RouteDistance == 0.0
                 ? onTheBag
-                : InterceptSolver.Solve(flight, basePoint, atBag, field, firstContact);
+                : OnTheFly(InterceptSolver.Solve(flight, basePoint, atBag, field, firstContact));
             if (take.Feasible)
             {
                 adjustFrom = basePoint;
                 adjust = atBag;
                 switchAt = onBag;
             }
-            else take = InterceptSolver.Solve(flight, adjustFrom, adjust, field, firstContact);
+            else take = OnTheFly(InterceptSolver.Solve(flight, adjustFrom, adjust, field, firstContact));
             if (!take.Feasible)   // the throw does not come to him: he keeps to the bag
                 return new DefensivePlay(fielding, new ThrowPlay(thrower, receiver, target.Value, release, releasePoint, flight, reaches,
                     new ReceiverPath(toBase, double.PositiveInfinity, toBase), take));
@@ -385,6 +390,10 @@ namespace Pitchlab.Gameplay.Fielding
             var path = new ReceiverPath(toBase, switchAt, toCatch);
             return new DefensivePlay(fielding, new ThrowPlay(thrower, receiver, target.Value, release, releasePoint, flight, reaches, path, take));
         }
+
+        /// <summary>A throw is caught only on the fly (the solver's search end is inclusive: a take at the first contact itself
+        /// would be the state after the bounce).</summary>
+        private static Intercept OnTheFly(Intercept take) => take.Feasible && take.Kind == InterceptKind.FlyCatch ? take : Intercept.None;
 
         /// <summary>The ball at hand height on the thrower's throwing side, a step toward the target, at <paramref name="release"/>.</summary>
         private static Vector3d ReleasePoint(FieldingPlay fielding, DefensivePosition thrower, ThrowProfile arm, Vector3d basePoint, double release)

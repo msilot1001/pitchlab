@@ -158,7 +158,7 @@ namespace Pitchlab.Sandbox
             if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
             if (_lab.LastSwing.HasValue && !_swing.HasValue) OnSwing(_lab.LastSwing.Value, _lab.LastResult.Value);
 
-            if (!_defense.DrivesPitcher(_lab.LastFielding, t)) AnimatePitcher(t);
+            if (!_defense.DrivesPitcher(_lab.LastDefense, t)) AnimatePitcher(t);
             AnimateBatter(t);
             bool swinging = _swing.HasValue && t >= _swing.Value.StartTime && t <= _swing.Value.StartTime + _lab.Swing.SwingDuration + 0.3;
             _sweetTrail.emitting = _lab.DebugView && swinging;

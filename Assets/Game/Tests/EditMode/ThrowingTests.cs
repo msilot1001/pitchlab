@@ -80,6 +80,27 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void TargetBelowTheLowestThrowDoesNotReach()
+        {
+            // 1 m away and 0.5 m below the release: even −15° passes over it — reported as not reaching (Codex review).
+            ThrowSolver.Launch(new Vector3d(0.0, 0.0, 1.8), new Vector3d(0.0, 1.0, 1.3), 30.0, 0.0, EnvironmentState.Standard, out bool reaches);
+            Assert.IsFalse(reaches);
+        }
+
+        [Test]
+        public void CatcherThrowsHomeToThePitcherCovering()
+        {
+            // A dribbler the catcher fields, thrown home: the pitcher covers the plate and takes it there.
+            FieldingPlay fielding = Field(20.0, -40.0, 0.0, -300.0);
+            Assert.AreEqual(DefensivePosition.C, fielding.Primary);
+            DefensivePlay play = ThrowPlanner.Plan(fielding, Base.Home);
+            Assert.AreEqual(DefensivePosition.P, play.Throw.Receiver);
+            Assert.IsTrue(play.Throw.Caught);
+            Assert.AreEqual(InterceptKind.FlyCatch, play.Throw.Catch.Kind);
+            AssertTimeline(play);
+        }
+
+        [Test]
         public void ThrowOutOfRangeFallsShort()
         {
             var release = new Vector3d(0.0, 90.0, 1.8);

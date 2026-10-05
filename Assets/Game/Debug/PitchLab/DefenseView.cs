@@ -91,11 +91,14 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>True when this view drives the adopted pitcher at <paramref name="time"/> (the sandbox must not).</summary>
-        public bool DrivesPitcher(FieldingPlay play, double time) =>
-            _adoptedPitcher != null && play != null && play.Primary == DefensivePosition.P && time >= TakeoverTime(play);
+        public bool DrivesPitcher(DefensivePlay play, double time) =>
+            _adoptedPitcher != null && play != null && (play.Fielding.Primary == DefensivePosition.P || play.Throw?.Receiver == DefensivePosition.P)
+            && time >= TakeoverTime(play);
 
-        /// <summary>When this view takes the sandbox pitcher over (deterministic: shortly before he starts to run).</summary>
-        private static double TakeoverTime(FieldingPlay play) => play.Motion(DefensivePosition.P).StartTime - TakeoverBlend;
+        /// <summary>When this view takes the sandbox pitcher over (deterministic: shortly before he starts to run — to the
+        /// ball, or to cover the base he receives a throw at).</summary>
+        private static double TakeoverTime(DefensivePlay play) =>
+            (play.Throw?.Receiver == DefensivePosition.P ? play.Throw.Path.ToBase.StartTime : play.Fielding.Motion(DefensivePosition.P).StartTime) - TakeoverBlend;
 
         private const double TakeoverBlend = 0.25;
 
@@ -112,7 +115,7 @@ namespace Pitchlab.Sandbox
                 var p = (DefensivePosition)i;
                 PlayerMannequin figure = _figures[i];
                 if (figure == null) continue;
-                if (p == DefensivePosition.P && figure == _adoptedPitcher && !DrivesPitcher(_play, time)) continue;
+                if (p == DefensivePosition.P && figure == _adoptedPitcher && !DrivesPitcher(play, time)) continue;
                 if (p == DefensivePosition.C) figure.gameObject.SetActive(CatcherVisible || (play?.Throw is ThrowPlay th && th.Receiver == DefensivePosition.C && time >= th.ReleaseTime));
                 Pose(p, figure, play, time, ball);
             }
@@ -222,7 +225,7 @@ namespace Pitchlab.Sandbox
                 // Take the sandbox pitcher over from wherever and however he stood (root, heading and pose blend together).
                 if (double.IsNaN(_pitcherTakeover))
                 {
-                    _pitcherTakeover = TakeoverTime(fielding);
+                    _pitcherTakeover = TakeoverTime(play);
                     // The blend source is the sandbox pitcher's pose at the takeover time itself, not whatever frame happened
                     // to be shown last, so the takeover looks the same at any frame rate (Codex review).
                     if (_pitcherPoseAt != null) _pitcherPoseAt(_pitcherTakeover, _from);
