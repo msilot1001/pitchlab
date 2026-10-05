@@ -146,27 +146,28 @@ namespace Pitchlab.Gameplay.Fielding
         }
     }
 
-    /// <summary>A receiver's movement: to the base, then from where he is when the throw is in the air, to the catch.</summary>
+    /// <summary>A receiver's movement: to the base, then — from where he is and as fast as he is moving when he adjusts to
+    /// the throw — to the catch (<see cref="ContinuationMotion"/>: position and velocity continuous at the switch). No
+    /// adjustment (<see cref="ToCatch"/> null): he keeps to the base.</summary>
     public sealed class ReceiverPath
     {
-        public ReceiverPath(FielderMotion toBase, double switchTime, FielderMotion toCatch)
+        public ReceiverPath(FielderMotion toBase, double switchTime, ContinuationMotion toCatch)
         {
             ToBase = toBase;
-            SwitchTime = switchTime;
+            SwitchTime = toCatch == null ? double.PositiveInfinity : switchTime;
             ToCatch = toCatch;
         }
 
         public FielderMotion ToBase { get; }
         public double SwitchTime { get; }
-        public FielderMotion ToCatch { get; }
+        public ContinuationMotion ToCatch { get; }
 
-        private FielderMotion At(double t) => t < SwitchTime ? ToBase : ToCatch;
-        public Vector3d PositionAt(double t) => At(t).PositionAt(t);
-        public double SpeedAt(double t) => At(t).SpeedAt(t);
-        public Vector3d VelocityAt(double t) => At(t).VelocityAt(t);
+        public Vector3d PositionAt(double t) => t < SwitchTime ? ToBase.PositionAt(t) : ToCatch.PositionAt(t);
+        public double SpeedAt(double t) => t < SwitchTime ? ToBase.SpeedAt(t) : ToCatch.SpeedAt(t);
+        public Vector3d VelocityAt(double t) => t < SwitchTime ? ToBase.VelocityAt(t) : ToCatch.VelocityAt(t);
         /// <summary>Distance run along both legs (the run cycle's phase).</summary>
         public double DistanceAt(double t) => t < SwitchTime ? ToBase.DistanceAt(t) : ToBase.DistanceAt(SwitchTime) + ToCatch.DistanceAt(t);
-        public Vector3d DirectionAt(double t) => At(t).Direction;
+        public Vector3d DirectionAt(double t) => t < SwitchTime ? ToBase.Direction : ToCatch.DirectionAt(t);
     }
 
     /// <summary>One throw: thrower, release, the authoritative flight, receiver, and the catch (or not).</summary>
@@ -216,25 +217,41 @@ namespace Pitchlab.Gameplay.Fielding
     /// batted ball until the first defender takes it → <see cref="BallAuthority.Possessed"/> by him → (if he throws)
     /// <see cref="BallAuthority.Thrown"/> on the throw's flight from the authoritative release → Possessed by the receiver at
     /// his catch, or FreeBall on the throw's own trajectory from its first ground contact if nobody catches it (no snapping
-    /// into a glove). Everything is a function of time.
+    /// into a glove). Instead of throwing, the fielder may carry the ball himself (<see cref="Carry"/>, TASK-006B: to a base
+    /// for an unassisted put-out). Everything is a function of time.
     /// </summary>
     public sealed class DefensivePlay
     {
-        public DefensivePlay(FieldingPlay fielding, ThrowPlay throwPlay)
+        public DefensivePlay(FieldingPlay fielding, ThrowPlay throwPlay) : this(fielding, throwPlay, null)
         {
-            Fielding = fielding;
-            Throw = throwPlay;
-            if (throwPlay != null && throwPlay.Caught)
-                _catchOffset = throwPlay.Catch.Ball.Position - throwPlay.Path.PositionAt(throwPlay.Catch.Time);
         }
 
-        private readonly Vector3d _catchOffset;
+        /// <param name="carry">The fielder's own movement with the ball from the moment of possession (no throw).</param>
+        public DefensivePlay(FieldingPlay fielding, ThrowPlay throwPlay, ContinuationMotion carry)
+        {
+            if (throwPlay != null && carry != null) throw new ArgumentException("A fielder either throws or carries the ball.", nameof(carry));
+            if (carry != null && Math.Abs(carry.StartTime - fielding.PossessionTime) > 1e-12)
+                throw new ArgumentException("The carry starts at the possession.", nameof(carry));
+            Fielding = fielding;
+            Throw = throwPlay;
+            Carry = carry;
+            if (throwPlay != null && throwPlay.Caught)
+                _catchOffset = throwPlay.Catch.Ball.Position - throwPlay.Path.PositionAt(throwPlay.Catch.Time);
+            if (fielding.Outcome == FieldingOutcome.Fielded)
+                _takeOffset = fielding.Intercept.Ball.Position - fielding.Motion(fielding.Primary.Value).PositionAt(fielding.PossessionTime);
+        }
+
+        private readonly Vector3d _catchOffset, _takeOffset;
 
         public FieldingPlay Fielding { get; }
         public ThrowPlay Throw { get; }
+        /// <summary>The fielder's movement with the ball after possession (null: he stays on his fielding route).</summary>
+        public ContinuationMotion Carry { get; }
 
-        /// <summary>When the play is over: the receiver's catch; a missed throw at rest; otherwise the fielding play's end.</summary>
-        public double EndTime => Throw == null ? Fielding.EndTime : Throw.Caught ? Throw.Catch.Time : Throw.Flight.EndTime;
+        /// <summary>When the play is over: the receiver's catch; a missed throw at rest; the end of a carry; otherwise the
+        /// fielding play's end.</summary>
+        public double EndTime => Throw != null ? Throw.Caught ? Throw.Catch.Time : Throw.Flight.EndTime
+            : Carry != null ? Math.Max(Fielding.EndTime, Carry.ArrivalTime) : Fielding.EndTime;
 
         public BallAuthority AuthorityAt(double t)
         {
@@ -251,18 +268,24 @@ namespace Pitchlab.Gameplay.Fielding
             return Throw != null && t >= Throw.ReleaseTime ? Throw.Receiver : Fielding.Primary;
         }
 
+        private bool Carrying(DefensivePosition p, double t) => Carry != null && p == Fielding.Primary && t >= Carry.StartTime;
+
         public Vector3d FielderPositionAt(DefensivePosition p, double t) =>
-            Throw != null && p == Throw.Receiver ? Throw.Path.PositionAt(t) : Fielding.Motion(p).PositionAt(t);
+            Throw != null && p == Throw.Receiver ? Throw.Path.PositionAt(t)
+            : Carrying(p, t) ? Carry.PositionAt(t) : Fielding.Motion(p).PositionAt(t);
 
         public double FielderSpeedAt(DefensivePosition p, double t) =>
-            Throw != null && p == Throw.Receiver ? Throw.Path.SpeedAt(t) : Fielding.Motion(p).SpeedAt(t);
+            Throw != null && p == Throw.Receiver ? Throw.Path.SpeedAt(t)
+            : Carrying(p, t) ? Carry.SpeedAt(t) : Fielding.Motion(p).SpeedAt(t);
 
         /// <summary>Distance run so far (phases the run cycle).</summary>
         public double FielderDistanceAt(DefensivePosition p, double t) =>
-            Throw != null && p == Throw.Receiver ? Throw.Path.DistanceAt(t) : Fielding.Motion(p).DistanceAt(t);
+            Throw != null && p == Throw.Receiver ? Throw.Path.DistanceAt(t)
+            : Carrying(p, t) ? Fielding.Motion(p).DistanceAt(Carry.StartTime) + Carry.DistanceAt(t) : Fielding.Motion(p).DistanceAt(t);
 
         public Vector3d FielderDirectionAt(DefensivePosition p, double t) =>
-            Throw != null && p == Throw.Receiver ? Throw.Path.DirectionAt(t) : Fielding.Motion(p).Direction;
+            Throw != null && p == Throw.Receiver ? Throw.Path.DirectionAt(t)
+            : Carrying(p, t) ? Carry.DirectionAt(t) : Fielding.Motion(p).Direction;
 
         /// <summary>The ball's authoritative position for whichever authority owns it.</summary>
         public Vector3d BallPositionAt(double t)
@@ -283,9 +306,12 @@ namespace Pitchlab.Gameplay.Fielding
                 return Throw.Path.PositionAt(t) + (1.0 - u) * _catchOffset + u * FieldingPlay.HoldOffset;
             }
 
-            // Thrower: secured at the chest, then brought to the release point over the arm action before the release.
-            Vector3d held = Fielding.BallPositionAt(t);
+            // The fielder: from where he took it into the glove at his chest over the secure time (wherever he moves).
+            double s = Math.Min(1.0, (t - Fielding.PossessionTime) / FieldingPlay.SecureTime);
+            s = s * s * (3.0 - 2.0 * s);
+            Vector3d held = FielderPositionAt(Fielding.Primary.Value, t) + (1.0 - s) * _takeOffset + s * FieldingPlay.HoldOffset;
             if (Throw == null) return held;
+            // Thrower: then brought to the release point over the arm action before the release.
             double action = Math.Min(ArmAction, Throw.ReleaseTime - Fielding.PossessionTime);   // never before the take
             double a = Math.Max(0.0, Math.Min(1.0, 1.0 - (Throw.ReleaseTime - t) / action));
             a = a * a * (3.0 - 2.0 * a);
@@ -344,9 +370,9 @@ namespace Pitchlab.Gameplay.Fielding
                 flight = BallInPlaySimulation.Run(launch, environment, field, ThrowSolver.Aerodynamics);
             }
 
-            // The receiver adjusts from where he is shortly after the release; catchable only on the fly.
+            // The receiver adjusts from where he is, and as he is moving, shortly after the release; catchable only on the fly.
             double switchAt = release + AdjustReaction;
-            Vector3d adjustFrom = toBase.PositionAt(switchAt);   // adjusting: from where he is shortly after the release
+            Vector3d adjustFrom = toBase.PositionAt(switchAt), adjustVelocity = toBase.VelocityAt(switchAt);
             FielderProfile adjust = new FielderProfile(AdjustReaction, catcher.MaxSpeed, catcher.AccelerationTime, catcher.BrakeDeceleration,
                 catcher.Reach, catcher.GroundReach, catcher.CatchHeightMax, catcher.PickupHeightMax);
             double firstContact = double.PositiveInfinity;
@@ -371,22 +397,16 @@ namespace Pitchlab.Gameplay.Fielding
                 : OnTheFly(InterceptSolver.Solve(flight, basePoint, atBag, field, firstContact));
             if (take.Feasible)
             {
-                adjustFrom = basePoint;
+                adjustFrom = basePoint;   // on the bag, at rest (the cover route stops there)
+                adjustVelocity = Vector3d.Zero;
                 adjust = atBag;
                 switchAt = onBag;
             }
-            else take = OnTheFly(InterceptSolver.Solve(flight, adjustFrom, adjust, field, firstContact));
-            if (!take.Feasible)   // the throw does not come to him: he keeps to the bag
-                return new DefensivePlay(fielding, new ThrowPlay(thrower, receiver, target.Value, release, releasePoint, flight, reaches,
-                    new ReceiverPath(toBase, double.PositiveInfinity, toBase), take));
+            else take = OnTheFly(InterceptSolver.Solve(flight, adjustFrom, adjust, field, firstContact, initialVelocity: adjustVelocity));
 
-            // ponytail: the adjust leg starts from rest, so a receiver still running at the switch stops instantly (only off
-            // the bag after a late cover); carry his velocity into the leg if that ever shows.
-            (_, double stop) = RunningLaw.StopTime(adjust, take.RouteDistance);
-            FielderMotion toCatch = switchAt + stop <= take.Time
-                ? new FielderMotion(adjust, adjustFrom, take.FielderTarget, switchAt, true)
-                : new FielderMotion(adjust, adjustFrom, take.FielderTarget, take.Time - RunningLaw.RunThroughTime(adjust, take.RouteDistance), false);
-
+            // To the catch from his position and velocity at the switch: there exactly at the catch (a jog when there is
+            // time), braking after it. The throw does not come to him: he keeps to the bag.
+            ContinuationMotion toCatch = take.Feasible ? new ContinuationMotion(adjust, adjustFrom, adjustVelocity, switchAt, take.FielderTarget, take.Time) : null;
             var path = new ReceiverPath(toBase, switchAt, toCatch);
             return new DefensivePlay(fielding, new ThrowPlay(thrower, receiver, target.Value, release, releasePoint, flight, reaches, path, take));
         }
@@ -423,16 +443,5 @@ namespace Pitchlab.Gameplay.Fielding
 
         public static DefensivePlay Plan(FieldingPlay fielding, Base? target) =>
             Plan(fielding, target, FielderProfile.For, ThrowProfile.For, EnvironmentState.Standard, FieldLayout.Standard);
-
-        /// <summary>Default target for the sandbox loop (no runners yet): none after a catch on the fly; infielders, pitcher
-        /// and catcher to first (the first baseman to second); outfielders to second.</summary>
-        public static Base? DefaultTarget(FieldingPlay fielding)
-        {
-            if (fielding.Outcome != FieldingOutcome.Fielded || fielding.Intercept.Kind == InterceptKind.FlyCatch) return null;
-            DefensivePosition p = fielding.Primary.Value;
-            bool outfield = p == DefensivePosition.LeftField || p == DefensivePosition.CenterField || p == DefensivePosition.RightField;
-            if (p == DefensivePosition.FirstBase) return Base.Second;   // simple: no unassisted-putout logic yet
-            return outfield ? Base.Second : Base.First;
-        }
     }
 }

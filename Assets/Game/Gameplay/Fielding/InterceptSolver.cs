@@ -70,8 +70,10 @@ namespace Pitchlab.Gameplay.Fielding
         /// +∞ otherwise — a ball at rest stays there to be picked up).</param>
         /// <param name="fairBefore">Before this time the fair/foul call is not decided: a take there counts only over fair
         /// ground (touching it over foul ground would make it a dead foul; the defense lets it go).</param>
+        /// <param name="initialVelocity">The defender's velocity when he starts reacting (TASK-006B: a receiver already running
+        /// adjusts without stopping; zero for TASK-005's fielders standing at their positions).</param>
         public static Intercept Solve(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double playableUntil,
-            double fairBefore = double.NegativeInfinity)
+            double fairBefore = double.NegativeInfinity, Vector3d initialVelocity = default)
         {
             double t0 = play.First.Time;
             double rest = play.EndTime;
@@ -82,7 +84,7 @@ namespace Pitchlab.Gameplay.Fielding
             double previous = t0;
             for (double t = t0 + SearchStep; t <= end + 1e-12; t += SearchStep)
             {
-                if (!Feasible(play, start, profile, field, t, fairBefore, out _))
+                if (!Feasible(play, start, profile, field, t, fairBefore, initialVelocity, out _))
                 {
                     previous = t;
                     continue;
@@ -93,7 +95,7 @@ namespace Pitchlab.Gameplay.Fielding
                 for (int i = 0; i < 40; i++)
                 {
                     double mid = 0.5 * (lo + hi);
-                    if (Feasible(play, start, profile, field, mid, fairBefore, out _)) hi = mid;
+                    if (Feasible(play, start, profile, field, mid, fairBefore, initialVelocity, out _)) hi = mid;
                     else lo = mid;
                 }
 
@@ -102,13 +104,13 @@ namespace Pitchlab.Gameplay.Fielding
                 BallState atWhen = play.StateAt(when);
                 if (BeforeFirstContact(play, when) && atWhen.Position.Z > ComfortCatchHeight && atWhen.Velocity.Z < 0.0)
                     for (double c = when + SearchStep; c <= end && BeforeFirstContact(play, c); c += SearchStep)
-                        if (play.StateAt(c).Position.Z <= ComfortCatchHeight && Feasible(play, start, profile, field, c, fairBefore, out _))
+                        if (play.StateAt(c).Position.Z <= ComfortCatchHeight && Feasible(play, start, profile, field, c, fairBefore, initialVelocity, out _))
                         {
                             when = c;
                             break;
                         }
 
-                Feasible(play, start, profile, field, when, fairBefore, out Intercept found);
+                Feasible(play, start, profile, field, when, fairBefore, initialVelocity, out Intercept found);
                 return found;
             }
 
@@ -117,18 +119,28 @@ namespace Pitchlab.Gameplay.Fielding
 
         /// <summary>Can the defender take the ball at ball time <paramref name="t"/>?</summary>
         public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, out Intercept intercept) =>
-            Feasible(play, start, profile, field, t, double.NegativeInfinity, out intercept);
+            Feasible(play, start, profile, field, t, double.NegativeInfinity, default, out intercept);
 
-        public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, double fairBefore, out Intercept intercept)
+        public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, double fairBefore, out Intercept intercept) =>
+            Feasible(play, start, profile, field, t, fairBefore, default, out intercept);
+
+        /// <summary>As above for a defender moving at <paramref name="initialVelocity"/> when he starts reacting: his momentum
+        /// carries him to <see cref="ContinuationMotion.Carried"/> and the route is measured from there (the same law
+        /// <see cref="ContinuationMotion"/> then runs).</summary>
+        public static bool Feasible(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double t, double fairBefore,
+            Vector3d initialVelocity, out Intercept intercept)
         {
             intercept = Intercept.None;
             BallState ball = play.StateAt(t);
             if (ball.Position.Z > profile.CatchHeightMax) return false;
             if (t < fairBefore && !FairFoul.OverFairTerritory(ball.Position)) return false;
-            Vector3d toBall = Ground(ball.Position - start);
+            Vector3d origin = initialVelocity.X == 0.0 && initialVelocity.Y == 0.0
+                ? start
+                : ContinuationMotion.Carried(profile, start, initialVelocity, t - play.First.Time - profile.ReactionTime);
+            Vector3d toBall = Ground(ball.Position - origin);
             double gap = toBall.Length;
             double route = Math.Max(0.0, gap - profile.ReachAt(ball.Position.Z));
-            Vector3d target = gap > 0.0 ? start + toBall * (route / gap) : start;
+            Vector3d target = gap > 0.0 ? origin + toBall * (route / gap) : origin;
             if (!InsidePark(field, target)) return false;
             double arrival = play.First.Time + profile.ReactionTime + RunningLaw.RunThroughTime(profile, route);
             if (arrival > t) return false;

@@ -1,7 +1,9 @@
 using System.Collections;
+using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Gameplay.Rules;
 using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
 using Pitchlab.Simulation.Core;
@@ -428,39 +430,45 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator TheDefensePlaysTheHitAndTheLoopEndsAtTheReceiversCatch()
+        public IEnumerator TheDefensePlaysTheHitAndTheLoopEndsWithTheOut()
         {
-            // TASK-005 in the batting loop: the hit is fielded on the authoritative trajectory, the play is over when a
-            // defender has the ball (not when it would have stopped rolling), and the ball is shown in his glove.
+            // TASK-005 in the batting loop: the hit is fielded on the authoritative trajectory, and the ball is shown in the
+            // glove. TASK-006B: the defense's decision (a throw to first here) makes the out, the banner shows the call, and the
+            // batting loop — which only observes the rules play — ends with it.
             yield return null;
-            // A topped ball (PCI 2 cm over the ball, 4 ms late): a grounder the infield fields.
+            // A topped ball (PCI 2 cm over the ball, on time): a grounder to the shortstop. (4 ms late it goes through to centre
+            // field for a single: no play.)
             HittingPitch pitch = _lab.CurrentPitch;
             _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z + 0.02);
-            Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration + 0.004).IsContact);
+            Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration).IsContact);
             FieldingPlay f = _lab.LastFielding;
             Assert.IsNotNull(f);
             Assert.AreSame(_lab.LastPlay, f.Ball, "fielding uses the same ball the player sees");
             Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome);
+            Assert.AreEqual(DefensivePosition.Shortstop, f.Primary);
             Assert.Less(f.PossessionTime, f.Ball.EndTime, "fielded before it stops");
-            // TASK-006A: the fielder throws to the default base; the play is over when the throw is caught.
-            ThrowPlay th = _lab.LastDefense.Throw;
-            Assert.IsNotNull(th);
-            Assert.AreEqual(ThrowPlanner.DefaultTarget(f), th.Target);
-            Assert.AreEqual(ThrowAssignment.Receiver(th.Target, f.Primary.Value), th.Receiver);
-            Assert.IsTrue(th.Caught, "routine throw is caught");
-            Assert.AreEqual(th.Catch.Time, _lab.PlayEnd, 0.0);
+            DefensiveAction chosen = _lab.LastRules.Chosen;
+            Assert.AreSame(chosen.Play, _lab.LastDefense, "the shown defense is the chosen action");
+            Assert.AreEqual(Base.First, chosen.Target, "a force out at first");
+            Assert.IsTrue(chosen.Retires);
+            PlayEvent outAtFirst = _lab.LastRules.Resolution.Events.Single();
+            Assert.AreEqual(PlayEventKind.ForceOut, outAtFirst.Kind);
+            Assert.AreEqual(chosen.OutTime, outAtFirst.Time, 0.0);
+            Assert.AreEqual(System.Math.Max(outAtFirst.Time, chosen.Play.EndTime), _lab.PlayEnd, 0.0, "the loop ends with the play");
             At(f.PossessionTime + FieldingPlay.SecureTime + 0.02);   // secured (the ball settles into the glove over the secure time)
             Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
             PlayerMannequin holder = _view.Defense.Figure(f.Primary.Value);
             Assert.Less(Vector3.Distance(_lab.BallTransform.position, holder.GloveAnchor.position), 1e-4f, "ball in the glove");
-            At(th.Catch.Time - 0.01);
+            At(outAtFirst.Time - 0.01);
             Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
-            At(th.Catch.Time + FieldingPlay.SecureTime + 0.2);
+            StringAssert.DoesNotContain("OUT AT 1B", _view.Banner, "no call before the out");
+            At(_lab.PlayEnd + FieldingPlay.SecureTime + 0.2);
             Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
-            PlayerMannequin receiver = _view.Defense.Figure(th.Receiver);
-            Assert.Less(Vector3.Distance(_lab.BallTransform.position, receiver.GloveAnchor.position), 1e-4f, "ball in the receiver's glove");
+            PlayerMannequin actor = _view.Defense.Figure(chosen.Actor);
+            Assert.Less(Vector3.Distance(_lab.BallTransform.position, actor.GloveAnchor.position), 1e-4f, "ball in the glove of the defender who made the out");
             StringAssert.Contains($"by {HittingLabPresentation.Abbreviation(f.Primary.Value)}", _view.Banner);
-            StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target)} ✓", _view.Banner);
+            if (chosen.Play.Throw is ThrowPlay th) StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target)} ✓", _view.Banner);
+            StringAssert.Contains("OUT AT 1B", _view.Banner);
             Assert.IsTrue(_camera.IsFollowing);
         }
     }
