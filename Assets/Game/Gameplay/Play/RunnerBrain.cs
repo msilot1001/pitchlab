@@ -36,6 +36,9 @@ namespace Pitchlab.Gameplay.Play
                 {
                     if (outs == 2) return new LivePlay.Intent(LivePlay.IntentKind.Go, r.Id.Next, true);   // run on contact
                     if (play.CatchHang < LivePlay.LineDriveHang) return new LivePlay.Intent(LivePlay.IntentKind.Freeze, r.Id.From);
+                    // A pop-up an infielder takes: the throw back to any base is short, so runners go back to the bag while it
+                    // hangs (coaching convention, ASSUMED; the infield fly rule itself is not modelled).
+                    if (!DefensiveDecision.IsOutfielder(play.Fielding.Primary.Value)) return new LivePlay.Intent(LivePlay.IntentKind.Return, r.Id.From);
                     double depth = play.Fielding.Intercept.Ball.Position.Length;
                     if (r.Id.From == Base.Third && depth > TagUpFly || r.Id.From == Base.Second && depth > DeepFly)
                         return new LivePlay.Intent(LivePlay.IntentKind.TagUp, r.Id.From);

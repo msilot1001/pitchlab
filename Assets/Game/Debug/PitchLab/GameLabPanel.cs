@@ -7,14 +7,21 @@ using UnityEngine.InputSystem;
 namespace Pitchlab.Sandbox
 {
     /// <summary>
-    /// GameLab (TASK-010): the game state line (inning, outs, bases, score, plate appearance) and the Situation Editor —
-    /// outs, runners, inning, half, score, presets, Start / Reset PA. The editor works only between plays (G toggles it; Esc
-    /// frees the mouse to click it).
+    /// GameLab (TASK-010): the Situation Editor, a development tool — outs, runners, inning, half, score, presets, Start /
+    /// Reset PA. It works only between plays (G toggles it; Esc frees the mouse to click it). The game itself is shown by
+    /// the <see cref="GameHud"/> (TASK-015), which this panel adds.
     /// </summary>
     public sealed class GameLabPanel : MonoBehaviour
     {
         [SerializeField] private HittingLabController _lab;
-        [SerializeField] private bool _showEditor = true;
+        [SerializeField] private bool _showEditor;
+
+        private void Awake()
+        {
+            GameHud hud = GetComponent<GameHud>();
+            if (hud == null) hud = gameObject.AddComponent<GameHud>();
+            if (_lab != null) hud.Lab = _lab;
+        }
 
         private void OnEnable()
         {
@@ -26,15 +33,8 @@ namespace Pitchlab.Sandbox
             if (_lab != null) _lab.ClickBlocked = null;
         }
 
-        /// <summary>The panel's screen area (GUI coordinates, origin top-left): everything the panel draws (state box, and the editor below it when open): clicks there are not swings.</summary>
-        private Rect PanelRect
-        {
-            get
-            {
-                float state = 66f + 18f * (_lab.Game?.Current.Pitches.Count ?? 0);
-                return new Rect(Screen.width - 330, 10, 320, state + (_showEditor ? 336f : 0f));
-            }
-        }
+        /// <summary>The editor's screen area when open (GUI coordinates, origin top-left): clicks there are not swings.</summary>
+        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 336) : Rect.zero;
 
         private void Update()
         {
@@ -45,16 +45,10 @@ namespace Pitchlab.Sandbox
         {
             GameState game = _lab != null ? _lab.Game : null;
             if (game == null) return;
-            PlateAppearance pa = game.Current;
-            var state = new Rect(Screen.width - 330, 10, 320, 66 + 18 * pa.Pitches.Count);
-            GUI.Box(state, GUIContent.none);
-            GUI.Label(new Rect(state.x + 8, state.y + 4, 310, 20), $"{game.HalfName} {game.Inning}   {game.Outs} out   {Bases(game.Bases)}   PA {game.CompletedPlateAppearances + 1}   {game.Count.Balls}-{game.Count.Strikes}");
-            GUI.Label(new Rect(state.x + 8, state.y + 24, 310, 20), $"Away {game.AwayScore} – Home {game.HomeScore}   {(_lab.EditorLocked ? "live" : "ready")}   {End(game)}G editor");
-            GUI.Label(new Rect(state.x + 8, state.y + 44, 310, 20), $"{pa.Team} #{pa.Slot} {pa.Batter.Name} ({(pa.Batter.Bats == BatterSide.Left ? "L" : "R")})");
-            for (int i = 0; i < pa.Pitches.Count; i++) GUI.Label(new Rect(state.x + 16, state.y + 62 + 18 * i, 300, 20), pa.Pitches[i].ToString());
             if (!_showEditor) return;
 
-            GUILayout.BeginArea(new Rect(Screen.width - 330, state.yMax + 6, 320, 330), GUI.skin.box);
+            GUILayout.BeginArea(PanelRect, GUI.skin.box);
+            GUILayout.Label($"Situation editor (G)  ·  {(_lab.EditorLocked ? "locked: live" : "ready")}");
             GUI.enabled = !_lab.EditorLocked;
             int inning = game.Inning, outs = game.Outs, away = game.AwayScore, home = game.HomeScore;
             Half half = game.Half;
@@ -107,17 +101,5 @@ namespace Pitchlab.Sandbox
             for (int i = Mathf.Max(0, game.Log.Count - 3); i < game.Log.Count; i++) GUILayout.Label(game.Log[i]);
             GUILayout.EndArea();
         }
-
-        /// <summary>The last plate appearance's walk or strikeout, until the next batter's first pitch (read from the game, so
-        /// a RESET PA or an edit never leaves a stale call up).</summary>
-        private static string End(GameState g)
-        {
-            if (g.CompletedPlateAppearances == 0 || g.Current.Pitches.Count > 0) return string.Empty;
-            PlateAppearanceEnd e = g.Completed[g.CompletedPlateAppearances - 1].End;
-            return e == PlateAppearanceEnd.Walk ? "WALK   " : e == PlateAppearanceEnd.Strikeout ? "STRIKEOUT   " : string.Empty;
-        }
-
-        private static string Bases(BaseOccupancy b) =>
-            b.First || b.Second || b.Third ? $"{(b.Third ? "3" : "-")}{(b.Second ? "2" : "-")}{(b.First ? "1" : "-")}" : "empty";
     }
 }
