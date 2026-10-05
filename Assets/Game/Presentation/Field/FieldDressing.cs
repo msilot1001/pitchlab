@@ -42,10 +42,12 @@ namespace Pitchlab.Presentation
             Material faint = PresentationMaterials.Get(new Color(0.45f, 0.62f, 0.42f), unlit: true);
             foreach (float feet in new[] { 200f, 300f, 400f }) Arc(feet * Ft, faint);
 
-            // Bases at the corners of the diamond (second base on the +Z axis).
-            Box("FirstBase", chalk, new Vector3(baseDistance / Mathf.Sqrt(2f), 0.03f, baseDistance / Mathf.Sqrt(2f)), new Vector3(0.38f, 0.06f, 0.38f), 45f);
-            Box("SecondBase", chalk, new Vector3(0f, 0.03f, diagonal), new Vector3(0.38f, 0.06f, 0.38f), 45f);
-            Box("ThirdBase", chalk, new Vector3(-baseDistance / Mathf.Sqrt(2f), 0.03f, baseDistance / Mathf.Sqrt(2f)), new Vector3(0.38f, 0.06f, 0.38f), 45f);
+            // Bases (regulation, as Simulation's FieldLayout.BasePosition): first and third inside fair territory with their
+            // outer corners 90 ft along the lines; second centred 127 ft 3⅜ in from the plate's rear point.
+            float bag = 18f * 0.0254f, s = Mathf.Sqrt(0.5f), along = s * (baseDistance - bag / 2f), across = s * bag / 2f;
+            Box("FirstBase", chalk, new Vector3(along - across, 0.03f, along + across), new Vector3(bag, 0.06f, bag), 45f);
+            Box("SecondBase", chalk, new Vector3(0f, 0.03f, (127f + 3.375f / 12f) * Ft), new Vector3(bag, 0.06f, bag), 45f);
+            Box("ThirdBase", chalk, new Vector3(-(along - across), 0.03f, along + across), new Vector3(bag, 0.06f, bag), 45f);
             // Batter's boxes: 4 ft × 6 ft outlines, 6 in from the plate, centred on the plate's middle.
             for (int side = -1; side <= 1; side += 2)
             {

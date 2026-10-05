@@ -96,4 +96,11 @@ Each call records its basis and the decisive state. `FairFoulTests` covers synth
 - **Input:** the authoritative `BallInPlay` only.
 - **Output:** a play that is a pure function of time: every defender's motion, the primary's intercept, possession, and the fielder-aware call.
 - **Presentation:** the Sandbox `DefenseView` and the Presentation `FieldingPoser` read it and never write it.
-- **HittingLab:** the controller solves the defense at contact. The ball follows `FieldingPlay.BallPositionAt`, and the batting loop's play ends at possession.
+- **HittingLab:** the controller solves the defense at contact, then plans the default throw. The ball follows `DefensivePlay.BallPositionAt`, and the batting loop's play ends at `DefensivePlay.EndTime`.
+
+## Throwing (TASK-006A)
+`DefensivePlay` (Gameplay) is the fielding play plus an optional `ThrowPlay`:
+- **Base positions:** they come from `FieldLayout.BasePosition` (Simulation).
+- **Flight:** the throw is a `BallInPlay`, the same simulator as the hit.
+- **Authority:** an explicit authority timeline: FreeBall, Possessed or Thrown.
+- **Presentation:** it reads the play and never writes it.

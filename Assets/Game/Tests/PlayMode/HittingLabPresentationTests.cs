@@ -428,7 +428,7 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator TheDefensePlaysTheHitAndTheLoopEndsAtPossession()
+        public IEnumerator TheDefensePlaysTheHitAndTheLoopEndsAtTheReceiversCatch()
         {
             // TASK-005 in the batting loop: the hit is fielded on the authoritative trajectory, the play is over when a
             // defender has the ball (not when it would have stopped rolling), and the ball is shown in his glove.
@@ -442,14 +442,25 @@ namespace Pitchlab.Tests
             Assert.AreSame(_lab.LastPlay, f.Ball, "fielding uses the same ball the player sees");
             Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome);
             Assert.Less(f.PossessionTime, f.Ball.EndTime, "fielded before it stops");
-            Assert.AreEqual(f.EndTime, _lab.PlayEnd, 0.0);
-            At(f.PossessionTime - 0.01);
+            // TASK-006A: the fielder throws to the default base; the play is over when the throw is caught.
+            ThrowPlay th = _lab.LastDefense.Throw;
+            Assert.IsNotNull(th);
+            Assert.AreEqual(ThrowPlanner.DefaultTarget(f), th.Target);
+            Assert.AreEqual(ThrowAssignment.Receiver(th.Target, f.Primary.Value), th.Receiver);
+            Assert.IsTrue(th.Caught, "routine throw is caught");
+            Assert.AreEqual(th.Catch.Time, _lab.PlayEnd, 0.0);
+            At(f.PossessionTime + FieldingPlay.SecureTime + 0.02);   // secured (the ball settles into the glove over the secure time)
             Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
-            At(f.PossessionTime + FieldingPlay.SecureTime + 0.2);   // secured (the ball settles into the glove over the secure time)
-            Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
             PlayerMannequin holder = _view.Defense.Figure(f.Primary.Value);
             Assert.Less(Vector3.Distance(_lab.BallTransform.position, holder.GloveAnchor.position), 1e-4f, "ball in the glove");
+            At(th.Catch.Time - 0.01);
+            Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
+            At(th.Catch.Time + FieldingPlay.SecureTime + 0.2);
+            Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
+            PlayerMannequin receiver = _view.Defense.Figure(th.Receiver);
+            Assert.Less(Vector3.Distance(_lab.BallTransform.position, receiver.GloveAnchor.position), 1e-4f, "ball in the receiver's glove");
             StringAssert.Contains($"by {HittingLabPresentation.Abbreviation(f.Primary.Value)}", _view.Banner);
+            StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target)} ✓", _view.Banner);
             Assert.IsTrue(_camera.IsFollowing);
         }
     }

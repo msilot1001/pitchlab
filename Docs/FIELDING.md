@@ -106,3 +106,54 @@ These are generic positions, not a specific park.
   - When starting from rest or braking, the stance foot slides at about (1 − run) of the speed. The run cycle is skate-free only at running speed.
   - In the HittingLab the camera frames the fielder one frame late (its LateUpdate runs first).
 - **FieldingLab** (`Assets/Scenes/FieldingLab.unity`): ten presets on the production pipeline, at 1× and 0.5×.
+
+## Throwing (TASK-006A, `Gameplay/Fielding/Throwing.cs`)
+After a defender's possession he throws to a base and the receiver catches it; there are no runners and no outs.
+- **Bases:** `FieldLayout.BasePosition(Base)` uses the regulation geometry:
+  - 18 in bags (OBR 2.03, since 2023);
+  - first and third bags inside fair territory, with the outer corner 90 ft along the line;
+  - second centred at 127′3⅜″;
+  - home at the plate's centre.
+  `FieldDressing` draws the bags with the same geometry, and a PlayMode test pins them together.
+- **Ball authority:** exactly one at every instant (`DefensivePlay.AuthorityAt`):
+  - FreeBall (the hit), then Possessed (fielder);
+  - then Thrown (release to catch), then Possessed (receiver);
+  - or, if the throw is missed, FreeBall from its first ground or wall contact.
+  `HolderAt` is non-null exactly while the ball is possessed. `BallPositionAt` is continuous across every hand-over.
+- **Throw profile (`ThrowProfile.For`):**
+  - Speed is 0.85 × Statcast 2026 league-average arm strength: 1B 79.3, 2B 79.1, 3B 84.9, SS 86.1, LF 87.4, CF 89.6, RF 90.7 mph (MEASURED). C ~81 mph (REPORTED). P 85 mph (ASSUMED). The 0.85 routine factor is ASSUMED, since the leaderboard averages the hardest throws.
+  - Transfer (possession → release): infield 0.70 s, outfield 1.00 s, C 0.735 s (REPORTED/DERIVED).
+  - Release height is 1.8 m (REPORTED, THT bounce-throw models). The release point is 0.3 m toward the target and 0.25 m to the throwing side.
+- **Flight:** `BallInPlaySimulation` with the pitch aerodynamic model and 20 rpm/mph of backspin (REPORTED/DERIVED, THT). This is the validated simulator, not a Rigidbody, so a missed throw bounces and rolls on the same field physics.
+- **Initial conditions (`ThrowSolver`):** speed and release point are given.
+  - A coarse scan over −15°…40° finds the highest-reaching arc. With drag that is about 35° near the maximum range, not 40°.
+  - Bisection between −15° and that arc gives the flat solution through the target (±2 cm, EditMode test).
+  - If no elevation reaches the target, the throw takes the highest-reaching arc and falls short.
+- **Target:** the receiver's chest over the bag (1.3 m, ASSUMED).
+- **Receivers (`ThrowAssignment`):**
+  - 1B covers first; the 2B does when the 1B throws.
+  - The SS covers second; the 2B does when the SS throws.
+  - The 3B covers third; the SS does when the 3B throws.
+  - The C covers home; the P does when the C throws.
+- **Receiver motion:**
+  - He breaks for the bag at contact plus his reaction, using the TASK-005 running law.
+  - On the bag, a throw passing within his reach (where it passes closest to the bag) is taken without leaving the bag. In every test scenario the receiver catches on the bag.
+  - Otherwise he steps from the bag with the TASK-005 intercept solver, or adjusts from where he is 0.1 s after the release (ASSUMED).
+    - Limitation: this leg starts from rest, so a receiver still running after a late cover stops instantly.
+  - If the throw cannot be reached, he carries on to the bag.
+  - A throw is caught only on the fly, before its first contact.
+- **Holding for the cover:** if the receiver would not be on the bag when the throw passes it, the thrower releases later by the difference. This is repeated up to 4 times, to 1 ms, because a thrower still sliding changes the throw's length. Example: a pitcher's chopper to first holds ~0.5 s.
+- **Missed throws:** a throw nobody reaches stays a free ball on its own trajectory. It is never snapped into a glove.
+- **Play end:** the receiver's catch, or a missed throw at rest. `DefensivePlay.EndTime` ends the batting loop.
+- **Default target (sandbox, no runners):**
+  - none after a catch on the fly;
+  - infielders, P and C throw to first; the 1B throws to second (no unassisted put-outs yet);
+  - outfielders throw to second.
+- **Presentation:**
+  - The ball is held in the glove until the arm action (the last 0.35 s before release).
+  - The throwing hand carries the authoritative ball to the release point, then follows through. The thrower faces the target base.
+  - The receiver's glove meets the authoritative catch, then holds the ball.
+  - Measured: the ball is 2–9 cm from the throwing hand at release and 8 cm from the receiver's glove at the catch, across every FieldingLab throw preset (PlayMode test limits: 15 cm / 20 cm).
+  - After the release, the camera follows the receiver.
+- **FieldingLab controls:** Z / X / C / V throw to 1B / 2B / 3B / home; N means no throw; B uses the preset's own target. ←/→ reach the throwing presets (11–14).
+- **Not modelled:** left-handed throwers (all release on the right), wind in the aim, spin tilt, cut-offs and relays (the outfield throws are single long throws), bounce throws aimed on purpose, throwing errors, runners, tags and force outs.
