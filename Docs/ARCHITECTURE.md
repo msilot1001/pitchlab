@@ -104,3 +104,14 @@ Each call records its basis and the decisive state. `FairFoulTests` covers synth
 - **Flight:** the throw is a `BallInPlay`, the same simulator as the hit.
 - **Authority:** an explicit authority timeline: FreeBall, Possessed or Thrown.
 - **Presentation:** it reads the play and never writes it.
+
+## Rules (TASK-006B)
+`Gameplay/Rules` turns a `FieldingPlay` and the bases occupied before it into a `RulesPlay` (see Docs/RULES.md). A `RulesPlay` holds:
+- candidate defensive actions;
+- the chosen action, whose `DefensivePlay` is what happens;
+- a `PlayResolution`: chronological FlyOut / ForceOut / TagOut / Safe events and the out count.
+
+How the parts depend on it:
+- **Runner timing:** it sits behind `IRunnerTiming` (a placeholder that TASK-007's locomotion replaces).
+- **Labs:** they render and observe the play.
+- **Batting state machine:** it sees only the play's end time.

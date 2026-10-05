@@ -1,5 +1,6 @@
 using System;
 using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
 using Pitchlab.Simulation.Batting;
@@ -250,10 +251,11 @@ namespace Pitchlab.Sandbox
             if (_lab.LastDefense?.Throw is ThrowPlay th && t >= th.ReleaseTime)
                 line += $" · throw to {Abbreviation(th.Target)}{(th.Caught ? t >= th.Catch.Time ? " ✓" : "" : t >= th.FirstContactTime ? " — not caught" : "")}";
             if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime && t < possession) line += " · ground-rule double";
+            if (_lab.LastRules is RulesPlay rules && RulesText.Latest(rules, t) is string calls && calls.Length > 0) line += $" · {calls}";
             return line;
         }
 
-        public static string Abbreviation(Base b) => b switch { Base.First => "1B", Base.Second => "2B", Base.Third => "3B", _ => "home" };
+        public static string Abbreviation(Base b) => Bases.Name(b);
 
         public static string Abbreviation(DefensivePosition p) => p switch
         {

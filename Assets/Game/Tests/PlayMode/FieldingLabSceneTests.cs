@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Gameplay.Rules;
 using Pitchlab.Presentation;
 using Pitchlab.Simulation.Field;
 using Pitchlab.Sandbox;
@@ -13,7 +15,8 @@ namespace Pitchlab.Tests
     /// <summary>
     /// Fielding Lab (TASK-005) on the production pipeline: the shown defenders follow gameplay, the glove meets the ball at
     /// the authoritative moment, the ball sits in the glove afterwards, nobody else chases, rendering does not depend on the
-    /// frame cadence, and a replay starts clean.
+    /// frame cadence, and a replay starts clean; (TASK-006B) the rules scenarios show the right call at the authoritative
+    /// moment, the unassisted put-out is a carry onto the bag with no throw, and every out is counted once.
     /// </summary>
     public class FieldingLabSceneTests
     {
@@ -86,7 +89,7 @@ namespace Pitchlab.Tests
         public IEnumerator OnlyThePrimaryAndTheReceiverLeaveTheirPositions()
         {
             yield return null;
-            FieldingPlay f = Launch(0);   // SS grounder, thrown to first: the first baseman covers the bag
+            FieldingPlay f = Launch(FieldingLabController.IndexOf("SS routine grounder: out at 1B"));   // thrown to first: the first baseman covers the bag
             DefensivePosition receiver = _lab.DefensivePlay.Throw.Receiver;
             Assert.AreEqual(DefensivePosition.FirstBase, receiver);
             At(f.Intercept.Time - f.Ball.First.Time);
@@ -122,14 +125,15 @@ namespace Pitchlab.Tests
             // the authoritative flight after it, meets the receiver's glove at the authoritative catch and stays there.
             yield return null;
             var log = new System.Text.StringBuilder();
+            int throws = 0;
             for (int k = 0; k < FieldingLabController.Presets.Length; k++)
             {
-                if (FieldingLabController.Presets[k].Throw == null) continue;
                 FieldingPlay f = Launch(k);
                 DefensivePlay d = _lab.DefensivePlay;
                 ThrowPlay th = d.Throw;
                 string name = FieldingLabController.Presets[k].Name;
-                Assert.IsNotNull(th, name);
+                if (th == null) continue;   // no throw chosen (fly out, unassisted put-out, hold)
+                throws++;
                 double t0 = f.Ball.First.Time;
                 PlayerMannequin thrower = _lab.Defense.Figure(th.Thrower), receiver = _lab.Defense.Figure(th.Receiver);
 
@@ -152,6 +156,7 @@ namespace Pitchlab.Tests
                 log.AppendLine($"{name}: hand {hand:0.000} m, receiver glove {glove:0.000} m");
             }
 
+            Assert.GreaterOrEqual(throws, 12, "the decision throws on most presets");
             TestContext.WriteLine(log.ToString());
         }
 
@@ -161,11 +166,12 @@ namespace Pitchlab.Tests
             yield return null;
             var results = new System.Collections.Generic.List<(Vector3 Ball, Vector3 Fielder, Vector3 Glove)>();
             foreach (double step in new[] { 0.0, 1.0 / 30.0, 1.0 / 144.0 })
-            foreach (int preset in new[] { 5, 10 })   // a fly ball; a throw (3B → 1B) sampled while the receiver secures it
-            {
-                FieldingPlay f = Launch(preset);
+            foreach (string preset in new[] { "Routine fly: fly out", "3B grounder", "1B grounder: unassisted" })   // a catch; a throw (3B → 1B)
+            {                                                                                                 // while the receiver secures it; a carry to the bag
+                FieldingPlay f = Launch(FieldingLabController.IndexOf(preset));
                 ThrowPlay th = _lab.DefensivePlay.Throw;
-                double target = (th != null ? th.Catch.Time : f.Intercept.Time) - f.Ball.First.Time + 0.15;
+                ContinuationMotion carry = _lab.DefensivePlay.Carry;
+                double target = (th != null ? th.Catch.Time : carry != null ? carry.ArrivalTime - 0.1 : f.Intercept.Time) - f.Ball.First.Time + 0.15;
                 if (step > 0.0)
                     for (double t = 0.0; t < target; t += step) At(t);
                 At(target);
@@ -173,23 +179,99 @@ namespace Pitchlab.Tests
                 results.Add((_lab.Ball.position, shown.transform.position, shown.GloveAnchor.position));
             }
 
-            for (int i = 2; i < results.Count; i++)
+            for (int i = 3; i < results.Count; i++)
             {
-                Assert.Less(Vector3.Distance(results[i % 2].Ball, results[i].Ball), 1e-4f, $"ball, run {i}");
-                Assert.Less(Vector3.Distance(results[i % 2].Fielder, results[i].Fielder), 1e-4f, $"fielder, run {i}");
-                Assert.Less(Vector3.Distance(results[i % 2].Glove, results[i].Glove), 1e-4f, $"glove, run {i}");
+                Assert.Less(Vector3.Distance(results[i % 3].Ball, results[i].Ball), 1e-4f, $"ball, run {i}");
+                Assert.Less(Vector3.Distance(results[i % 3].Fielder, results[i].Fielder), 1e-4f, $"fielder, run {i}");
+                Assert.Less(Vector3.Distance(results[i % 3].Glove, results[i].Glove), 1e-4f, $"glove, run {i}");
             }
+        }
+
+        [UnityTest]
+        public IEnumerator RulesScenariosShowTheCallAtTheAuthoritativeMoment()
+        {
+            yield return null;
+            var expected = new (string Scenario, string Call)[]
+            {
+                ("SS routine grounder: out at 1B", "OUT AT 1B"),
+                ("1B grounder: unassisted", "OUT AT 1B"),
+                ("1B ranges right: safe at 1B", "SAFE AT 1B"),
+                ("Runner on 1B, grounder to SS", "OUT AT 2B"),
+                ("Runner on 1B, grounder to 2B", "OUT AT 1B"),
+                ("Bases loaded, grounder to 3B", "OUT AT 3B"),
+                ("Routine fly: fly out", "FLY OUT"),
+                ("Runner on 2B runs: tag at 3B", "OUT AT 3B (tag)"),
+            };
+            foreach (var (scenario, call) in expected)
+            {
+                FieldingPlay f = Launch(FieldingLabController.IndexOf(scenario));
+                PlayEvent e = _lab.Rules.Resolution.Events.First(x => RulesText.IsCall(_lab.Rules, x));
+                double t0 = f.Ball.First.Time;
+                At(e.Time - t0 - 1e-4);
+                Assert.AreEqual("", _lab.ResultText, $"{scenario}: no call before the event");
+                At(e.Time - t0 + 1e-4);
+                Assert.AreEqual(call, _lab.ResultText, scenario);
+                At(_lab.Rules.Resolution.EndTime - t0 + 5.0);
+                Assert.AreEqual(call.StartsWith("SAFE") ? 0 : 1, _lab.Rules.Resolution.OutsAt(_lab.Rules.Resolution.EndTime + 5.0), $"{scenario}: outs counted once");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UnassistedPutOutCarriesTheBallOntoTheBag()
+        {
+            yield return null;
+            FieldingPlay f = Launch(FieldingLabController.IndexOf("1B grounder: unassisted"));
+            Assert.IsNull(_lab.DefensivePlay.Throw, "no throw");
+            Assert.IsNotNull(_lab.DefensivePlay.Carry, "he runs it to the bag");
+            PlayEvent e = _lab.Rules.Resolution.Events.Single();
+            double t0 = f.Ball.First.Time;
+            At(e.Time - t0);
+            PlayerMannequin first = _lab.Defense.Figure(DefensivePosition.FirstBase);
+            Vector3 bag = Flat(SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.First)));
+            Assert.LessOrEqual(Vector3.Distance(Flat(first.transform.position), bag), (float)BaseTouch.Radius + 1e-3f, "shown on the bag at the out");
+            Assert.Less(Vector3.Distance(_lab.Ball.position, first.GloveAnchor.position), 1e-4f, "with the ball");
+            Assert.AreSame(first.transform, _lab.Defense.Focus, "camera keeps the fielder");
+            // Shown position follows the authoritative carry the whole way (no snap at the take).
+            for (double t = f.PossessionTime - 0.2; t < e.Time + 0.5; t += 0.05)
+            {
+                At(t - t0);
+                Vector3 gameplay = SimulationSpace.ToUnity(_lab.DefensivePlay.FielderPositionAt(DefensivePosition.FirstBase, t));
+                Assert.Less(Vector3.Distance(Flat(first.transform.position), Flat(gameplay)), 1e-4f, $"+{t - t0:0.00}");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator SwitchingScenarioDropsADebugOverride()
+        {
+            yield return null;
+            int sc = FieldingLabController.IndexOf("SS routine grounder: out at 1B");
+            _lab.UseOverride = true;
+            _lab.TargetOverride = Base.Home;
+            Launch(sc);
+            Assert.AreEqual("override", _lab.Rules.Reason);
+            Assert.AreEqual(Base.Home, _lab.Rules.Chosen.Target);
+            _now += 100.0;
+            _launch = _now;
+            _lab.SelectScenario(sc);
+            Assert.AreEqual("earliest force out", _lab.Rules.Reason, "a new scenario is the defense's own decision");
+            Assert.AreEqual(Base.First, _lab.Rules.Chosen.Target);
         }
 
         [UnityTest]
         public IEnumerator ReplayStartsClean()
         {
             yield return null;
-            FieldingPlay first = Launch(0);
+            int sc = FieldingLabController.IndexOf("SS routine grounder: out at 1B");
+            FieldingPlay first = Launch(sc);
             At(_lab.DefensivePlay.Throw.Catch.Time - first.Ball.First.Time + 0.5);   // after the throw has been caught
-            FieldingPlay again = Launch(0);
+            Assert.AreEqual("OUT AT 1B", _lab.ResultText);
+            RulesPlay rules = _lab.Rules;
+            FieldingPlay again = Launch(sc);
             Assert.AreNotSame(first, again);
+            Assert.AreNotSame(rules, _lab.Rules, "a new play has its own rules state");
             At(0.0);
+            Assert.AreEqual("", _lab.ResultText, "no call carried over");
+            Assert.AreEqual(0, _lab.Rules.Resolution.OutsAt(again.Ball.First.Time));
             Assert.AreEqual(BallAuthority.FreeBall, _lab.DefensivePlay.AuthorityAt(again.Ball.First.Time));
             Vector3 contact = SimulationSpace.ToUnity(FieldingLabController.ContactPoint);
             Assert.Less(Vector3.Distance(_lab.Ball.position, contact), 1e-3f, "ball back at the plate");

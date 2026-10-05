@@ -264,20 +264,6 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void DefaultTargets()
-        {
-            Assert.AreEqual(Base.First, ThrowPlanner.DefaultTarget(Field(85.0, -8.0, -15.0, -1000.0)), "SS grounder → first");
-            Assert.AreEqual(Base.First, ThrowPlanner.DefaultTarget(Field(60.0, -20.0, 5.0, -800.0)), "pitcher → first");
-            Assert.AreEqual(Base.Second, ThrowPlanner.DefaultTarget(Field(98.0, 9.0, -24.0, 900.0)), "LF single → second");
-            FieldingPlay first = Field(80.0, -8.0, 38.0, -900.0);
-            Assert.AreEqual(DefensivePosition.FirstBase, first.Primary);
-            Assert.AreEqual(Base.Second, ThrowPlanner.DefaultTarget(first), "1B → second (no unassisted put-outs yet)");
-            FieldingPlay fly = Field(92.0, 32.0, 0.0, 2400.0);
-            Assert.AreEqual(InterceptKind.FlyCatch, fly.Intercept.Kind);
-            Assert.IsNull(ThrowPlanner.DefaultTarget(fly), "no throw after a catch on the fly");
-        }
-
-        [Test]
         public void FirstBasemanThrowsToTheSecondBasemanCoveringFirst()
         {
             // 1B ranges to his right; the 2B covers first and takes the throw there.
@@ -293,7 +279,6 @@ namespace Pitchlab.Tests
         {
             FieldingPlay homeRun = Field(110.0, 28.0, 0.0, 2200.0);
             Assert.AreEqual(FieldingOutcome.OutOfPlay, homeRun.Outcome);
-            Assert.IsNull(ThrowPlanner.DefaultTarget(homeRun));
             DefensivePlay play = ThrowPlanner.Plan(homeRun, Base.Second);
             Assert.IsNull(play.Throw);
             Assert.AreEqual(homeRun.EndTime, play.EndTime, 0.0);
