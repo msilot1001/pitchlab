@@ -72,32 +72,76 @@ namespace Pitchlab.Gameplay.Fielding
             var sim = new BallFlightSimulator(BallProperties.Baseball, environment, Aerodynamics);
             double Error(double elevation) => HeightAt(sim, State(release, dir, speed, elevation, releaseTime), dir, distance) - target.Z;
 
-            // The best arc (highest at the target distance) brackets the flat solution: Error rises from lo up to it.
-            double hi = MaxElevation, best = double.NegativeInfinity;
-            for (int k = 0; k <= 11; k++)
+            // Bracket the flat (rising-branch) solution cheaply: Error rises from MinElevation to the best arc (≈ 30–40°), so the
+            // first of 10°, 25°, 40° that reaches the target closes a bracket whose lower end is below it.
+            double lo = MinElevation, hi = double.NaN, eHi = double.NaN, eLo = double.NaN;
+            foreach (double e in new[] { 10.0, 25.0, MaxElevation })
             {
-                double e = MinElevation + k * (MaxElevation - MinElevation) / 11.0, err = Error(e);
-                if (err > best)
+                double err = Error(e);
+                if (err >= 0.0)
                 {
-                    best = err;
                     hi = e;
+                    eHi = err;
+                    break;
                 }
+
+                lo = e;
+                eLo = err;
             }
 
-            double lo = MinElevation;
-            reaches = best >= 0.0;
-            if (!reaches) return State(release, dir, speed, hi, releaseTime);
-            if (Error(lo) > 0.0)
+            if (double.IsNaN(hi))
+            {
+                // Rare (near or beyond the maximum range): scan for the highest-reaching arc, which brackets the flat
+                // solution from above if the target is reachable at all.
+                double best = double.NegativeInfinity, bestAt = MaxElevation;
+                for (int k = 0; k <= 11; k++)
+                {
+                    double e = MinElevation + k * (MaxElevation - MinElevation) / 11.0, err = Error(e);
+                    if (err > best)
+                    {
+                        best = err;
+                        bestAt = e;
+                    }
+                }
+
+                reaches = best >= 0.0;
+                if (!reaches) return State(release, dir, speed, bestAt, releaseTime);
+                lo = MinElevation;
+                eLo = double.NaN;
+                hi = bestAt;
+                eHi = best;
+            }
+
+            if (double.IsNaN(eLo)) eLo = Error(lo);
+            reaches = true;
+            if (eLo > 0.0)
             {
                 reaches = false;   // so close below the release that even the lowest throw passes over the target
                 return State(release, dir, speed, lo, releaseTime);
             }
 
-            for (int i = 0; i < 30; i++)   // 55° / 2^30 ≈ 5e-8°
+            // Illinois regula falsi on [lo, hi] (bisection while an end is −∞: the throw landed short); deterministic, a few
+            // flight integrations instead of thirty.
+            int side = 0;
+            for (int i = 0; i < 60 && hi - lo > 1e-9 && eHi > 1e-9; i++)
             {
-                double mid = 0.5 * (lo + hi);
-                if (Error(mid) < 0.0) lo = mid;
-                else hi = mid;
+                double mid = double.IsInfinity(eLo) ? 0.5 * (lo + hi) : (lo * eHi - hi * eLo) / (eHi - eLo);
+                if (!(mid > lo && mid < hi)) mid = 0.5 * (lo + hi);
+                double eMid = Error(mid);
+                if (eMid < 0.0)
+                {
+                    lo = mid;
+                    eLo = eMid;
+                    if (side == -1 && !double.IsInfinity(eHi)) eHi *= 0.5;
+                    side = -1;
+                }
+                else
+                {
+                    hi = mid;
+                    eHi = eMid;
+                    if (side == 1 && !double.IsInfinity(eLo)) eLo *= 0.5;
+                    side = 1;
+                }
             }
 
             return State(release, dir, speed, hi, releaseTime);
@@ -111,20 +155,47 @@ namespace Pitchlab.Gameplay.Fielding
             return new BallState(time, release, v, spin);
         }
 
-        /// <summary>Ball height when it has covered <paramref name="distance"/> horizontally along <paramref name="dir"/> (−∞ if it lands first).</summary>
+        /// <summary>
+        /// Ball height when it has covered <paramref name="distance"/> horizontally along <paramref name="dir"/> (−∞ if it lands
+        /// first). The simulator's own fixed steps (<see cref="BallFlightSimulator.Step"/>, times from the step index, the
+        /// ground contact located inside its step by bisection, as <see cref="BallFlightSimulator.Simulate"/> does), stopping
+        /// as soon as the distance is passed and recording nothing — the same numbers without the sample list.
+        /// </summary>
         private static double HeightAt(BallFlightSimulator sim, BallState start, Vector3d dir, double distance)
         {
-            TrajectoryResult flight = sim.Simulate(start, new FlightLimits(double.NegativeInfinity, 0.0, 10.0));
+            double radius = sim.Ball.Radius, dt = sim.TimeStep, end = start.Time + 10.0;
             double Along(BallState s) => Vector3d.Dot(s.Position - start.Position, dir);
-            for (int i = 1; i < flight.Samples.Count; i++)
+            if (start.Position.Z - radius <= 0.0) return double.NegativeInfinity;
+            BallState current = start;
+            for (long k = 1; ; k++)
             {
-                BallState a = flight.Samples[i - 1], b = flight.Samples[i];
-                if (Along(b) < distance) continue;
+                double nextTime = Math.Min(start.Time + k * dt, end), step = nextTime - current.Time;
+                BallState stepped = sim.Step(current, step);
+                var next = new BallState(nextTime, stepped.Position, stepped.Velocity, stepped.Spin);
+                if (next.Position.Z - radius <= 0.0)
+                {
+                    double lo = 0.0, hi = step;
+                    for (int i = 0; i < 60 && hi - lo > 1e-12; i++)
+                    {
+                        double mid = 0.5 * (lo + hi);
+                        if (sim.Step(current, mid).Position.Z - radius <= 0.0) hi = mid;
+                        else lo = mid;
+                    }
+
+                    next = sim.Step(current, hi);
+                    return Along(next) >= distance ? Interpolate(current, next) : double.NegativeInfinity;
+                }
+
+                if (Along(next) >= distance) return Interpolate(current, next);
+                if (next.Time >= end) return double.NegativeInfinity;
+                current = next;
+            }
+
+            double Interpolate(BallState a, BallState b)
+            {
                 double u = (distance - Along(a)) / (Along(b) - Along(a));
                 return a.Position.Z + u * (b.Position.Z - a.Position.Z);
             }
-
-            return double.NegativeInfinity;
         }
     }
 

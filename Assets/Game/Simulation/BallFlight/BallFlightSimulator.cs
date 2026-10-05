@@ -126,7 +126,8 @@ namespace Pitchlab.Simulation.BallFlight
             if (!IsFinite(initial.Position) || !IsFinite(initial.Velocity) || !IsFinite(initial.Spin) || !IsFinite(initial.Time))
                 throw new ArgumentException("Initial state must be finite.", nameof(initial));
 
-            var samples = new List<BallState>((int)Math.Min(limits.MaxDuration / TimeStep + 2, 100000)) { initial };
+            // Modest initial capacity (the list grows): a long MaxDuration must not allocate thousands of unused samples.
+            var samples = new List<BallState>((int)Math.Min(limits.MaxDuration / TimeStep + 2, 512)) { initial };
             // A ball that starts on or below the ground has already ended. (A start at or behind the stop plane never
             // crosses it; such a flight ends at the ground or MaxDuration.)
             if (BelowGround(initial, limits)) return new TrajectoryResult(samples.ToArray(), FlightEnd.ReachedGround);
