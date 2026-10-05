@@ -1,4 +1,5 @@
 using System;
+using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
 using Pitchlab.Simulation.Batting;
@@ -42,6 +43,7 @@ namespace Pitchlab.Sandbox
         private float _finishTilt, _targetResidual;
         private Vector3 _target;            // world point the sweet spot aims at, at the contact time
         private TrailRenderer _sweetTrail;  // debug: sweet-spot path
+        private DefenseView _defense;
         private readonly System.Collections.Generic.List<MeshRenderer> _eventMarkers = new System.Collections.Generic.List<MeshRenderer>();
         private readonly System.Collections.Generic.List<Mesh> _builtMeshes = new System.Collections.Generic.List<Mesh>();
         private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
@@ -66,6 +68,7 @@ namespace Pitchlab.Sandbox
         public float TargetResidual => _targetResidual;
         /// <summary>The result line currently shown (set every frame from <see cref="Feedback"/>).</summary>
         public string Banner => _banner;
+        public DefenseView Defense => _defense;
         public TrailRenderer BallTrail => _trail;
 
         private void Awake()
@@ -137,7 +140,10 @@ namespace Pitchlab.Sandbox
 
             PlacePitcher(PitchPresets.All[0].ToInitialState().Position);   // idle: the pitcher waits in the set position
             PlaceBatter();
-            BuildOutfield(HittingLabController.Field);
+            _defense = new GameObject("Defense").AddComponent<DefenseView>();
+            _defense.transform.SetParent(transform, false);
+            _defense.Build(_mannequinPrefab, _pitcher, _pitcherShown, DefensiveAlignment.Standard);
+            _builtMeshes.AddRange(OutfieldDressing.Build(transform, HittingLabController.Field));
             ResetForPitch(null);
         }
 
@@ -152,7 +158,7 @@ namespace Pitchlab.Sandbox
             if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
             if (_lab.LastSwing.HasValue && !_swing.HasValue) OnSwing(_lab.LastSwing.Value, _lab.LastResult.Value);
 
-            AnimatePitcher(t);
+            if (!_defense.DrivesPitcher(_lab.LastFielding, t)) AnimatePitcher(t);
             AnimateBatter(t);
             bool swinging = _swing.HasValue && t >= _swing.Value.StartTime && t <= _swing.Value.StartTime + _lab.Swing.SwingDuration + 0.3;
             _sweetTrail.emitting = _lab.DebugView && swinging;
@@ -164,7 +170,8 @@ namespace Pitchlab.Sandbox
             Transform ball = _lab.BallTransform;
             if (held) ball.position = _pitcher.BallAnchor.position;
             BallInPlay inPlay = _lab.LastPlay;
-            bool moving = inPlay == null || t < inPlay.EndTime;
+            double possession = _lab.LastFielding?.PossessionTime ?? double.PositiveInfinity;
+            bool moving = inPlay == null || (t < inPlay.EndTime && t < possession);
             _trail.emitting = !held && moving;
             // Keep the ball a few pixels wide however far it flies (centre stays on the authoritative trajectory).
             float distance = Vector3.Distance(_view.transform.position, ball.position);
@@ -172,7 +179,7 @@ namespace Pitchlab.Sandbox
             ball.localScale = new Vector3(d, d, d);
             _trail.widthMultiplier = 0.8f * d;
             _trail.time = _contactShown ? 0.6f : 0.18f;
-            bool shadow = _contactShown && ball.position.y > 0.15f && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;   // airborne only
+            bool shadow = _contactShown && t < possession && ball.position.y > 0.15f && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;   // airborne only
             _shadow.gameObject.SetActive(shadow);
             if (shadow)
             {
@@ -184,11 +191,11 @@ namespace Pitchlab.Sandbox
             {
                 if (!_contactShown && t >= r.BattedBall.Time) ShowContact(r);
                 BallInPlay play = _lab.LastPlay;
-                if (!_landingShown && play?.FirstGroundContact is BallEvent landing && t >= landing.Time) ShowLanding(play, landing);
+                if (!_landingShown && play?.FirstGroundContact is BallEvent landing && t >= landing.Time && landing.Time < possession) ShowLanding(play, landing);
             }
 
             _banner = Feedback(t);
-            BattingState state = _pitch == null ? BattingState.Ready : BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.LastPlay, _lab.Swing.SwingDuration);
+            BattingState state = _pitch == null ? BattingState.Ready : BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration);
             // Back to the batting view once the result pause is over (the next throw resets the rest).
             if (state == BattingState.Ready && _pitch != null && _baseballCamera.IsFollowing)
             {
@@ -197,6 +204,13 @@ namespace Pitchlab.Sandbox
             }
 
             UpdateEventMarkers(t);
+
+            // Defense (TASK-005): the catcher stands right in front of the batting camera, so here he is shown only when
+            // he plays the ball (a dribbler); the primary defender is framed with the ball, which sits in his glove from
+            // the possession moment.
+            _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C;
+            _defense.Show(_lab.LastFielding, t, _lab.BallTransform, _lab.DebugView);
+            _baseballCamera.FollowAlso(_contactShown ? _defense.Primary : null);
         }
 
         /// <summary>
@@ -207,7 +221,7 @@ namespace Pitchlab.Sandbox
         public string Feedback(double t)
         {
             if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
-            BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.LastPlay, _lab.Swing.SwingDuration);
+            BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration);
             if (state == BattingState.Ready) return "Click to pitch";
             if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? "Take" : string.Empty;
             string timing = ContactFeedback.Timing(r);
@@ -218,13 +232,29 @@ namespace Pitchlab.Sandbox
             string line = $"{Units.MetersPerSecondToMph(r.ExitSpeed):0} mph · {r.LaunchAngleDegrees:0}° · {timing}";
             if (ContactFeedback.Quality(r, _lab.Swing) is ContactQuality q) line += $" · {ContactFeedback.Describe(q)}";
             BallInPlay play = _lab.LastPlay;
-            if (_lab.LastCall is FairFoulResult call && t >= call.At.Time)
-                line = (call.Call == BallInPlayCall.HomeRun ? "HOME RUN" : call.Call == BallInPlayCall.Fair ? "FAIR" : "FOUL") + "  " + line;
-            if (play.FirstGroundContact is BallEvent landing && t >= landing.Time) line += $" · {Units.MetersToFeet(_lab.ShownCarry):0} ft";
-            if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
-            if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime) line += " · ground-rule double";
+            FieldingPlay fielding = _lab.LastFielding;
+            double possession = fielding?.PossessionTime ?? double.PositiveInfinity;
+            // The call reads at its decisive moment — or when a defender takes the ball, if that is earlier.
+            if (_lab.LastCall is FairFoulResult call && t >= Math.Min(call.At.Time, possession))
+            {
+                BallInPlayCall shown = fielding?.Call ?? call.Call;
+                line = (shown == BallInPlayCall.HomeRun ? "HOME RUN" : shown == BallInPlayCall.Fair ? "FAIR" : "FOUL") + "  " + line;
+            }
+
+            if (play.FirstGroundContact is BallEvent landing && landing.Time < possession && t >= landing.Time) line += $" · {Units.MetersToFeet(_lab.ShownCarry):0} ft";
+            if (t >= possession && fielding.Primary is DefensivePosition by)
+                line += $" · {(fielding.Intercept.Kind == InterceptKind.FlyCatch ? "caught" : "fielded")} by {Abbreviation(by)}";
+            else if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
+            if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime && t < possession) line += " · ground-rule double";
             return line;
         }
+
+        public static string Abbreviation(DefensivePosition p) => p switch
+        {
+            DefensivePosition.FirstBase => "1B", DefensivePosition.SecondBase => "2B", DefensivePosition.ThirdBase => "3B",
+            DefensivePosition.Shortstop => "SS", DefensivePosition.LeftField => "LF", DefensivePosition.CenterField => "CF",
+            DefensivePosition.RightField => "RF", _ => p.ToString(),
+        };
 
         private void ResetForPitch(HittingPitch pitch)
         {
@@ -287,52 +317,6 @@ namespace Pitchlab.Sandbox
 
         /// <summary>Release fit (presentation only): figure-frame correction of the release wrist target.</summary>
         public Vector3 ReleaseFitOffset { get; private set; }
-
-        /// <summary>
-        /// Warning track and outfield wall drawn from the simulation's field layout (Docs/SURFACE_PHYSICS.md), so what the
-        /// ball bounces off is what the player sees. Visual only: no colliders.
-        /// </summary>
-        private void BuildOutfield(FieldLayout field)
-        {
-            var track = new Mesh { name = "WarningTrack" };
-            var wall = new Mesh { name = "OutfieldWall" };
-            var trackVertices = new System.Collections.Generic.List<Vector3>();
-            var wallVertices = new System.Collections.Generic.List<Vector3>();
-            var trackTriangles = new System.Collections.Generic.List<int>();
-            var wallTriangles = new System.Collections.Generic.List<int>();
-            float height = (float)field.WallHeight, width = (float)FieldLayout.WarningTrackWidth;
-            for (int i = 0; i + 1 < FieldLayout.FencePointCount; i++)
-            {
-                Vector3 a = SimulationSpace.ToUnity(field.FencePoint(i)), b = SimulationSpace.ToUnity(field.FencePoint(i + 1));
-                Vector3 inward = Vector3.Cross(Vector3.up, (b - a).normalized);
-                if (Vector3.Dot(inward, -a) < 0f) inward = -inward;
-                AddQuad(trackVertices, trackTriangles, a + 0.006f * Vector3.up, b + 0.006f * Vector3.up, b + inward * width + 0.006f * Vector3.up, a + inward * width + 0.006f * Vector3.up);
-                AddQuad(wallVertices, wallTriangles, a, b, b + height * Vector3.up, a + height * Vector3.up);
-            }
-
-            Finish(track, trackVertices, trackTriangles, "WarningTrack", new Color(0.47f, 0.32f, 0.22f));
-            Finish(wall, wallVertices, wallTriangles, "OutfieldWall", new Color(0.12f, 0.25f, 0.18f));
-
-            void AddQuad(System.Collections.Generic.List<Vector3> v, System.Collections.Generic.List<int> t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
-            {
-                int k = v.Count;
-                v.Add(p0); v.Add(p1); v.Add(p2); v.Add(p3);
-                // Both faces (the wall is seen from the field, the track from above).
-                t.AddRange(new[] { k, k + 2, k + 1, k, k + 3, k + 2, k, k + 1, k + 2, k, k + 2, k + 3 });
-            }
-
-            void Finish(Mesh mesh, System.Collections.Generic.List<Vector3> v, System.Collections.Generic.List<int> t, string name, Color color)
-            {
-                mesh.SetVertices(v);
-                mesh.SetTriangles(t, 0);
-                mesh.RecalculateNormals();
-                _builtMeshes.Add(mesh);
-                var go = new GameObject(name);
-                go.transform.SetParent(transform, false);
-                go.AddComponent<MeshFilter>().sharedMesh = mesh;
-                go.AddComponent<MeshRenderer>().sharedMaterial = PresentationMaterials.Get(color, unlit: true);   // flat: double-sided faces have no useful normals
-            }
-        }
 
         private void OnDestroy()
         {

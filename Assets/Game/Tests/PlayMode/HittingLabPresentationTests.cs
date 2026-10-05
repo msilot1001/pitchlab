@@ -1,5 +1,6 @@
 using System.Collections;
 using NUnit.Framework;
+using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
@@ -424,6 +425,32 @@ namespace Pitchlab.Tests
             (double x2, double z2) = _lab.PciAt(_now);
             Assert.AreEqual(x, x2, 1e-12);
             Assert.AreEqual(z, z2, 1e-12);
+        }
+
+        [UnityTest]
+        public IEnumerator TheDefensePlaysTheHitAndTheLoopEndsAtPossession()
+        {
+            // TASK-005 in the batting loop: the hit is fielded on the authoritative trajectory, the play is over when a
+            // defender has the ball (not when it would have stopped rolling), and the ball is shown in his glove.
+            yield return null;
+            // A topped ball (PCI 2 cm over the ball, 4 ms late): a grounder the infield fields.
+            HittingPitch pitch = _lab.CurrentPitch;
+            _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z + 0.02);
+            Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration + 0.004).IsContact);
+            FieldingPlay f = _lab.LastFielding;
+            Assert.IsNotNull(f);
+            Assert.AreSame(_lab.LastPlay, f.Ball, "fielding uses the same ball the player sees");
+            Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome);
+            Assert.Less(f.PossessionTime, f.Ball.EndTime, "fielded before it stops");
+            Assert.AreEqual(f.EndTime, _lab.PlayEnd, 0.0);
+            At(f.PossessionTime - 0.01);
+            Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
+            At(f.PossessionTime + 0.2);
+            Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
+            PlayerMannequin holder = _view.Defense.Figure(f.Primary.Value);
+            Assert.Less(Vector3.Distance(_lab.BallTransform.position, holder.GloveAnchor.position), 1e-4f, "ball in the glove");
+            StringAssert.Contains($"by {HittingLabPresentation.Abbreviation(f.Primary.Value)}", _view.Banner);
+            Assert.IsTrue(_camera.IsFollowing);
         }
     }
 }
