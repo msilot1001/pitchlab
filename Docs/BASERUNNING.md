@@ -100,7 +100,7 @@ All of these are decided by gameplay state, never by colliders or animation.
 - **TASK-009:**
   - chained defensive actions: double plays, throws after a catch, throws on a tag-up;
   - third-out run rules (OBR 5.08(a));
-  - home runs and ground-rule doubles (dead balls for now);
-  - the infield fly rule.
+  - home runs and ground-rule doubles (done in TASK-009: awards; a home-run trot runs at full speed, ~15 s around the bases);
+  - the infield fly rule (deferred: no dropped balls, so it changes no outcome — Docs/RULES.md).
 - **TASK-010:** the situation carried between plate appearances.
 - **No sliding animation.**

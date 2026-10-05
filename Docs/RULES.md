@@ -10,7 +10,7 @@ Colliders, meshes, animation and the camera never decide anything. Every result 
 ## State
 - **`Runner`:** identified by where he started the play, either the batter (`Base.Home`) or the base he occupied. In this foundation a runner advances at most one base.
 - **`BaseOccupancy`:** first, second and third. There is one runner per base by construction, so two runners on one base cannot be represented.
-- **Batter-runner:** exists when the ball is fielded in play. A caught fly retires him at the catch. A foul ball (no foul catches yet: TASK-005 lets foul flies drop) or a ball out of the park is a dead ball with no events. For a home run the batter and runners are actually awarded home; that award, and scoring, are not modelled yet.
+- **Batter-runner:** exists when the ball is fielded in play. A caught fly retires him at the catch. A foul ball (no foul catches yet: TASK-005 lets foul flies drop) is a dead ball with no events. A fair ball out of the park is dead with an award (TASK-009, OBR 5.05(a)): a home run (over the fence on the fly, off the pole included) awards every runner and the batter four bases — all score; a fair ball that bounces out awards two (ground-rule double). The runners advance under the running law (no play, no passing); the ground-rule double cannot happen in the simulated park (0 of 810 hard-hit balls bounce over the wall), so only its base arithmetic is tested.
 - **`RulesPlay.RunnerStateAt(runner, t)`:** OnBase, Advancing, Safe or Out, plus whether he is still forced.
 
 ## Forces (`Forces`)
@@ -55,7 +55,8 @@ The rules ask only two questions: "when does he touch his next base" and "where 
   - **Safe:** the runner touches the base he was going to.
 - **Chronological list:** events are in time order, and each runner appears at most once (enforced). Several outs per play can be represented.
 - **Third out:** it ends the play, and nothing after it is recorded (OBR 5.09(d)). Whether a run that touched home before the third out counts (OBR 5.08(a) exception) is scoring, which is not modelled yet.
-- **Not modelled:** the infield fly rule and runners' retouch after a caught fly.
+- **Infield fly rule (deferred, documented):** with runners on first and second (or the bases loaded) and fewer than two out, a fair fly an infielder can catch with ordinary effort retires the batter whether or not it is caught, removing the force. Fielders here never drop a catchable ball, so the call changes no outcome: the batter is out at the catch either way and runners tag up as on any caught fly. It is to be added with dropped balls / fielding errors.
+- **Retouch after a caught fly:** modelled (TASK-007 tag-ups, doubled-off runners).
 - **Outs:** they are counted from the events: `Outs`, `OutsAfter` and `OutsAt(t)`. The catch, the possession and later states never count an out again. There are no innings yet.
 - **`StatusAt(t)`:**
   - Live, OutRecorded and RunnerSafe, according to the latest event;

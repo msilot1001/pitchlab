@@ -127,6 +127,27 @@ namespace Pitchlab.Gameplay.Fielding
             return new Vector3d(d * Math.Sin(a), d * Math.Cos(a), 0.0);
         }
 
+        /// <summary>Middle infielders at double-play depth (runner on first, fewer than two out): SS and 2B each about three
+        /// strides in toward home and three toward second base (coaching sources, Docs/DEFENSIVE_RESPONSIBILITIES.md; [V]).</summary>
+        public static DefensiveAlignment DoublePlayDepth
+        {
+            get
+            {
+                Vector3d[] p = (Vector3d[])Standard._positions.Clone();
+                Vector3d second = new Vector3d(0.0, 90.0 * Math.Sqrt(2.0) * 0.3048, 0.0);
+                foreach (DefensivePosition m in new[] { DefensivePosition.Shortstop, DefensivePosition.SecondBase })
+                {
+                    Vector3d at = p[(int)m];
+                    p[(int)m] = at + DoublePlayIn * (Vector3d.Zero - at).Normalized + DoublePlayOver * (second - at).Normalized;
+                }
+
+                return new DefensiveAlignment(p);
+            }
+        }
+
+        /// <summary>Double-play depth: this far in toward home and this far over toward second base (m; ≈ 3 strides each).</summary>
+        public const double DoublePlayIn = 2.5, DoublePlayOver = 3.0;
+
         public static DefensiveAlignment Standard => new DefensiveAlignment(new[]
         {
             At(55.0, 0.0),        // P (follow-through, ~5 ft in front of the 60.5 ft rubber)

@@ -23,6 +23,8 @@ namespace Pitchlab.Gameplay.Play
 
         public int Outs { get; }
         public BaseOccupancy Bases { get; }
+        /// <summary>Where the defense plays: double-play depth with a runner on first and fewer than two out.</summary>
+        public DefensiveAlignment Alignment => Bases.First && Outs < 2 ? DefensiveAlignment.DoublePlayDepth : DefensiveAlignment.Standard;
         public override string ToString() => $"{Bases}, {Outs} out";
     }
 
@@ -103,20 +105,24 @@ namespace Pitchlab.Gameplay.Play
             ContactTime = fielding.Ball.First.Time;
             _now = ContactTime;
             Kind = Classify(fielding);
+            AwardedBases = Award(fielding);
 
             // Runners: on their bases at their leads; the batter-runner at home once the ball is fair in play.
             foreach (Runner r in situation.Bases.Runners)
                 _runners.Add(new LiveRunner(r, Profile, r.From, BaseLeg.Of(r.From, Kind == BallKind.Hit), Lead(r.From), ContactTime));
-            if (Kind != BallKind.Dead)
+            if (Kind != BallKind.Dead || AwardedBases > 0)
                 _runners.Insert(0, new LiveRunner(Runner.Batter, Profile, Base.Home, BaseLeg.Of(Base.Home, Kind == BallKind.Hit), 0.0, ContactTime));
 
             // First intentions (deterministic heuristics: RunnerBrain) and the defense's action, chosen with the runners'
             // predicted arrivals under those intentions.
             var intents = new Dictionary<Runner, Intent>();
             foreach (LiveRunner r in _runners)
-                intents[r.Id] = Kind != BallKind.Dead && Kind != BallKind.Caught && !r.Id.IsBatter && runsOnContact != null && runsOnContact(r.Id)
+                intents[r.Id] = AwardedBases > 0 ? new Intent(IntentKind.Go, AwardedBase(r.Id.From, AwardedBases), true)
+                    : Kind != BallKind.Dead && Kind != BallKind.Caught && !r.Id.IsBatter && runsOnContact != null && runsOnContact(r.Id)
                     ? new Intent(IntentKind.Go, r.Id.Next)
                     : RunnerBrain.Initial(this, r);
+            if (AwardedBases == 4) Note(ContactTime, PlayLogKind.Decision, null, Base.Home, null, "HOME RUN");
+            else if (AwardedBases == 2) Note(ContactTime, PlayLogKind.Decision, null, Base.Second, null, "GROUND-RULE DOUBLE");
             // The live defense (TASK-008): every defender's role and movement, the ball, the decisions with it.
             Defense = new LiveDefense(this, choose);
 
@@ -136,6 +142,9 @@ namespace Pitchlab.Gameplay.Play
         public RunnerProfile Profile { get; }
         public double ContactTime { get; }
         public BallKind Kind { get; }
+        /// <summary>Bases awarded to every runner and the batter (OBR 5.05(a)): 4 for a fair ball over the fence on the fly, 2 for
+        /// one that bounces out of the park; 0 otherwise. The ball is dead: the runners advance under the running law, no play.</summary>
+        public int AwardedBases { get; }
         /// <summary>The live defense: every defender's role and motion, the ball and who has it, the throws, the decisions.</summary>
         public LiveDefense Defense { get; }
         public FieldLayout Field => FieldLayout.Standard;
@@ -423,6 +432,9 @@ namespace Pitchlab.Gameplay.Play
         private void MakeOut(LiveRunner r, PlayEventKind kind, double time)
         {
             if (r.IsDone) return;
+            // A forced runner tagged off his base is still put out on a force (he lost his right to the base because the
+            // batter became a runner): a force out for OBR 5.08(a), at the base he was forced to.
+            if (kind == PlayEventKind.TagOut && ForcedAt(r, time)) kind = PlayEventKind.ForceOut;
             DefensivePosition? holder = Defense.HolderAt(time);
             Base at = kind == PlayEventKind.ForceOut ? r.Id.Next : kind == PlayEventKind.RetouchOut ? r.LastTouched : NearestBase(r, time);
             r.OutTime = time;
@@ -722,13 +734,10 @@ namespace Pitchlab.Gameplay.Play
 
             if (_scheduled.Any(s => !s.Settle)) return;
             if (!Defense.IdleAt(t)) return;
+            // Every runner settled on a base — the batter-runner walking back from an overrun too: the ball is live until he is
+            // back (he is protected meanwhile, OBR 5.09(b)(4)).
             foreach (LiveRunner r in _runners)
-            {
-                if (r.IsDone) continue;
-                // The batter-runner past first (overrun) is entitled to it while he walks back (OBR 5.09(b)(4)).
-                bool overrun = r.OverrunProtected;
-                if (!overrun && (r.Phase != RunnerPhase.Standing || r.SpeedAt(t) > 1e-6 || r.MustRetouch)) return;
-            }
+                if (!r.IsDone && (r.Phase != RunnerPhase.Standing || r.SpeedAt(t) > 1e-6 || r.MustRetouch)) return;
 
             EndPlay(t, "ball held, runners on base");
         }
@@ -782,6 +791,28 @@ namespace Pitchlab.Gameplay.Play
             if (f.Intercept.Kind == InterceptKind.FlyCatch) return BallKind.Caught;
             if (f.Call != BallInPlayCall.Fair) return BallKind.Dead;
             return DefensiveDecision.IsOutfielder(f.Primary.Value) ? BallKind.Hit : BallKind.Grounder;
+        }
+
+        private static int Award(FieldingPlay f)
+        {
+            if (f.Outcome != FieldingOutcome.OutOfPlay || f.Call == BallInPlayCall.Foul) return 0;
+            if (f.Call == BallInPlayCall.HomeRun) return 4;
+            bool bounced = false;
+            foreach (BallEvent e in f.Ball.Events)
+            {
+                if (e.Kind == BallEventKind.GroundImpact) bounced = true;
+                if (e.Kind == BallEventKind.ClearedFence || e.Kind == BallEventKind.LeftPlay) return bounced ? 2 : 4;
+            }
+
+            return 0;
+        }
+
+        /// <summary><paramref name="n"/> bases on from <paramref name="from"/> (home at most; the batter's home is the start).</summary>
+        public static Base AwardedBase(Base from, int n)
+        {
+            Base b = from;
+            for (int i = 0; i < n && !(b == Base.Home && i > 0); i++) b = BaseLeg.Bases(b);
+            return b;
         }
 
         /// <summary>Hang time of a caught ball (s; +∞ if not caught).</summary>

@@ -61,6 +61,7 @@ namespace Pitchlab.Gameplay.Play
         public static LivePlay.Intent Reconsider(LivePlay play, LiveRunner r, double now)
         {
             if (r.MustRetouch) return new LivePlay.Intent(LivePlay.IntentKind.Return, r.LastTouched);
+            if (play.Kind == LivePlay.BallKind.Dead) return LivePlay.Intent.Keep;
             if (r.Phase == RunnerPhase.Running || r.Phase == RunnerPhase.Overrunning || r.Phase == RunnerPhase.Returning) return LivePlay.Intent.Keep;
             if (play.Kind == LivePlay.BallKind.Caught && now < play.Fielding.PossessionTime) return LivePlay.Intent.Keep;
             Base next = BaseLeg.Bases(r.LastTouched);
@@ -85,7 +86,7 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Approaching <paramref name="destination"/> (the moment he must brake to stop there): go on to the next base?</summary>
         public static bool GoOn(LivePlay play, LiveRunner r, Base destination, double now)
         {
-            if (destination == Base.Home) return false;
+            if (destination == Base.Home || play.Kind == LivePlay.BallKind.Dead) return false;   // a dead ball: the award only
             // A fly that will be caught: the batter runs it out, nobody takes an extra base before the catch.
             if (play.Kind == LivePlay.BallKind.Caught && now < play.Fielding.PossessionTime) return false;
             Base next = BaseLeg.Bases(destination);

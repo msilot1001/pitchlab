@@ -48,6 +48,13 @@ namespace Pitchlab.Gameplay.Fielding
             double transfer = outfield ? 1.0 : p == DefensivePosition.C ? 0.735 : 0.70;
             return new ThrowProfile(RoutineFactor * Units.MphToMetersPerSecond(ArmStrengthMph(p)), transfer, 1.8);
         }
+
+        /// <summary>A max-effort throw (the arm strength itself): the relay of a double play, when every hundredth counts.</summary>
+        public static ThrowProfile Full(DefensivePosition p)
+        {
+            ThrowProfile routine = For(p);
+            return new ThrowProfile(Units.MphToMetersPerSecond(ArmStrengthMph(p)), routine.TransferTime, routine.ReleaseHeight);
+        }
     }
 
     /// <summary>

@@ -33,6 +33,13 @@ namespace Pitchlab.Sandbox
         private MannequinPose _pitcherShown;
         private Action<double, MannequinPose> _pitcherPoseAt;
         private DefensiveAlignment _alignment = DefensiveAlignment.Standard;
+
+        /// <summary>Where the defenders stand before a play (the situation's alignment: double-play depth…).</summary>
+        public DefensiveAlignment Alignment
+        {
+            get => _alignment;
+            set => _alignment = value ?? DefensiveAlignment.Standard;
+        }
         private LiveDefense _defense;
         private double _time;
         private bool _debug;

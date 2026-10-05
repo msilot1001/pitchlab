@@ -58,7 +58,7 @@ There is no single universal coverage chart. This is a defensible generic system
 ## Fly balls
 - **[S] Priority:** CF > LF = RF > SS > 2B > 3B = 1B > P > C. TASK-005's intercept tie-break already uses this order.
 - **[S] Backup:** the adjacent outfielder backs up the catch.
-- **Tag-up throws:** align as for a single with a runner on second (cut-off for home ~12–14 m from the plate). Throws after a catch arrive in TASK-009.
+- **Tag-up throws:** align as for a single with a runner on second (cut-off for home ~12–14 m from the plate). An outfielder's throw home is direct when it is a close play, otherwise to the cut-off (no relay on a caught fly).
 
 ## Positions **[I]**
 - **Cut-off for home:** on the thrower → plate line, 13 m from the plate.
@@ -71,6 +71,8 @@ There is no single universal coverage chart. This is a defensible generic system
 
 ## Throws, cut-offs and relays **[I]**
 - **Covered bases only:** a throw goes only to a base that someone covers, and is timed for the cover (TASK-006A hold-for-cover).
+- **Double-play depth [V]:** with a runner on first and fewer than two out, SS and 2B play ≈ 3 strides in and 3 toward second (`DefensiveAlignment.DoublePlayDepth`).
+- **Effort [I]:** outfielders and the pivot man of a double play throw at full arm strength (Statcast arm strength is measured on such throws); infielders' other throws are routine (×0.85).
 - **Choice of play (every defender with the ball):** an out he can make by stepping on a bag; else a force out, preferring the lead runner; else a tag out; else a close play (the throw at most 0.5 s behind the runner); else, for an outfielder, the ball to the cut-off or relay man; else hold.
 - **Cut-off vs direct:** distance does not decide it: an outfielder throws direct only when the play is close (above), otherwise to the cut-off/relay man — aimed at where he will be when the ball arrives (he keeps moving to his spot).
   - The cut-off man, holding the ball, then makes his own decision: relay to the base, or a better base, or hold.

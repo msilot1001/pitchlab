@@ -220,7 +220,8 @@ namespace Pitchlab.Tests
                 At(e.Time - t0 + 1e-4);
                 Assert.AreEqual(call, _lab.ResultText, scenario);
                 At(_lab.Live.EndTime - t0 + 5.0);
-                Assert.AreEqual(call.StartsWith("SAFE") ? 0 : 1, _lab.Live.OutsMade, $"{scenario}: outs counted once");
+                int outs = call.StartsWith("SAFE") ? 0 : scenario == "Runner on 1B, grounder to SS" ? 2 : 1;   // that one is a 6-4-3
+                Assert.AreEqual(outs, _lab.Live.OutsMade, $"{scenario}: outs counted once");
                 Assert.AreEqual(_lab.Live.OutsMade, _lab.Live.Log.Count(x => x.Kind == PlayLogKind.Out), "one out entry per out");
             }
         }
