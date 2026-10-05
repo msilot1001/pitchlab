@@ -104,6 +104,11 @@ namespace Pitchlab.Tests
                 else Assert.Less(margin, -0.1, t.ToString());
             }
 
+            // Relative to the batter's zone: exact positions for a zone from 0.5 to 1.2 m.
+            Assert.AreEqual((0.0, 0.85 + 0.6 * 0.35), PitchTargets.Point(PitchTarget.UpMiddle, 0.5, 1.2));
+            Assert.AreEqual((-0.6 * StrikeZone.HalfWidth, 0.85 - 0.6 * 0.35), PitchTargets.Point(PitchTarget.DownLeft, 0.5, 1.2));
+            Assert.AreEqual((0.0, 1.2 + PitchTargets.Beyond), PitchTargets.Point(PitchTarget.BallUp, 0.5, 1.2));
+            Assert.AreEqual((StrikeZone.HalfWidth + PitchTargets.Wide, 0.85), PitchTargets.Point(PitchTarget.BallRight, 0.5, 1.2));
             // Catcher's view: left is the third-base side.
             Assert.Less(PitchTargets.Point(PitchTarget.MiddleLeft, StrikeZone.Bottom, StrikeZone.Top).X, 0.0);
             Assert.Greater(PitchTargets.Point(PitchTarget.UpMiddle, StrikeZone.Bottom, StrikeZone.Top).Z, PitchTargets.Point(PitchTarget.DownMiddle, StrikeZone.Bottom, StrikeZone.Top).Z);

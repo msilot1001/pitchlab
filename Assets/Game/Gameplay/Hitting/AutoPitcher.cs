@@ -24,7 +24,8 @@ namespace Pitchlab.Gameplay.Hitting
 
         public static PitchCommand Choose(int seed, int plateAppearance, int pitchNumber, Count count)
         {
-            ulong h = Mix((ulong)(uint)seed ^ ((ulong)(uint)plateAppearance << 20) ^ ((ulong)(uint)pitchNumber << 44));
+            // Each input mixed on its own (no overlapping bit ranges: any seed, any plate appearance and pitch number).
+            ulong h = Mix(Mix(Mix((ulong)(uint)seed) ^ (ulong)(uint)plateAppearance) ^ (ulong)(uint)pitchNumber);
             double zone = Unit(ref h), which = Unit(ref h), type = Unit(ref h);
             PitchTarget target = zone < ZoneShare[count.Balls, count.Strikes]
                 ? (PitchTarget)(int)(which * 9.0)

@@ -119,7 +119,25 @@ namespace Pitchlab.Sandbox
 
         /// <summary>The automatic pitcher (P / gamepad Y): each pitch is chosen by <see cref="AutoPitcher"/> from the game, and
         /// after a result the next one is thrown <see cref="AutoPitchDelay"/> after the loop is ready (GameLab only).</summary>
-        public bool AutoPitch { get; set; }
+        public bool AutoPitch
+        {
+            get => _autoPitch;
+            set
+            {
+                if (value && !_autoPitch) _autoArmed = Clock();   // the schedule starts now, never in the past
+                _autoPitch = value && _gameMode;
+            }
+        }
+
+        private bool _autoPitch;
+        private double _autoArmed = double.NegativeInfinity;
+
+        /// <summary>A frame later than the auto press by more than this (s; a pause, a hitch) re-anchors the schedule at the
+        /// frame instead of throwing a pitch that would already be over.</summary>
+        public const double AutoHitchTolerance = 0.25;
+
+        /// <summary>The command the current pitch was thrown with (the auto pitcher's, or the manual selection).</summary>
+        public PitchCommand? LastCommand { get; private set; }
         /// <summary>The auto pitcher's seed (the same seed and game give the same pitches).</summary>
         public int AutoPitchSeed { get; set; } = 1;
         /// <summary>Real seconds between the loop becoming ready and the auto pitcher's next press.</summary>
@@ -240,9 +258,9 @@ namespace Pitchlab.Sandbox
             _pitchingAction.AddBinding("<Gamepad>/rightShoulder");
             _pitchingAction.AddBinding("<Gamepad>/buttonNorth");
             _pitchingAction.performed += c => OnPitchingKey(c.control.name);
-            _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
-            _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
-            _slowestSpeedAction = Button("<Keyboard>/digit3", null, _ => _playbackSpeed = 0.25f);   // motion inspection (TASK-011.8)
+            _normalSpeedAction = Button("<Keyboard>/1", null, _ => _playbackSpeed = 1f);
+            _slowSpeedAction = Button("<Keyboard>/2", null, _ => _playbackSpeed = 0.5f);
+            _slowestSpeedAction = Button("<Keyboard>/3", null, _ => _playbackSpeed = 0.25f);   // motion inspection (TASK-011.8)
             _pathsAction = Button("<Keyboard>/t", null, _ => SetDebugPaths(!_showDebugPaths));
             _panelAction = Button("<Keyboard>/h", null, _ => _showPanel = !_showPanel);
             _clickAction = Button("<Mouse>/leftButton", null, context =>
@@ -422,24 +440,27 @@ namespace Pitchlab.Sandbox
             PitchBatter = Game?.Batter;
             if (PitchBatter != null) _swing.Side = PitchBatter.Bats;
             DrawZone(Zone);
+            // The auto pitcher's choice is this pitch's only — the manual selection stays as the player left it.
+            int preset = _presetIndex;
+            PitchTarget? target = Target;
             if (AutoPitch && Game != null)
             {
                 PitchCommand auto = AutoPitcher.Choose(AutoPitchSeed, Game.Current.Number, Game.Current.Pitches.Count + 1, Game.Count);
-                _presetIndex = auto.Preset;
-                Target = auto.Target;
+                (preset, target) = (auto.Preset, auto.Target);
             }
 
             (double bottom, double top) = Zone;
-            CurrentPitch = Target is PitchTarget target
-                ? PitchTargets.Create(new PitchCommand(_presetIndex, target), bottom, top, Environment)
-                : HittingPitch.Create(Presets[_presetIndex], Environment);
-            _pitchInfo = PitchInfo.Of(Presets[_presetIndex].Label, CurrentPitch);   // as thrown (the selection may change)
+            LastCommand = target is PitchTarget aimed ? new PitchCommand(preset, aimed) : (PitchCommand?)null;
+            CurrentPitch = target is PitchTarget at
+                ? PitchTargets.Create(new PitchCommand(preset, at), bottom, top, Environment)
+                : HittingPitch.Create(Presets[preset], Environment);
+            _pitchInfo = PitchInfo.Of(Presets[preset].Label, CurrentPitch);   // as thrown (the selection may change)
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             ClearPitch();
             _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
             PitchesThrown++;
-            _pitchLabel = $"{Presets[_presetIndex].Label} ({TargetName})";
+            _pitchLabel = $"{Presets[preset].Label} ({(target is PitchTarget named ? PitchTargets.Name(named) : "preset aim")})";
             _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 
@@ -548,19 +569,28 @@ namespace Pitchlab.Sandbox
             RenderedSimTime = t;
             double grace = LastSwing.HasValue ? 0.0 : InputGrace * _pitchPlaybackSpeed;   // a take waits for late swing events
             if (_resultPending && t >= BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + grace) ApplyResult();
+
+            // The auto pitcher's next press: AutoPitchDelay after the loop is ready (or after auto was switched on), at that
+            // exact time — not this frame's — unless the frame is far later (a pause): then now. Before rendering, so the new
+            // pitch is drawn at its own time.
+            if (AutoPitch && Game != null && !_resultPending)
+            {
+                double ready = _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
+                double press = Math.Max(ready, _autoArmed) + AutoPitchDelay;
+                if (now - press > AutoHitchTolerance) press = now;
+                if (now >= press)
+                {
+                    ThrowPitch(_presetIndex, press + _deliveryLead / _playbackSpeed);
+                    t = ToSimTime(now);
+                    RenderedSimTime = t;
+                }
+            }
             // Authoritative samples only: the pitch, then (after contact) the ball in play until it rests or leaves play.
             // After contact: free on its trajectory until a defender possesses it, then carried (FieldingPlay).
             _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
                 ? LastDefense.BallPositionAt(t)
                 : CurrentPitch.Flight.StateAt(t).Position);
 
-            // The auto pitcher's next press: AutoPitchDelay after the loop is ready, at that exact time (not this frame's).
-            if (AutoPitch && Game != null && !_resultPending)
-            {
-                double ready = _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
-                double press = ready + AutoPitchDelay;
-                if (now >= press) ThrowPitch(_presetIndex, press + _deliveryLead / _playbackSpeed);
-            }
         }
 
         /// <summary>The pitch's result into the game (once; when it is decided — the end of the pitch or the swing, the play's

@@ -239,7 +239,7 @@ namespace Pitchlab.Sandbox
             // the possession moment.
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C || !_lab.CameraBehindPlate;
             // A pitch not put in play ends in the catcher's glove where he can be seen (TASK-014; presentation only).
-            bool received = _pitch != null && !_contactShown && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
+            bool received = _pitch != null && !(_lab.LastResult is ContactResult { IsContact: true }) && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
             _defense.CatcherGloveWeight = received ? Mathf.SmoothStep(0f, 1f, (float)((t - _catchTime + CatcherReach) / CatcherReach)) : 0f;
             _defense.CatcherGlove = _catchPoint;
             // Where they stand: the play's alignment while it is shown, the next situation's once it is over.
@@ -250,7 +250,9 @@ namespace Pitchlab.Sandbox
             // Once the play is over the fielders jog back to the alignment during the result pause (back before the next pitch
             // can be thrown); whoever has the ball keeps it.
             _defense.Show(returning ? null : _lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
-            if (received && t >= _catchTime) _lab.BallTransform.position = _defense.Figure(DefensivePosition.C).GloveAnchor.position;
+            // In his glove once it is there (a pitch out of his reach flies on).
+            Vector3 glove = _defense.Figure(DefensivePosition.C).GloveAnchor.position;
+            if (received && t >= _catchTime && Vector3.Distance(glove, _catchPoint) < CatcherGloveReach) _lab.BallTransform.position = glove;
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
 
             // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
@@ -412,6 +414,9 @@ namespace Pitchlab.Sandbox
         public const double CatcherGlovePlaneY = -0.35;
         /// <summary>How long (s) his glove moves to the pitch before it arrives.</summary>
         private const double CatcherReach = 0.3;
+        /// <summary>The glove (pocket) takes the ball only if it got within this distance (m) of it — the IK aims the wrist,
+        /// the pocket sits ≈ 8 cm from it, as for every fielder's take.</summary>
+        public const float CatcherGloveReach = 0.12f;
         private double _catchTime = double.NaN;
         private Vector3 _catchPoint;
 
@@ -419,7 +424,9 @@ namespace Pitchlab.Sandbox
         private static (double Time, Vector3 Point) CatcherCatch(HittingPitch pitch)
         {
             TrajectoryResult f = pitch.Flight;
-            if (f.Final.Position.Y > CatcherGlovePlaneY) return (double.NaN, Vector3.zero);
+            // In the dirt in front of him: he blocks it where it lands.
+            if (f.Final.Position.Y > CatcherGlovePlaneY)
+                return f.End == FlightEnd.ReachedGround ? (f.Final.Time, SimulationSpace.ToUnity(f.Final.Position)) : (double.NaN, Vector3.zero);
             double a = f.First.Time, b = f.Final.Time;
             for (int i = 0; i < 50; i++)
             {

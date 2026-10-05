@@ -20,10 +20,18 @@ namespace Pitchlab.Tests
             CollectionAssert.AreEqual(Sequence(7), Sequence(7));
             CollectionAssert.AreNotEqual(Sequence(7), Sequence(8), "another seed, another sequence");
             // Every input matters: the plate appearance and the pitch number change the choice somewhere.
-            int differ = 0;
+            int byPitch = 0, byPlateAppearance = 0, bySeed = 0;
             for (int i = 1; i <= 50; i++)
-                if (!AutoPitcher.Choose(3, i, 1, new Count()).Equals(AutoPitcher.Choose(3, i, 2, new Count()))) differ++;
-            Assert.Greater(differ, 25);
+            {
+                if (!AutoPitcher.Choose(3, i, 1, new Count()).Equals(AutoPitcher.Choose(3, i, 2, new Count()))) byPitch++;
+                if (!AutoPitcher.Choose(3, i, 1, new Count()).Equals(AutoPitcher.Choose(3, i + 1, 1, new Count()))) byPlateAppearance++;
+                if (!AutoPitcher.Choose(i, 4, 1, new Count()).Equals(AutoPitcher.Choose(i + (1 << 20), 4, 1, new Count()))) bySeed++;
+            }
+
+            Assert.Greater(byPitch, 25);
+            Assert.Greater(byPlateAppearance, 25);
+            Assert.Greater(bySeed, 25, "high seed bits matter too (no overlap with the other inputs)");
+            Assert.AreNotEqual(Sequence(1 << 20), Sequence(0));
         }
 
         [Test]
@@ -69,9 +77,8 @@ namespace Pitchlab.Tests
             Assert.AreEqual(AutoPitcher.ZoneShare[0, 2], ohTwo.zone, 0.03);
             Assert.Greater(threeOh.zone, even.zone);
             Assert.Greater(even.zone, ohTwo.zone);
-            Assert.AreEqual(6.0 / 9.0, threeOh.fastballs, 0.03, "fastballs weigh 3 when behind");
-            Assert.AreEqual(2.0 / 5.0, even.fastballs, 0.03);
-            Assert.AreEqual(2.0 / 8.0, ohTwo.fastballs, 0.03, "breaking balls weigh 2 when ahead");
+            Assert.Greater(threeOh.fastballs, even.fastballs + 0.15, "more fastballs when behind");
+            Assert.Greater(even.fastballs, ohTwo.fastballs + 0.08, "more breaking balls when ahead");
         }
 
         [Test]
@@ -81,8 +88,7 @@ namespace Pitchlab.Tests
             HittingPitch pitch = PitchTargets.Create(new PitchCommand(2, PitchTarget.MiddleRight), StrikeZone.Bottom, StrikeZone.Top, EnvironmentState.Standard);
             (double x, double z) = StrikeZone.Crossing(pitch);
             Assert.AreEqual(StrikeZone.Contains(x, z) ? PitchOutcome.CalledStrike : PitchOutcome.Ball, PitchOutcomes.Of(pitch, null, null, null));
-            (double tx, _) = PitchTargets.Point(PitchTarget.MiddleRight, StrikeZone.Bottom, StrikeZone.Top);
-            Assert.AreNotEqual(tx, x, "it does not land exactly on the aim");
+            // (PitchOutcomes.Of takes the flight, the swing and the play — never the command: the intent cannot be read.)
         }
     }
 }

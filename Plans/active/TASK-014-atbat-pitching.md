@@ -34,7 +34,15 @@ Claude Code (sole writer); reviewers and Codex read-only.
 ## Milestones
 - [x] PitchCommand / targets / aim + AutoPitcher + EditMode tests (CountTests, PlateAppearanceTests, AutoPitcherTests).
 - [x] Lab controls, auto cadence, catcher receive + PlayMode tests (AtBatPitchingTests, GameLabSceneTests).
-- [ ] check.sh, runtime verification, reviews, Codex, merge.
+- [x] Runtime (GameLab): auto pitching ~3.9 s per pitch, mixed types and spots, called from the crossings; three
+  strikeouts change the half; offset camera: catcher crouched, ball in his glove on a called strike.
+- [x] Reviews — Unity/test: auto schedule armed when switched on and re-anchored after a pause (no pitches thrown in the
+  past), auto throw before rendering, playback keys bound to `<Keyboard>/1..3` (the `digitN` paths resolved to nothing),
+  catcher reach only for pitches not hit and only if the glove gets there (pitches in the dirt blocked where they land),
+  auto choice kept apart from the manual selection (LastCommand), auto only in the GameLab, seed hashed apart; tests:
+  release times exact at 30 / 144 / uneven frames with a foul and a ball in play, the lab feeding count and pitch number,
+  pause/idle, tall-batter targets, catcher glove at the flight, 13th pitch after a long PA (mutation: frame-time press caught).
+- [ ] Codex, merge.
 
 ## Limitations
 - No pitcher command/accuracy model (the aim converges within 3 cm), no fatigue, no pitch sequencing beyond the count.
