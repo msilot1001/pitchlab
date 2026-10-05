@@ -22,10 +22,16 @@ Claude Code (sole writer); reviewers and Codex read-only.
 - [x] Tag-up throws home (close play safe / out).
 - [x] Overrun protection made decisive (play live until the batter-runner is back on first) + mutation check.
 - [x] Tests (LivePlayResolutionTests 15); docs.
-- [ ] check.sh; runtime examples; Codex; merge.
+- [x] check.sh; runtime examples.
+- [x] Reviews: rules (a forced runner tagged off his base is a force out for OBR 5.08(a) — fixed in MakeOut; no natural play
+  produces it, so it has no dedicated test), tests (DP timing vs the batter-runner's arrival, failed DPs pinned incl. the hard
+  4-6-3, DP ending the half-inning, HR scoring order, GRD end to end on the bounce-over ball, tag-up proven, run before a tag
+  third out counts — a live tag at third, relay reassignment, uncut throw home, gap ball direct), Codex B (tests now solve in
+  the situation's alignment; relay reassignment re-covered; FieldingLab idle view uses the situation's alignment).
+- [x] merge (--no-ff).
 
 ## Verification
-- check.sh: EditMode 520/526 (6 skipped, pre-existing), PlayMode 46/46.
+- check.sh: EditMode 525/531 (6 skipped, pre-existing), PlayMode 46/46.
 - Runtime (FieldingLab Game View): R1 grounder to SS — OUT AT 2B at ~2.6 s, then OUT AT 1B (banner "OUT AT 2B · OUT AT 1B");
   console clean.
 - Examples (EditMode/eval): 6-4-3 85 mph out at 1B by 0.11 s; 5-4-3 by 0.10 s; 4-6-3 88 mph by 0.01 s; 1-6-3 by 0.01 s;

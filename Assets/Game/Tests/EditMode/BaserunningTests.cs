@@ -26,9 +26,14 @@ namespace Pitchlab.Tests
         private static FieldingPlay Field(double mph, double launch, double spray, double spin) =>
             FieldingSolver.Solve(BallInPlaySimulation.Run(new BattedBallLaunch(mph, launch, spray, spin).ToState(Contact), EnvironmentState.Standard, FieldLayout.Standard));
 
+        /// <summary>The same batted ball fielded from the situation's alignment (double-play depth with a runner on first).</summary>
+        private static FieldingPlay In(FieldingPlay f, Situation s) =>
+            s.Bases.First && s.Outs < 2 ? FieldingSolver.Solve(f.Ball, s.Alignment, FielderProfile.For, FieldLayout.Standard) : f;
+
         private static LivePlay Play(FieldingPlay f, int outs, BaseOccupancy bases, RunnerProfile? profile = null)
         {
-            var play = new LivePlay(f, new Situation(outs, bases), profile);
+            var situation = new Situation(outs, bases);
+            var play = new LivePlay(In(f, situation), situation, profile);
             play.RunToEnd();
             AssertEndedForAReason(play);
             return play;
@@ -97,9 +102,9 @@ namespace Pitchlab.Tests
         [Test]
         public void HomeToFirstMatchesTheMlbAverage()
         {
-            // Batter-runner running out a grounder (the force is made at second, so he reaches first): contact → first base
-            // 4.28 s on average (Statcast; RHB 4.30, LHB 4.26).
-            LivePlay play = Play(SsGrounder(), 0, new BaseOccupancy(true, false, false));
+            // Batter-runner running out a slow grounder (the force is made at second, the double play fails, so he reaches
+            // first): contact → first base 4.28 s on average (Statcast; RHB 4.30, LHB 4.26).
+            LivePlay play = Play(Field(70.0, -10.0, -15.0, -900.0), 0, new BaseOccupancy(true, false, false));
             double t = TouchTime(play, Runner.Batter, Base.First) - play.ContactTime;
             Assert.AreEqual(4.28, t, 0.02, "contact → foot on first");
         }
@@ -297,7 +302,7 @@ namespace Pitchlab.Tests
             LivePlay Run(double speed)
             {
                 var p = new RunnerProfile(speed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
-                var play = new LivePlay(f, new Situation(0, on1), p, AtSecond);
+                var play = new LivePlay(In(f, new Situation(0, on1)), new Situation(0, on1), p, AtSecond);
                 play.RunToEnd();
                 return play;
             }
@@ -476,7 +481,7 @@ namespace Pitchlab.Tests
                 LivePlay reference = Play(f, outs, bases);
                 foreach (double step in new[] { 1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0, -1.0 })
                 {
-                    var play = new LivePlay(f, new Situation(outs, bases));
+                    var play = new LivePlay(In(f, new Situation(outs, bases)), new Situation(outs, bases));
                     double t = play.ContactTime;
                     int k = 0;
                     while (!play.IsOver && t < play.ContactTime + 60.0)
@@ -518,7 +523,7 @@ namespace Pitchlab.Tests
             LivePlay first = Play(CenterFieldSingle(), 0, new BaseOccupancy(true, false, false));
             BaseOccupancy after = first.ResultingBases();
             Assert.IsTrue(after.First, "the batter-runner is on first");
-            var next = new LivePlay(SsGrounder(), new Situation(first.Outs, after));
+            var next = new LivePlay(In(SsGrounder(), new Situation(first.Outs, after)), new Situation(first.Outs, after));
             // Every runner of the new play starts on (his lead off) the base he ended the last play on; nobody else.
             foreach (Runner r in after.Runners)
                 Assert.Less((next.RunnerOf(r).PositionAt(next.ContactTime) - BaseLeg.Of(r.From, false).PositionAt(LivePlay.Lead(r.From))).Length, 1e-9);

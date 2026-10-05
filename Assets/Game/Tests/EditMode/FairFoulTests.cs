@@ -1,6 +1,10 @@
 using System;
+using System.Linq;
 using NUnit.Framework;
+using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Gameplay.Play;
+using Pitchlab.Gameplay.Rules;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Field;
@@ -179,6 +183,23 @@ namespace Pitchlab.Tests
             FairFoulResult call = FairFoul.Call(play);
             Assert.AreEqual(BallInPlayCall.Fair, call.Call);
             Assert.AreEqual(CallBasis.FirstLandingBeyondBase, call.Basis);
+        }
+
+        [Test]
+        public void AGroundRuleDoubleAwardsTwoBases()
+        {
+            // The same bounce over the fence, live: a dead ball, every runner and the batter two bases from where they were.
+            BallInPlay ball = Play(new[] { new Vector3d(0, 0.7, 0.9), FirstBaseSide(95.0, -10.0), FirstBaseSide(101.0, -10.0, 4.0), FirstBaseSide(110.0, -10.0) },
+                1, BallPhase.OutOfPlay, BallEventKind.ClearedFence, 2);
+            FieldingPlay f = FieldingSolver.Solve(ball);
+            Assert.AreEqual(FieldingOutcome.OutOfPlay, f.Outcome, "nobody reaches it");
+            var play = new LivePlay(f, new Situation(1, new BaseOccupancy(true, false, false)));
+            play.RunToEnd();
+            Assert.AreEqual(2, play.AwardedBases);
+            Assert.AreEqual(new BaseOccupancy(false, true, true), play.ResultingBases(), "batter on second, runner from first on third");
+            Assert.AreEqual(0, play.Runs);
+            Assert.AreEqual(0, play.OutsMade);
+            Assert.IsTrue(play.Log.Last().Text.Contains("dead ball"));
         }
 
         [Test]

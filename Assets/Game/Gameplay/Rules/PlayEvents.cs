@@ -71,7 +71,7 @@ namespace Pitchlab.Gameplay.Rules
     /// tag plays), each runner at most once, and the out count before and after. Outs are counted once, from the events
     /// themselves, so the catch, the possession and later state changes of the same out can never count it again. The
     /// third out ends the play: nothing after it is recorded (OBR 5.09(d)). Whether a run touched home before it counts
-    /// (OBR 5.08(a) exception) is scoring, not modelled yet.
+    /// (OBR 5.08(a) exception) is decided by the live play (LivePlay.MakeOut).
     /// </summary>
     public sealed class PlayResolution
     {

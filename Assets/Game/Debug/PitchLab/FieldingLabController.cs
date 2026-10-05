@@ -163,6 +163,7 @@ namespace Pitchlab.Sandbox
             Scenario sc = Presets[i];
             var situation = new Situation(sc.Outs, sc.Bases);
             FieldingPlay fielding = FieldingSolver.Solve(play, situation.Alignment, FielderProfile.For, FieldLayout.Standard);
+            _defense.Alignment = situation.Alignment;
             Func<IReadOnlyList<LiveAction>, LiveAction> choose = null;
             if (UseOverride) choose = cs => Override(cs, TargetOverride);
             else if (sc.TagAt is Base tagAt) choose = cs => cs.FirstOrDefault(a => a.Kind == LiveActionKind.Throw && a.Target == tagAt) ?? cs[0];

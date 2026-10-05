@@ -432,6 +432,9 @@ namespace Pitchlab.Gameplay.Play
         private void MakeOut(LiveRunner r, PlayEventKind kind, double time)
         {
             if (r.IsDone) return;
+            // A forced runner tagged off his base is still put out on a force (he lost his right to the base because the
+            // batter became a runner): a force out for OBR 5.08(a), at the base he was forced to.
+            if (kind == PlayEventKind.TagOut && ForcedAt(r, time)) kind = PlayEventKind.ForceOut;
             DefensivePosition? holder = Defense.HolderAt(time);
             Base at = kind == PlayEventKind.ForceOut ? r.Id.Next : kind == PlayEventKind.RetouchOut ? r.LastTouched : NearestBase(r, time);
             r.OutTime = time;

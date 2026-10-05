@@ -24,8 +24,9 @@ namespace Pitchlab.Tests
 
         private static LivePlay Play(double mph, double launch, double spray, double spin, BaseOccupancy bases, int outs = 0)
         {
-            FieldingPlay f = FieldingSolver.Solve(BallInPlaySimulation.Run(new BattedBallLaunch(mph, launch, spray, spin).ToState(Contact), EnvironmentState.Standard, FieldLayout.Standard));
-            var play = new LivePlay(f, new Situation(outs, bases));
+            var situation = new Situation(outs, bases);
+            BallInPlay ball = BallInPlaySimulation.Run(new BattedBallLaunch(mph, launch, spray, spin).ToState(Contact), EnvironmentState.Standard, FieldLayout.Standard);
+            var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, FielderProfile.For, FieldLayout.Standard), situation);
             play.RunToEnd();
             Assert.IsFalse(play.Log.Any(e => e.Text.Contains("time limit")), "the play ended by itself");
             return play;
@@ -134,10 +135,10 @@ namespace Pitchlab.Tests
         [Test]
         public void TheThrowWaitsForTheCoverToReachTheBase()
         {
-            // Runner on first, grounder to short: the second baseman is still running to second when the shortstop could
-            // throw. The shortstop holds the ball until the throw arrives as the cover reaches the bag, and the cover takes
-            // it on the bag (a force needs the foot on the base).
-            LivePlay play = SsGrounder(OnFirst);
+            // Runner on first, two out (normal depth), grounder to short: the second baseman is still running to second when
+            // the shortstop could throw. The shortstop holds the ball until the throw arrives as the cover reaches the bag, and
+            // the cover takes it on the bag (a force needs the foot on the base).
+            LivePlay play = SsGrounder(OnFirst, 2);
             LiveThrow th = play.Defense.Throws.First();
             Assert.AreEqual((SS, B2, (Base?)Base.Second), (th.Thrower, th.Receiver, th.Target));
             Vector3d bag = Flat(FieldLayout.BasePosition(Base.Second));
@@ -212,8 +213,27 @@ namespace Pitchlab.Tests
             // runner — the third out, before he touches the plate: no run.
             LiveThrow th = play.Defense.Throws[0];
             Assert.AreEqual((CF, C, (Base?)Base.Home), (th.Thrower, th.Receiver, th.Target));
+            Assert.IsFalse(play.Defense.Throws.Any(x => x.Receiver == B1), "not cut");
             Assert.IsTrue(play.RulesEvents.Any(e => e.Kind == PlayEventKind.TagOut && e.At == Base.Home));
             Assert.AreEqual(0, play.Runs);
+        }
+
+        [Test]
+        public void TheRelayFollowsTheLeadRunner()
+        {
+            // Runner on first, ball off the wall in left: at contact the relay lines up for second; once the runner rounds
+            // second for third it lines up for third; the left fielder throws to the relay man, who then plays the ball.
+            LivePlay play = WallBall(OnFirst);
+            AssertRole(play, SS, DefensiveRole.Relay, Base.Second);
+            AssertRole(play, SS, DefensiveRole.Relay, Base.Third, SinceTake(play));
+            AssertRole(play, B2, DefensiveRole.Trail, Base.Third, SinceTake(play));
+            LiveThrow th = play.Defense.Throws[0];
+            Assert.AreEqual((LF, SS, (Base?)null), (th.Thrower, th.Receiver, th.Target));
+            Assert.IsTrue(th.Caught);
+            AssertRole(play, SS, DefensiveRole.Primary, null, th.Catch.Time - play.ContactTime + 1e-6);
+            // With two out the runner from first goes on contact on the gap ball: the play is at second, direct.
+            LiveThrow gap = GapBall(OnFirst, 2).Defense.Throws[0];
+            Assert.AreEqual((CF, (Base?)Base.Second), (gap.Thrower, gap.Target), "a close play at second: direct");
         }
 
         [Test]
