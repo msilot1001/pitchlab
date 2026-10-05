@@ -245,6 +245,13 @@ namespace Pitchlab.Sandbox
 
         private readonly MotionTrack[] _motion = Enumerable.Range(0, DefensiveAlignment.Count).Select(_ => new MotionTrack()).ToArray();
         private readonly float[] _shownYaw = new float[DefensiveAlignment.Count];
+        private readonly BodyAction[] _shownAction = new BodyAction[DefensiveAlignment.Count];
+        private readonly FieldingAction[] _gameplayAction = new FieldingAction[DefensiveAlignment.Count];
+
+        /// <summary>Motion debug: the body action shown for <paramref name="p"/> last frame, and the gameplay classification it
+        /// came from.</summary>
+        public BodyAction ShownAction(DefensivePosition p) => _shownAction[(int)p];
+        public FieldingAction GameplayAction(DefensivePosition p) => _gameplayAction[(int)p];
         private readonly object[] _returnKeys = new object[1];
 
         /// <summary>Where a defender wants to face at <paramref name="time"/>, from authoritative state only: the target while
@@ -419,6 +426,8 @@ namespace Pitchlab.Sandbox
             }
             else input.HoldingBall = holding;
 
+            _shownAction[i] = input.TagWeight > 0f ? BodyAction.None : input.Action;
+            _gameplayAction[i] = take?.Action ?? FieldingAction.None;
             FieldingPoser.Compose(input, _pose);
             GroundFeet(root, rotation);
             if (adopted && d != null)

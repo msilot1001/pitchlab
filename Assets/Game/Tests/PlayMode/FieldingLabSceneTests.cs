@@ -66,6 +66,7 @@ namespace Pitchlab.Tests
             for (int k = 0; k < FieldingLabController.Presets.Length; k++)
             {
                 FieldingPlay f = Launch(k);
+                if (_lab.Live.AwardedBases > 0) continue;   // a home run: nobody fields it (the trot preset)
                 Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome, $"{FieldingLabController.Presets[k].Name} is fielded");
                 DefensivePosition p = f.Primary.Value;
                 // Before the take the shown ball is still the free trajectory.
@@ -292,7 +293,8 @@ namespace Pitchlab.Tests
                         bool gone = r.IsOut && t > r.OutTime + RunnerView.LingerAfterOut || r.HasScored && t > r.ScoreTime + RunnerView.LingerAfterScore;
                         Assert.AreEqual(!gone, m.gameObject.activeSelf, $"{name}: {r.Id} shown at +{t - t0:0.0}");
                         if (gone) continue;
-                        Assert.Less(Vector3.Distance(Flat(m.transform.position), Flat(SimulationSpace.ToUnity(r.PositionAt(t)))), 1e-4f, $"{name}: {r.Id} at +{t - t0:0.0}");
+                        // Exactly the gameplay runner, plus the documented bag-side offset when standing on a base (TASK-011.7).
+                        Assert.Less(Vector3.Distance(Flat(m.transform.position), Flat(SimulationSpace.ToUnity(r.PositionAt(t)) + RunnerView.BagSide(r, t))), 1e-4f, $"{name}: {r.Id} at +{t - t0:0.0}");
                         // Faces where he runs once he has been running that way for a moment (TASK-011.5: the figure turns at a
                         // limited rate — no instant 180° — so right after the break or a reversal it is still turning).
                         Vector3 now = SimulationSpace.ToUnity(r.HeadingAt(t)).normalized, before = SimulationSpace.ToUnity(r.HeadingAt(t - 0.3)).normalized;

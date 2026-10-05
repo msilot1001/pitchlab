@@ -94,6 +94,10 @@ namespace Pitchlab.Sandbox
                     root = Vector3.Lerp(new Vector3(batterFrom.Value.x, 0f, batterFrom.Value.z), root, u);
                 }
 
+                // Standing on a bag he is shown on its outside edge (a foot on it), clear of a fielder covering it from the
+                // infield side (DefenseView.BagSide) — presentation only, gone once he runs.
+                root += BagSide(r, time);
+
                 MotionTrack track = Track(r.Id.From);
                 LiveRunner runner = r;
                 if (!track.Follows(play)) track.Follow(play, play.ContactTime, YawOf(Facing(runner, play.ContactTime)), t => Sample(runner, t));
@@ -104,8 +108,21 @@ namespace Pitchlab.Sandbox
                 var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN };
                 Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
                 Action(play, r, time, root, rotation, ref input);
+                _shown[r.Id.From] = input.Action;
                 Pose(m, root, yaw, velocity, phase, accel, speed * track.TurnRate(time) * Mathf.Deg2Rad, input);
             }
+        }
+
+        /// <summary>A runner standing on a bag is shown this far (m) from its centre, away from the mound.</summary>
+        public const float RunnerBagSide = 0.3f;
+
+        /// <summary>The presentation offset of a runner standing on a bag (zero elsewhere, fading out as he runs).</summary>
+        public static Vector3 BagSide(LiveRunner r, double time)
+        {
+            if (!r.TouchingBaseAt(time, out Base on) || on == Base.Home) return Vector3.zero;
+            Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(on));
+            float still = 1f - Mathf.SmoothStep(0f, 1f, (float)r.SpeedAt(time) / 2f);
+            return (bag - Mound).normalized * (RunnerBagSide * still);
         }
 
         /// <summary>Time a runner stays down after a slide before getting up (s).</summary>
@@ -176,6 +193,10 @@ namespace Pitchlab.Sandbox
         }
 
         private readonly Dictionary<Base, MotionTrack> _tracks = new Dictionary<Base, MotionTrack>();
+        private readonly Dictionary<Base, BodyAction> _shown = new Dictionary<Base, BodyAction>();
+
+        /// <summary>Motion debug: the body action shown for a runner last frame.</summary>
+        public BodyAction ShownAction(Runner r) => _shown.TryGetValue(r.From, out BodyAction a) ? a : BodyAction.None;
 
         private MotionTrack Track(Base from)
         {
