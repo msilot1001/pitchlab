@@ -105,8 +105,13 @@ namespace Pitchlab.Sandbox
         /// <summary>Who had the ball when the play ended: he keeps it in his glove as he jogs back.</summary>
         private DefensivePosition? _returnHolder;
 
-        /// <summary>A new pitch: the delivery has the pitcher (whatever is left of his jog back).</summary>
-        public void EndPitcherReturn() => _pitcherReturning = false;
+        /// <summary>A new pitch: the delivery has the pitcher (whatever is left of his jog back) and the ball — the fielder who
+        /// ended the last play with it no longer holds it.</summary>
+        public void EndPitcherReturn()
+        {
+            _pitcherReturning = false;
+            _returnHolder = null;
+        }
         private bool Returning => _defense == null && Clock() - _returnStart < ReturnTime;
 
         /// <summary>Poses every defender for <paramref name="defense"/> at play time <paramref name="time"/> (null: ready at the

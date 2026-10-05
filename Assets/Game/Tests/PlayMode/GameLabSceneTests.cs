@@ -114,6 +114,27 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheNextPitchIsThrownWithTheBall()
+        {
+            // Regression: after a play the fielder who had the ball keeps it while he jogs back — but the next pitch must
+            // start from the pitcher's hand and fly on the pitch trajectory, not stay in that fielder's glove.
+            yield return null;
+            LivePlay play = Swing(0.0, 0.0);
+            Assert.IsNotNull(play.Defense.HolderAt(double.MaxValue), "a fielder ends the play with the ball");
+            for (double t = play.ContactTime; t < play.EndTime + HittingLabPresentation.ResultPause; t += 0.25) At(t);   // the play as shown
+            double over = _release + play.EndTime + HittingLabPresentation.ResultPause + 0.01;
+            Frame(over);
+            Frame(over + 2.0);
+            _lab.PressSwingButton(_now);
+            _release = _now + _lab.DeliveryLead;
+            At(-0.4);
+            Assert.Less(Vector3.Distance(_view.Pitcher.BallAnchor.position, _lab.BallTransform.position), 1e-4f, "in the pitcher's hand");
+            At(0.2);
+            Vector3 pitch = SimulationSpace.ToUnity(_lab.CurrentPitch.Flight.StateAt(_lab.RenderedSimTime).Position);
+            Assert.Less(Vector3.Distance(pitch, _lab.BallTransform.position), 1e-4f, "on the pitch trajectory");
+        }
+
+        [UnityTest]
         public IEnumerator TheThirdOutChangesTheHalfInning()
         {
             yield return null;
