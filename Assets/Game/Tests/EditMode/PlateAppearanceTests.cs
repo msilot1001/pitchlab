@@ -149,7 +149,7 @@ namespace Pitchlab.Tests
         public void EachBatterIsCalledAgainstHisOwnZone()
         {
             // The zone scales with height (the default zone is the 73-in batter's); every lineup height still calls each
-            // aimed location as aimed.
+            // target as aimed (targets are relative to the batter's zone).
             Lineup away = Lineup.GenericAway();
             PlayerProfile small = away[1], average = away[2], tall = away[3];
             Assert.AreEqual((70.0, 73.0, 76.0), (small.HeightInches, average.HeightInches, tall.HeightInches));
@@ -158,13 +158,12 @@ namespace Pitchlab.Tests
             Assert.Less(small.ZoneTop, average.ZoneTop);
             Assert.Greater(tall.ZoneBottom, average.ZoneBottom);
             foreach (PlayerProfile batter in new[] { small, average, tall })
-                foreach (PitchInput preset in PitchPresets.All)
-                    foreach (PitchLocation location in PitchLocation.All)
+                for (int preset = 0; preset < PitchPresets.All.Length; preset++)
+                    foreach (PitchTarget target in PitchTargets.All)
                     {
-                        HittingPitch pitch = HittingPitch.Create(location.Aim(preset), EnvironmentState.Standard);
-                        bool strike = !location.Name.StartsWith("Ball");
-                        Assert.AreEqual(strike ? PitchOutcome.CalledStrike : PitchOutcome.Ball,
-                            PitchOutcomes.Of(pitch, null, null, null, batter.ZoneBottom, batter.ZoneTop), $"{batter.HeightInches} in, {preset.Label} {location}");
+                        HittingPitch pitch = PitchTargets.Create(new PitchCommand(preset, target), batter.ZoneBottom, batter.ZoneTop, EnvironmentState.Standard);
+                        Assert.AreEqual(PitchTargets.InZone(target) ? PitchOutcome.CalledStrike : PitchOutcome.Ball,
+                            PitchOutcomes.Of(pitch, null, null, null, batter.ZoneBottom, batter.ZoneTop), $"{batter.HeightInches} in, {PitchPresets.All[preset].Label} {target}");
                     }
 
             // A pitch at the knees of the tall batter's zone but below the small one's top is judged by the batter.
@@ -234,7 +233,7 @@ namespace Pitchlab.Tests
             // The same pitch, aimed up in the zone, is above a short batter's zone and inside a tall one's.
             var shortOne = new PlayerProfile("S", "Short", BatterSide.Right, 60.0, "");
             var tallOne = new PlayerProfile("T", "Tall", BatterSide.Right, 86.0, "");
-            HittingPitch up = HittingPitch.Create(PitchLocation.All.Single(l => l.Name == "Up").Aim(PitchPresets.FourSeam), EnvironmentState.Standard);
+            HittingPitch up = HittingPitch.Create(PitchTargets.Aim(PitchPresets.FourSeam, 0.0, 0.98, EnvironmentState.Standard), EnvironmentState.Standard);
             Assert.AreEqual(PitchOutcome.Ball, PitchOutcomes.Of(up, null, null, null, shortOne.ZoneBottom, shortOne.ZoneTop));
             Assert.AreEqual(PitchOutcome.CalledStrike, PitchOutcomes.Of(up, null, null, null, tallOne.ZoneBottom, tallOne.ZoneTop));
         }

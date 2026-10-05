@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Simulation.BallFlight;
+using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Pitching;
 
 namespace Pitchlab.Tests
@@ -71,19 +72,46 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void EveryPresetAtEveryLocationIsCalledAsAimed()
+        public void EveryPresetAtEveryTargetIsCalledAsAimed()
         {
-            // The physics decides where each aimed pitch crosses; the strike locations are strikes and the ball locations
-            // balls for every preset (the call reads the crossing, never the location's name).
-            foreach (PitchInput preset in PitchPresets.All)
-                foreach (PitchLocation location in PitchLocation.All)
+            // The physics decides where each aimed pitch crosses; the zone targets are strikes and the ball targets balls for
+            // every preset (the call reads the crossing, never the target).
+            for (int preset = 0; preset < PitchPresets.All.Length; preset++)
+                foreach (PitchTarget target in PitchTargets.All)
                 {
-                    HittingPitch pitch = HittingPitch.Create(location.Aim(preset), EnvironmentState.Standard);
+                    HittingPitch pitch = PitchTargets.Create(new PitchCommand(preset, target), StrikeZone.Bottom, StrikeZone.Top, EnvironmentState.Standard);
                     (double x, double z) = StrikeZone.Crossing(pitch);
-                    bool aimedAtZone = !location.Name.StartsWith("Ball");
-                    Assert.AreEqual(aimedAtZone, StrikeZone.IsStrike(pitch), $"{preset.Label} {location}: crosses at x {x:0.000} z {z:0.000}");
+                    bool aimedAtZone = PitchTargets.InZone(target);
+                    Assert.AreEqual(aimedAtZone, StrikeZone.IsStrike(pitch), $"{PitchPresets.All[preset].Label} {target}: crosses at x {x:0.000} z {z:0.000}");
                     Assert.AreEqual(aimedAtZone ? PitchOutcome.CalledStrike : PitchOutcome.Ball, PitchOutcomes.Of(pitch, null, null, null));
+                    // The aim converges on the target (a few centimetres at most), from a pure release-angle change.
+                    (double tx, double tz) = PitchTargets.Point(target, StrikeZone.Bottom, StrikeZone.Top);
+                    Assert.Less(System.Math.Sqrt((x - tx) * (x - tx) + (z - tz) * (z - tz)), 0.03, $"{PitchPresets.All[preset].Label} {target}");
+                    Assert.AreEqual(PitchPresets.All[preset].SpeedMph, Units.MetersPerSecondToMph(pitch.Flight.First.Velocity.Length), 1e-9, "speed is the preset's");
                 }
+        }
+
+        [Test]
+        public void TargetsSitInsideTheZoneWithAMarginOrClearlyOutside()
+        {
+            double r = BallProperties.Baseball.Radius;
+            foreach (PitchTarget t in PitchTargets.All)
+            {
+                (double x, double z) = PitchTargets.Point(t, StrikeZone.Bottom, StrikeZone.Top);
+                // Inside: ≥ 10 cm from the (ball-widened) edges; outside: ≥ 10 cm beyond them.
+                double margin = System.Math.Min(StrikeZone.HalfWidth + r - System.Math.Abs(x), System.Math.Min(z - (StrikeZone.Bottom - r), StrikeZone.Top + r - z));
+                if (PitchTargets.InZone(t)) Assert.Greater(margin, 0.1, t.ToString());
+                else Assert.Less(margin, -0.1, t.ToString());
+            }
+
+            // Relative to the batter's zone: exact positions for a zone from 0.5 to 1.2 m.
+            Assert.AreEqual((0.0, 0.85 + 0.6 * 0.35), PitchTargets.Point(PitchTarget.UpMiddle, 0.5, 1.2));
+            Assert.AreEqual((-0.6 * StrikeZone.HalfWidth, 0.85 - 0.6 * 0.35), PitchTargets.Point(PitchTarget.DownLeft, 0.5, 1.2));
+            Assert.AreEqual((0.0, 1.2 + PitchTargets.Beyond), PitchTargets.Point(PitchTarget.BallUp, 0.5, 1.2));
+            Assert.AreEqual((StrikeZone.HalfWidth + PitchTargets.Wide, 0.85), PitchTargets.Point(PitchTarget.BallRight, 0.5, 1.2));
+            // Catcher's view: left is the third-base side.
+            Assert.Less(PitchTargets.Point(PitchTarget.MiddleLeft, StrikeZone.Bottom, StrikeZone.Top).X, 0.0);
+            Assert.Greater(PitchTargets.Point(PitchTarget.UpMiddle, StrikeZone.Bottom, StrikeZone.Top).Z, PitchTargets.Point(PitchTarget.DownMiddle, StrikeZone.Bottom, StrikeZone.Top).Z);
         }
 
         [Test]
@@ -100,7 +128,7 @@ namespace Pitchlab.Tests
         [Test]
         public void ASwingWithoutContactIsASwingingStrikeWhereverThePitchIs()
         {
-            HittingPitch ball = HittingPitch.Create(PitchLocation.All[5].Aim(PitchPresets.FourSeam), EnvironmentState.Standard);
+            HittingPitch ball = PitchTargets.Create(new PitchCommand(0, PitchTarget.BallUp), StrikeZone.Bottom, StrikeZone.Top, EnvironmentState.Standard);
             Assert.IsFalse(StrikeZone.IsStrike(ball));
             var swing = new SwingInput(ball.IdealContactTime - 0.15, 0.0, 0.0);
             ContactResult miss = ContactResolver.Resolve(ball, swing, SwingParameters.Default);

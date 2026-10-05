@@ -62,13 +62,22 @@ namespace Pitchlab.Tests
 
         private Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
+        /// <summary>The TASK-012 location names on the TASK-014 targets.</summary>
+        private static PitchTarget T(string location) => location switch
+        {
+            "Middle" => PitchTarget.Middle, "Up" => PitchTarget.UpMiddle, "Down" => PitchTarget.DownMiddle,
+            "In" => PitchTarget.MiddleLeft, "Away" => PitchTarget.MiddleRight, "Ball high" => PitchTarget.BallUp,
+            "Ball low" => PitchTarget.BallDown, "Ball in" => PitchTarget.BallLeft, "Ball away" => PitchTarget.BallRight,
+            _ => throw new System.ArgumentException(location),
+        };
+
         private static Lineup RightHanded(string team) =>
             new Lineup(team, Enumerable.Range(1, 9).Select(i => new PlayerProfile($"{team}{i}", $"{team} {i}", BatterSide.Right, 73.0, "")).ToArray());
 
         /// <summary>Throws the next pitch at <paramref name="location"/> and takes it; returns once its result is applied.</summary>
         private void Take(string location)
         {
-            _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == location);
+            _lab.Target = T(location);
             _lab.PressSwingButton(_now);
             _release = _now + _lab.DeliveryLead;
             double end = _lab.CurrentPitch.Flight.Final.Time;
@@ -84,7 +93,7 @@ namespace Pitchlab.Tests
         {
             yield return null;
             GameState game = _lab.Game;
-            _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == "Ball high");
+            _lab.Target = T("Ball high");
             _lab.PressSwingButton(_now);
             _release = _now + _lab.DeliveryLead;
             HittingPitch pitch = _lab.CurrentPitch;
@@ -98,7 +107,7 @@ namespace Pitchlab.Tests
             // A press stamped just before the end of the pitch but delivered a frame after it still swings (the take waits
             // InputGrace); one delivered after the take was counted cannot swing.
             At(decided + BattingStateMachine.ResultPause + 0.5);
-            _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == "Ball high");
+            _lab.Target = T("Ball high");
             _lab.PressSwingButton(_now);
             _release = _now + _lab.DeliveryLead;
             double end = _lab.CurrentPitch.Flight.Final.Time;
@@ -176,7 +185,7 @@ namespace Pitchlab.Tests
             // The first batter swings through three pitches: his finish is still up when the loop is ready again.
             for (int i = 0; i < 3; i++)
             {
-                _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == "Ball high");
+                _lab.Target = T("Ball high");
                 _lab.PressSwingButton(_now);
                 _release = _now + _lab.DeliveryLead;
                 HittingPitch pitch = _lab.CurrentPitch;
@@ -219,7 +228,7 @@ namespace Pitchlab.Tests
                 GameState game = _lab.Game;
                 foreach (string location in new[] { "Ball high", "Middle", "Ball low", "Down", "Ball in", "Ball away", "Up", "Middle", "Middle", "Middle", "Middle", "Middle" })
                 {
-                    _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == location);
+                    _lab.Target = T(location);
                     _lab.PressSwingButton(_now);
                     _release = _now + _lab.DeliveryLead;
                     HittingPitch pitch = _lab.CurrentPitch;
@@ -283,16 +292,14 @@ namespace Pitchlab.Tests
         public IEnumerator TheCallUsesTheBattersOwnZone()
         {
             yield return null;
-            // A short leadoff man and a tall second batter: "Up" is above the first one's zone and inside the second's.
+            // A very tall leadoff man: the "up" target of his zone is 8 cm above the default zone's top — a strike for him only.
             PlayerProfile Make(string id, double height) => new PlayerProfile(id, id, BatterSide.Right, height, "");
-            var away = new Lineup("Away", new[] { Make("S", 60.0), Make("T", 86.0) }.Concat(Enumerable.Range(3, 7).Select(i => Make($"A{i}", 73.0))).ToArray());
+            var away = new Lineup("Away", new[] { Make("T", 92.0) }.Concat(Enumerable.Range(2, 8).Select(i => Make($"A{i}", 73.0))).ToArray());
             _lab.NewGame(new GameState(away, RightHanded("Home")));
             Take("Up");
-            Assert.AreEqual(PitchOutcome.Ball, _lab.LastOutcome);
-            for (int i = 0; i < 3; i++) Take("Ball high");   // walk the short batter
-            Assert.AreEqual("T", _lab.Game.Batter.Id);
-            Take("Up");
-            Assert.AreEqual(PitchOutcome.CalledStrike, _lab.LastOutcome);
+            (double x, double z) = StrikeZone.Crossing(_lab.CurrentPitch);
+            Assert.IsFalse(StrikeZone.Contains(x, z), "outside the default zone");
+            Assert.AreEqual(PitchOutcome.CalledStrike, _lab.LastOutcome, "inside his");
         }
 
         [UnityTest]
