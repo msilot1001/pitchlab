@@ -178,10 +178,16 @@ namespace Pitchlab.Tests
 
             Assert.That(past / 0.3048, Is.InRange(15.0, 40.0), "overruns first (15–25 ft reported for an average runner; v²/2a ≈ 36 ft for this faster one)");
             Assert.Less(closest, TagRules.Reach, "the first baseman with the ball is within tag reach as he walks back");
+            // The ball is live until he is back on the bag: the protection, not the end of the play, keeps him safe.
+            bool liveInReach = false;
+            for (double t = touch + 0.5; t < play.EndTime; t += 0.005)
+                if (play.Defense.HolderAt(t) == DefensivePosition.FirstBase && !batter.TouchingBaseAt(t, out _)
+                    && (play.Defense.FielderPositionAt(DefensivePosition.FirstBase, t) - batter.PositionAt(t)).Length < TagRules.Reach)
+                    liveInReach = true;
+            Assert.IsTrue(liveInReach, "in reach, off the bag, while the play is live");
             Assert.IsFalse(batter.IsOut, "never tagged while returning from the overrun");
             Assert.IsTrue(play.ResultingBases().First, "safe at first");
-            Vector3d end = batter.PositionAt(play.EndTime + 10.0);
-            Assert.Less((end - FieldLayout.BasePosition(Base.First)).Length, 0.05, "back on the bag");
+            Assert.Less((batter.PositionAt(play.EndTime) - FieldLayout.BasePosition(Base.First)).Length, 0.05, "the play ends with him back on the bag");
         }
 
         // ---------------------------------------------------------------- decisions

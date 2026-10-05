@@ -181,7 +181,9 @@ namespace Pitchlab.Sandbox
             BallInPlay inPlay = _lab.LastPlay;
             double possession = _lab.LastFielding?.PossessionTime ?? double.PositiveInfinity;
             LiveDefense defense = _lab.LastDefense;
-            bool moving = defense != null ? defense.AuthorityAt(t) != BallAuthority.Possessed && !(_lab.LastLive.IsOver && t >= _lab.LastLive.EndTime)
+            // A trail while the ball is loose and actually moving (not in a glove or a hand, not at rest on the grass).
+            bool moving = defense != null
+                ? defense.AuthorityAt(t) != BallAuthority.Possessed && (defense.BallPositionAt(t) - defense.BallPositionAt(t - 0.05)).Length > 1e-3
                 : inPlay == null || t < inPlay.EndTime;
             _trail.emitting = !held && moving;
             // Keep the ball a few pixels wide however far it flies (centre stays on the authoritative trajectory).

@@ -134,7 +134,8 @@ namespace Pitchlab.Gameplay.Play
             Vector3d ball = s.BallPoint;
             bool leftSide = ball.X < 0.0;
             Vector3d fielded = s.FieldedAt;
-            bool deep = !s.InfieldBall && new Vector3d(fielded.X, fielded.Y, 0.0).Length > RelayDepth;
+            // A ball in play fielded deep is relayed; a caught fly comes back through the cut-off.
+            bool deep = !s.InfieldBall && !s.FlyCaught && new Vector3d(fielded.X, fielded.Y, 0.0).Length > RelayDepth;
             Vector3d Bag(Base b) => FieldLayout.BasePosition(b);
             Base target = s.LikelyThrow;
 

@@ -160,14 +160,15 @@ namespace Pitchlab.Sandbox
             int i = ((index % Presets.Length) + Presets.Length) % Presets.Length;
             // Computed first, assigned together: a failure leaves the previous play whole.
             BallInPlay play = BallInPlaySimulation.Run(Presets[i].Launch.ToState(ContactPoint), EnvironmentState.Standard, FieldLayout.Standard);
-            FieldingPlay fielding = FieldingSolver.Solve(play);
             Scenario sc = Presets[i];
+            var situation = new Situation(sc.Outs, sc.Bases);
+            FieldingPlay fielding = FieldingSolver.Solve(play, situation.Alignment, FielderProfile.For, FieldLayout.Standard);
             Func<IReadOnlyList<LiveAction>, LiveAction> choose = null;
             if (UseOverride) choose = cs => Override(cs, TargetOverride);
             else if (sc.TagAt is Base tagAt) choose = cs => cs.FirstOrDefault(a => a.Kind == LiveActionKind.Throw && a.Target == tagAt) ?? cs[0];
             // The live play (TASK-007) with real runners, resolved at once: every motion keeps its history, so it renders
             // exactly at any later time.
-            var live = new LivePlay(fielding, new Situation(sc.Outs, sc.Bases), null, choose,
+            var live = new LivePlay(fielding, situation, null, choose,
                 sc.RunsOnContact is Base runs ? r => r.From == runs : (Func<Runner, bool>)null);
             live.RunToEnd();
             PresetIndex = i;

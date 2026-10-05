@@ -92,7 +92,6 @@ namespace Pitchlab.Gameplay.Play
     /// </summary>
     public sealed class LiveDefense : IDefenseTimeline
     {
-        private static readonly DefensiveAlignment Alignment = DefensiveAlignment.Standard;
         /// <summary>A loose ball is reacted to this long after it first touches the ground (s; ASSUMED).</summary>
         public const double LooseReaction = 0.2;
 
@@ -110,13 +109,17 @@ namespace Pitchlab.Gameplay.Play
             public LiveThrow Next;
             /// <summary>He has acted on this hold (a decision was carried out).</summary>
             public bool Acted;
+            /// <summary>An out was just made with this ball: the next throw is the turn of a double play, at full effort.</summary>
+            public bool Turn;
         }
 
         private readonly LivePlay _play;
+        /// <summary>Where the defenders stood at contact (the alignment the fielding play was solved with).</summary>
+        private readonly DefensiveAlignment _alignment;
         private readonly FielderTrack[] _tracks = new FielderTrack[DefensiveAlignment.Count];
         private readonly double[] _onPoint = new double[DefensiveAlignment.Count];
-        private readonly Dictionary<(DefensivePosition, DefensivePosition, double, double, double, double, int, int), LiveThrow> _plans =
-            new Dictionary<(DefensivePosition, DefensivePosition, double, double, double, double, int, int), LiveThrow>();
+        private readonly Dictionary<(DefensivePosition, DefensivePosition, double, double, double, double, double, int, int), LiveThrow> _plans =
+            new Dictionary<(DefensivePosition, DefensivePosition, double, double, double, double, double, int, int), LiveThrow>();
         private readonly List<Segment> _ball = new List<Segment>();
         private readonly List<BallTake> _takes = new List<BallTake>();
         private readonly List<LiveThrow> _throws = new List<LiveThrow>();
@@ -142,6 +145,9 @@ namespace Pitchlab.Gameplay.Play
             }
 
             _ball.Add(new Segment { Kind = SegmentKind.Free, Start = t0, Free = f.Ball });
+            var start = new Vector3d[DefensiveAlignment.Count];
+            for (int i = 0; i < start.Length; i++) start[i] = f.Motion((DefensivePosition)i).Start;
+            _alignment = new DefensiveAlignment(start);
         }
 
         public IReadOnlyList<BallTake> Takes => _takes;
@@ -329,6 +335,7 @@ namespace Pitchlab.Gameplay.Play
             if (!(h is DefensivePosition holder) || !IdleAt(t)) return;
             Segment s = SegmentAt(t);
             if (!s.Acted) return;   // his decision on this take is still to come (and will see the out)
+            s.Turn = true;
             _play.ScheduleDefense(t, () => Decide(holder, s.Start, t), "after out");
         }
 
@@ -396,7 +403,7 @@ namespace Pitchlab.Gameplay.Play
             bool infield = !DefensiveDecision.IsOutfielder(f.Primary.Value) && !DefensiveDecision.IsOutfielder(ballPlayer);
             var situation = new DefensiveCoordinator.Situation(ballPlayer, ballPoint, f.Intercept.Ball.Position, infield, _play.Kind == LivePlay.BallKind.Caught,
                 throwing?.Target ?? LikelyThrow(t, !infield), throwing?.Receiver, throwing?.Target);
-            RoleAssignment[] roles = DefensiveCoordinator.Assign(situation, Alignment);
+            RoleAssignment[] roles = DefensiveCoordinator.Assign(situation, _alignment);
             RoleAssignment[] previous = _roles.Count > 0 ? _roles[_roles.Count - 1].Roles : null;
             _roles.Add((t, roles));
             for (int i = 0; i < roles.Length; i++)
@@ -465,12 +472,14 @@ namespace Pitchlab.Gameplay.Play
             point = default;
             RoleAssignment[] roles = RolesAt(t);
             if (roles == null) return null;
-            foreach (RoleAssignment r in roles)
-                if (r.Role == DefensiveRole.Relay || r.Role == DefensiveRole.Cutoff)
-                {
-                    point = r.Point;
-                    return r.Position;
-                }
+            // The relay man first (on a relayed ball the first baseman is also a cut-off, for home, in line from the relay).
+            foreach (DefensiveRole role in new[] { DefensiveRole.Relay, DefensiveRole.Cutoff })
+                foreach (RoleAssignment r in roles)
+                    if (r.Role == role)
+                    {
+                        point = r.Point;
+                        return r.Position;
+                    }
 
             return null;
         }
@@ -481,7 +490,9 @@ namespace Pitchlab.Gameplay.Play
         {
             var list = new List<LiveAction> { new LiveAction(LiveActionKind.Hold, null, h, t, null, double.PositiveInfinity, false, null, null, null) };
             FielderTrack holder = _tracks[(int)h];
-            ThrowProfile arm = ThrowProfile.For(h);
+            // Full effort on the turn of a double play and from the outfield (Statcast's arm strength is measured on those
+            // competitive throws); an infielder's routine throw otherwise.
+            ThrowProfile arm = SegmentAt(t).Turn || DefensiveDecision.IsOutfielder(h) ? ThrowProfile.Full(h) : ThrowProfile.For(h);
             double ready = Math.Max(t, took + arm.TransferTime);
             var planned = new Dictionary<Base, LiveThrow>();
 
@@ -519,7 +530,7 @@ namespace Pitchlab.Gameplay.Play
                     else
                     {
                         if (!planned.TryGetValue(b, out LiveThrow th))
-                            planned[b] = th = Plan(h, ready, c, _onPoint[(int)c], bag, b);
+                            planned[b] = th = Plan(h, arm, ready, c, _onPoint[(int)c], bag, b);
                         // A force (or retouch) is complete only with the receiver on the bag; a tag play when he has the ball (the
                         // tag allowance is added). A catch off the bag for a force does not complete it (he decides again).
                         double done = !th.Caught ? double.PositiveInfinity
@@ -543,7 +554,7 @@ namespace Pitchlab.Gameplay.Play
                 Vector3d from = holder.PositionAt(ready), there = cutTrack.PositionAt(ready);
                 for (int i = 0; i < 2; i++)
                     there = cutTrack.PositionAt(ready + new Vector3d(there.X - from.X, there.Y - from.Y, 0.0).Length / arm.Speed);
-                LiveThrow th = Plan(h, ready, cut, double.NegativeInfinity, there, null);
+                LiveThrow th = Plan(h, arm, ready, cut, double.NegativeInfinity, there, null);
                 list.Add(new LiveAction(LiveActionKind.Throw, null, cut, th.Caught ? th.Catch.Time : double.PositiveInfinity, null, double.PositiveInfinity, false, th, null, "cut-off"));
             }
 
@@ -552,12 +563,12 @@ namespace Pitchlab.Gameplay.Play
 
         /// <summary>A planned throw, reused while nothing it depends on has changed (the holder's options are evaluated at the
         /// take and again at the commit; the throws are mostly the same).</summary>
-        private LiveThrow Plan(DefensivePosition h, double ready, DefensivePosition receiver, double onPoint, Vector3d point, Base? target)
+        private LiveThrow Plan(DefensivePosition h, ThrowProfile arm, double ready, DefensivePosition receiver, double onPoint, Vector3d point, Base? target)
         {
             FielderTrack from = _tracks[(int)h], to = _tracks[(int)receiver];
-            var key = (h, receiver, point.X, point.Y, ready, onPoint, from.Version, to.Version);
+            var key = (h, receiver, point.X, point.Y, ready, arm.Speed, onPoint, from.Version, to.Version);
             if (_plans.TryGetValue(key, out LiveThrow th)) return th;
-            th = ThrowPlanner.PlanLive(h, from, ready, ThrowProfile.For(h), receiver, to, onPoint, point, target, _play.Environment, _play.Field);
+            th = ThrowPlanner.PlanLive(h, from, ready, arm, receiver, to, onPoint, point, target, _play.Environment, _play.Field);
             _plans[key] = th;
             return th;
         }

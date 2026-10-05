@@ -334,9 +334,12 @@ namespace Pitchlab.Tests
             StringAssert.EndsWith($"{Units.MetersToFeet(_lab.ShownCarry):0} ft", _view.Feedback(_lab.RenderedSimTime));
             At(play.EndTime + 0.01);
             if (play.EndPhase == BallPhase.Rest) StringAssert.EndsWith($"(rests {Units.MetersToFeet(play.FinalDistance):0} ft)", _view.Banner);
+            // The result once the live play is over (runners settled — it can outlast the ball's roll).
+            double over = System.Math.Max(play.EndTime, _lab.PlayEnd);
+            At(over + 0.01);
             Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
             Assert.IsTrue(_camera.IsFollowing);
-            At(play.EndTime + BattingStateMachine.ResultPause + 0.01);
+            At(over + BattingStateMachine.ResultPause + 0.01);
             Assert.AreEqual(BattingState.Ready, _lab.StateAt(_now));
             Assert.AreEqual("Click to pitch", _view.Feedback(_lab.RenderedSimTime));
             Assert.IsFalse(_camera.IsFollowing, "back to the batting view when ready");
