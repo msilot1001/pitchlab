@@ -146,6 +146,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Bases awarded to every runner and the batter (OBR 5.05(a)): 4 for a fair ball over the fence on the fly, 2 for
         /// one that bounces out of the park; 0 otherwise. The ball is dead: the runners advance under the running law, no play.</summary>
         public int AwardedBases { get; }
+        /// <summary>A foul: the ball is dead without an award (a home run or ground-rule double is dead with one).</summary>
+        public bool IsFoul => Kind == BallKind.Dead && AwardedBases == 0;
         /// <summary>The live defense: every defender's role and motion, the ball and who has it, the throws, the decisions.</summary>
         public LiveDefense Defense { get; }
         public FieldLayout Field => FieldLayout.Standard;

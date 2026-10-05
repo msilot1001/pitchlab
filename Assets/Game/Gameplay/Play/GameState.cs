@@ -26,10 +26,10 @@ namespace Pitchlab.Gameplay.Play
     }
 
     /// <summary>
-    /// The authoritative game state (TASK-010): inning, half, outs, score, bases, the plate appearance. Changed only by the
-    /// result of a finished play (<see cref="Apply"/>) or by the Situation Editor between plays (<see cref="Set"/>).
-    /// No ball/strike count: a pitch that is not put in play (take, miss) or a foul leaves the plate appearance as it is; a
-    /// fair ball (in play or out of the park) ends it.
+    /// The authoritative game state (TASK-010): inning, half, outs, score, bases, the plate appearance and its ball/strike
+    /// count (TASK-012). Changed only by the result of a pitch (<see cref="Pitch"/>), of a finished play (<see cref="Apply"/>)
+    /// or by the Situation Editor between plays (<see cref="Set"/>). A walk, a strikeout or a fair ball (in play or out of
+    /// the park) ends the plate appearance.
     /// </summary>
     public sealed class GameState
     {
@@ -49,7 +49,7 @@ namespace Pitchlab.Gameplay.Play
 
         private readonly int[] _score = new int[2];
         private readonly List<string> _log = new List<string>();
-        private (int Inning, Half Half, int Outs, BaseOccupancy Bases, int Away, int Home, int Pa, int Log) _paStart;
+        private (int Inning, Half Half, int Outs, BaseOccupancy Bases, int Away, int Home, int Pa, int Log, Count Count) _paStart;
         private LivePlay _lastApplied;
 
         public GameState() => _paStart = Snapshot();
@@ -58,6 +58,8 @@ namespace Pitchlab.Gameplay.Play
         public Half Half { get; private set; } = Half.Top;
         public int Outs { get; private set; }
         public BaseOccupancy Bases { get; private set; } = BaseOccupancy.Empty;
+        /// <summary>The current plate appearance's count (0–0 before its first pitch).</summary>
+        public Count Count { get; private set; }
         public int AwayScore => _score[0];
         public int HomeScore => _score[1];
         /// <summary>Plate appearances completed in the game (the current one is number <see cref="PlateAppearance"/> + 1).</summary>
@@ -67,7 +69,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The situation the next pitch is thrown in.</summary>
         public Situation Situation => new Situation(Outs, Bases);
 
-        /// <summary>The Situation Editor (between plays only — the caller locks it during a live play).</summary>
+        /// <summary>The Situation Editor (between plays only — the caller locks it during a live play). The count is kept;
+        /// RESET PA then returns to the edited situation at 0–0.</summary>
         public void Set(int inning, Half half, int outs, BaseOccupancy bases, int away, int home)
         {
             if (inning < 1) throw new ArgumentOutOfRangeException(nameof(inning));
@@ -80,42 +83,81 @@ namespace Pitchlab.Gameplay.Play
             _score[0] = away;
             _score[1] = home;
             _paStart = Snapshot();
+            _paStart.Count = default;   // RESET PA: the edited situation at the plate appearance's start (0–0)
         }
 
         public void Set(SituationPreset preset) => Set(Inning, Half, preset.Outs, preset.Bases, AwayScore, HomeScore);
 
-        /// <summary>Back to the situation this plate appearance started from (undoes the last play's result).</summary>
+        /// <summary>Back to the start of the current plate appearance, or of the one that just ended (undoes its result).</summary>
         public void ResetPlateAppearance()
         {
             int log;
-            (Inning, Half, Outs, Bases, _score[0], _score[1], PlateAppearance, log) = _paStart;
+            Count count;
+            (Inning, Half, Outs, Bases, _score[0], _score[1], PlateAppearance, log, count) = _paStart;
+            Count = count;
             _log.RemoveRange(log, _log.Count - log);
             _lastApplied = null;
         }
 
         /// <summary>
-        /// The result of a finished play. A dead foul changes nothing (same batter, runners back). A fair ball ends the plate
-        /// appearance: runs to the batting team (the play has already applied OBR 5.08(a)), the outs, the bases — or, on the
-        /// third out, the half-inning changes (bases cleared, no outs; after the bottom half the next inning).
+        /// A pitch that was not put in play (ball, called or swinging strike): the count, and on ball four a walk (forced
+        /// runners advance, a run scores with the bases loaded), on strike three an out. Fouls and fair balls come with their
+        /// play (<see cref="Apply"/>).
         /// </summary>
-        public void Apply(LivePlay play)
+        public PlateAppearanceEnd Pitch(PitchOutcome result)
+        {
+            if (result == PitchOutcome.Foul || result == PitchOutcome.InPlay) throw new ArgumentException("A batted ball is applied with its play.", nameof(result));
+            return Record(result, null);
+        }
+
+        /// <summary>
+        /// The result of a finished play. A dead foul is a strike below two strikes (same batter, runners back). A fair ball
+        /// ends the plate appearance: runs to the batting team (the play has already applied OBR 5.08(a)), the outs, the bases
+        /// — or, on the third out, the half-inning changes (bases cleared, no outs; after the bottom half the next inning).
+        /// </summary>
+        public PlateAppearanceEnd Apply(LivePlay play)
         {
             if (play == null) throw new ArgumentNullException(nameof(play));
             if (!play.IsOver) throw new InvalidOperationException("Apply a play once it is over.");
             if (ReferenceEquals(play, _lastApplied)) throw new InvalidOperationException("This play has already been applied.");
             if (play.Situation.Outs != Outs || !play.Situation.Bases.Equals(Bases)) throw new InvalidOperationException("The play did not start from this state.");
-            if (play.Kind == LivePlay.BallKind.Dead && play.AwardedBases == 0) return;   // foul: the plate appearance goes on
+            return Record(play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay, play);
+        }
 
-            _paStart = Snapshot();
-            _lastApplied = play;
-            _score[Half == Half.Top ? 0 : 1] += play.Runs;
+        private PlateAppearanceEnd Record(PitchOutcome result, LivePlay play)
+        {
+            if (Count.Equals(default(Count))) _paStart = Snapshot();   // the plate appearance's first pitch: where RESET PA returns
+            if (play != null) _lastApplied = play;
+            (Count next, PlateAppearanceEnd end) = Count.After(result);
+            Count = next;
+            switch (end)
+            {
+                case PlateAppearanceEnd.Walk:
+                    BaseOccupancy walked = Rules.Count.Walk(Bases, out int runs);
+                    End("walk", runs, Outs, walked);
+                    break;
+                case PlateAppearanceEnd.Strikeout:
+                    End(result == PitchOutcome.CalledStrike ? "strikeout looking" : "strikeout swinging", 0, Outs + 1, Bases);
+                    break;
+                case PlateAppearanceEnd.InPlay:
+                    End($"{play.OutsMade} out{(play.OutsMade == 1 ? "" : "s")}", play.Runs, play.Outs, play.ResultingBases());
+                    break;
+            }
+
+            return end;
+        }
+
+        /// <summary>The plate appearance is over: runs, then the outs and bases — or, on the third out, the next half.</summary>
+        private void End(string what, int runs, int outsAfter, BaseOccupancy bases)
+        {
+            _score[Half == Half.Top ? 0 : 1] += runs;
             PlateAppearance++;
-            int outs = Math.Min(play.Outs, OutsPerHalf);
-            _log.Add($"{HalfName} {Inning}, PA {PlateAppearance}: {play.OutsMade} out{(play.OutsMade == 1 ? "" : "s")}, {play.Runs} run{(play.Runs == 1 ? "" : "s")} → {(outs >= OutsPerHalf ? "3 out" : $"{outs} out, {play.ResultingBases()}")}");
+            int outs = Math.Min(outsAfter, OutsPerHalf);
+            _log.Add($"{HalfName} {Inning}, PA {PlateAppearance}: {what}, {runs} run{(runs == 1 ? "" : "s")} → {(outs >= OutsPerHalf ? "3 out" : $"{outs} out, {bases}")}");
             if (outs < OutsPerHalf)
             {
                 Outs = outs;
-                Bases = play.ResultingBases();
+                Bases = bases;
                 return;
             }
 
@@ -134,8 +176,8 @@ namespace Pitchlab.Gameplay.Play
 
         public string HalfName => Half == Half.Top ? "Top" : "Bottom";
 
-        public override string ToString() => $"{HalfName} {Inning} · {Outs} out · {Bases} · Away {AwayScore} – Home {HomeScore}";
+        public override string ToString() => $"{HalfName} {Inning} · {Outs} out · {Count} · {Bases} · Away {AwayScore} – Home {HomeScore}";
 
-        private (int, Half, int, BaseOccupancy, int, int, int, int) Snapshot() => (Inning, Half, Outs, Bases, _score[0], _score[1], PlateAppearance, _log.Count);
+        private (int, Half, int, BaseOccupancy, int, int, int, int, Count) Snapshot() => (Inning, Half, Outs, Bases, _score[0], _score[1], PlateAppearance, _log.Count, Count);
     }
 }

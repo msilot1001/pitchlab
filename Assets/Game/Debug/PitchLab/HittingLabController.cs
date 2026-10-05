@@ -63,7 +63,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction,
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _upLocationAction, _downLocationAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction,
             _clickAction, _releaseCursorAction;
         private int _presetIndex;
         private PciTrack _pciTrack;
@@ -107,6 +107,12 @@ namespace Pitchlab.Sandbox
         private bool CameraHasArrows(InputAction.CallbackContext c) => _cameraModes != null && _cameraModes.CapturesArrowKeys && c.control?.device is Keyboard;
         /// <summary>The selected pitch preset.</summary>
         public int PresetIndex => _presetIndex;
+        /// <summary>Where the next pitch is aimed (<see cref="PitchLocation.All"/>; Up / Down, D-pad up / down).</summary>
+        public int LocationIndex { get; set; }
+        /// <summary>The last pitch's result once it is decided (GameLab: applied to the game), and how it ended the plate
+        /// appearance.</summary>
+        public PitchOutcome? LastOutcome { get; private set; }
+        public PlateAppearanceEnd LastEnd { get; private set; }
         /// <summary>The play under the rules (TASK-006B; bases empty in the batting loop): the defense's decision and the
         /// OUT/SAFE events. The batting loop observes its end; it holds no rules itself.</summary>
         /// <summary>The chosen defensive action's play: the ball's authority at every instant.</summary>
@@ -188,6 +194,8 @@ namespace Pitchlab.Sandbox
             _cameraModes = _camera.GetComponent<GameplayCameraController>();
             _nextPresetAction = Button("<Keyboard>/rightArrow", "<Gamepad>/dpad/right", c => { if (!CameraHasArrows(c)) _presetIndex = (_presetIndex + 1) % Presets.Length; });
             _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", c => { if (!CameraHasArrows(c)) _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length; });
+            _upLocationAction = Button("<Keyboard>/upArrow", "<Gamepad>/dpad/up", c => { if (!CameraHasArrows(c)) LocationIndex = (LocationIndex + 1) % PitchLocation.All.Length; });
+            _downLocationAction = Button("<Keyboard>/downArrow", "<Gamepad>/dpad/down", c => { if (!CameraHasArrows(c)) LocationIndex = (LocationIndex + PitchLocation.All.Length - 1) % PitchLocation.All.Length; });
             _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
             _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
             _slowestSpeedAction = Button("<Keyboard>/digit3", null, _ => _playbackSpeed = 0.25f);   // motion inspection (TASK-011.8)
@@ -247,6 +255,8 @@ namespace Pitchlab.Sandbox
             _aimAction?.Enable();
             _nextPresetAction?.Enable();
             _previousPresetAction?.Enable();
+            _upLocationAction?.Enable();
+            _downLocationAction?.Enable();
             _normalSpeedAction?.Enable();
             _slowSpeedAction?.Enable();
             _slowestSpeedAction?.Enable();
@@ -270,6 +280,8 @@ namespace Pitchlab.Sandbox
             _aimAction?.Disable();
             _nextPresetAction?.Disable();
             _previousPresetAction?.Disable();
+            _upLocationAction?.Disable();
+            _downLocationAction?.Disable();
             _normalSpeedAction?.Disable();
             _slowSpeedAction?.Disable();
             _slowestSpeedAction?.Disable();
@@ -288,6 +300,8 @@ namespace Pitchlab.Sandbox
             _aimAction?.Dispose();
             _nextPresetAction?.Dispose();
             _previousPresetAction?.Dispose();
+            _upLocationAction?.Dispose();
+            _downLocationAction?.Dispose();
             _normalSpeedAction?.Dispose();
             _slowSpeedAction?.Dispose();
             _slowestSpeedAction?.Dispose();
@@ -318,7 +332,8 @@ namespace Pitchlab.Sandbox
         {
             ApplyResult();   // a press during a play skips its remainder: its result stands
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
-            CurrentPitch = HittingPitch.Create(Presets[_presetIndex], Environment);
+            PitchLocation location = PitchLocation.All[LocationIndex];
+            CurrentPitch = HittingPitch.Create(location.Aim(Presets[_presetIndex]), Environment);
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             LastResult = null;
@@ -328,12 +343,15 @@ namespace Pitchlab.Sandbox
             LastCall = null;
             LastFielding = null;
             LastLive = null;
+            LastOutcome = null;
+            LastEnd = PlateAppearanceEnd.None;
+            _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
             ResultSummary = string.Empty;
             PitchesThrown++;
             _pitchPath.enabled = false;
             _exitRay.enabled = false;
             _contactMarker.gameObject.SetActive(false);
-            _pitchLabel = Presets[_presetIndex].Label;
+            _pitchLabel = $"{Presets[_presetIndex].Label} ({location})";
             _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 
@@ -381,7 +399,8 @@ namespace Pitchlab.Sandbox
                 case BattingState.PitchInFlight:
                     // One swing per pitch: a second press stamped earlier than the first (another device's event handled
                     // later in the same update) reads as "before the swing" but must not swing again.
-                    if (!LastSwing.HasValue) SwingAtSimTime(ToSimTime(eventRealtime));
+                    // A press stamped before the end of the pitch but handled after its take was counted is too late.
+                    if (!LastSwing.HasValue && (Game == null || _resultPending)) SwingAtSimTime(ToSimTime(eventRealtime));
                     return;
                 case BattingState.Windup:
                 case BattingState.Swinging:
@@ -414,7 +433,7 @@ namespace Pitchlab.Sandbox
 
             double t = ToSimTime(now);
             RenderedSimTime = t;
-            if (_resultPending && t >= LastLive.EndTime) ApplyResult();
+            if (_resultPending && t >= BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration)) ApplyResult();
             // Authoritative samples only: the pitch, then (after contact) the ball in play until it rests or leaves play.
             // After contact: free on its trajectory until a defender possesses it, then carried (FieldingPlay).
             _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
@@ -422,12 +441,15 @@ namespace Pitchlab.Sandbox
                 : CurrentPitch.Flight.StateAt(t).Position);
         }
 
-        /// <summary>The finished play's result into the game (once; at the play's end, or when the next pitch is thrown first).</summary>
+        /// <summary>The pitch's result into the game (once; when it is decided — the end of the pitch or the swing, the play's
+        /// end — or when the next pitch is thrown first).</summary>
         private void ApplyResult()
         {
             if (!_resultPending) return;
             _resultPending = false;
-            Game.Apply(LastLive);
+            PitchOutcome outcome = PitchOutcomes.Of(CurrentPitch, LastSwing, LastResult, LastLive);
+            LastOutcome = outcome;
+            LastEnd = outcome == PitchOutcome.Foul || outcome == PitchOutcome.InPlay ? Game.Apply(LastLive) : Game.Pitch(outcome);
         }
 
         private void ShowResult(ContactResult r)
@@ -443,7 +465,6 @@ namespace Pitchlab.Sandbox
                 LastFielding = FieldingSolver.Solve(LastPlay, situation.Alignment, FielderProfile.For, Field);
                 LastLive = new LivePlay(LastFielding, situation);
                 LastLive.RunToEnd();
-                _resultPending = Game != null;
                 BattedBallMetrics flight = LastBattedBall.Metrics;
                 // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.
                 double carry = LastPlay.ReachedFenceInTheAir ? flight.Distance : LastPlay.CarryDistance;
@@ -483,7 +504,7 @@ namespace Pitchlab.Sandbox
             _contactMarker.gameObject.SetActive(show && LastBattedBall != null);
         }
 
-        private void ShowIdle() => _readout = $"Next: {Presets[_presetIndex].Label}. Press Space / A to throw.";
+        private void ShowIdle() => _readout = $"Next: {Presets[_presetIndex].Label} ({PitchLocation.All[LocationIndex]}). Press Space / A to throw.";
 
         private void DrawPci(double now)
         {
@@ -578,10 +599,10 @@ namespace Pitchlab.Sandbox
             }
 
             GUILayout.BeginArea(new Rect(10, 10, 440, _showDebugPaths ? 290 : 175), GUI.skin.box);
-            GUILayout.Label($"Pitch: {Presets[_presetIndex].Label}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
+            GUILayout.Label($"Pitch: {Presets[_presetIndex].Label} · {PitchLocation.All[LocationIndex]}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
             GUILayout.Label(_readout);
             GUILayout.Label((_requireMouseCapture && !MouseCaptured ? "Click to capture the mouse.  " : "Mouse PCI · click throw/swing · Esc release.  ") +
-                            "Space/A throw·swing  WASD/stick PCI  ←/→ pitch  1/2/3 speed  T debug  H panel");
+                            "Space/A throw·swing  WASD/stick PCI  ←/→ pitch  ↑/↓ location  1/2/3 speed  T debug  H panel");
             if (_showDebugPaths) GUILayout.Label(DebugOverlay());
             GUILayout.EndArea();
         }
