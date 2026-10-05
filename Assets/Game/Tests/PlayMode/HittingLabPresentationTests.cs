@@ -353,7 +353,7 @@ namespace Pitchlab.Tests
             At(pitch.Flight.Duration - 0.01);
             Assert.AreEqual(string.Empty, _view.Feedback(_lab.RenderedSimTime));
             At(pitch.Flight.Duration + 0.01);
-            Assert.AreEqual("Take", _view.Feedback(_lab.RenderedSimTime));
+            Assert.AreEqual("Take · called strike", _view.Feedback(_lab.RenderedSimTime), "the preset is aimed at mid-zone");
 
             _now += 5.0;
             _release = _now + _lab.DeliveryLead;

@@ -32,16 +32,67 @@ namespace Pitchlab.Tests
         private static LivePlay HomeRun(GameState g) => Play(g, 106.0, 28.0, -10.0, 2000.0);
 
         [Test]
-        public void AFoulLeavesThePlateAppearanceAsItIs()
+        public void AFoulIsAStrikeAndTheSameBatterStaysUp()
         {
             var game = new GameState();
             game.Set(1, Half.Top, 1, new BaseOccupancy(true, false, false), 0, 0);
-            string before = game.ToString();
-            LivePlay foul = Foul(game);
-            Assert.AreEqual(LivePlay.BallKind.Dead, foul.Kind);
-            game.Apply(foul);
-            Assert.AreEqual(before, game.ToString());
-            Assert.AreEqual(0, game.PlateAppearance, "same batter");
+            for (int i = 1; i <= 3; i++)
+            {
+                LivePlay foul = Foul(game);
+                Assert.AreEqual(LivePlay.BallKind.Dead, foul.Kind);
+                Assert.AreEqual(PlateAppearanceEnd.None, game.Apply(foul));
+                Assert.AreEqual(new Count(0, Math.Min(i, 2)), game.Count, "a strike until two strikes");
+                Assert.AreEqual((1, new BaseOccupancy(true, false, false), 0), (game.Outs, game.Bases, game.PlateAppearance), "same batter, runner back");
+            }
+        }
+
+        [Test]
+        public void BallFourWalksTheBatterAndForcesTheRunners()
+        {
+            var game = new GameState();
+            game.Set(3, Half.Bottom, 2, BaseOccupancy.Loaded, 1, 1);
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.CalledStrike);
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.Ball);
+            Assert.AreEqual(new Count(3, 1), game.Count);
+            Assert.AreEqual(PlateAppearanceEnd.Walk, game.Pitch(PitchOutcome.Ball));
+            Assert.AreEqual((2, BaseOccupancy.Loaded, 1, 2, 1), (game.Outs, game.Bases, game.AwayScore, game.HomeScore, game.PlateAppearance), "forced in: the home team scores");
+            Assert.AreEqual(new Count(), game.Count, "the next batter starts 0–0");
+            StringAssert.Contains("walk, 1 run", game.Log.Last());
+        }
+
+        [Test]
+        public void StrikeThreeIsAnOutAndTheThirdEndsTheHalf()
+        {
+            var game = new GameState();
+            game.Set(1, Half.Top, 1, new BaseOccupancy(false, true, false), 0, 0);
+            game.Pitch(PitchOutcome.SwingingStrike);
+            game.Apply(Foul(game));
+            Assert.AreEqual(new Count(0, 2), game.Count);
+            Assert.AreEqual(PlateAppearanceEnd.Strikeout, game.Pitch(PitchOutcome.CalledStrike));
+            Assert.AreEqual((2, new BaseOccupancy(false, true, false), new Count()), (game.Outs, game.Bases, game.Count), "the runner stays");
+            StringAssert.Contains("strikeout looking", game.Log.Last());
+            for (int i = 0; i < 3; i++) game.Pitch(PitchOutcome.SwingingStrike);
+            Assert.AreEqual((Half.Bottom, 0, BaseOccupancy.Empty), (game.Half, game.Outs, game.Bases), "three out");
+            Assert.Throws<ArgumentException>(() => game.Pitch(PitchOutcome.Foul), "a batted ball comes with its play");
+        }
+
+        [Test]
+        public void ResetMidPlateAppearanceGoesBackToOhAndOh()
+        {
+            var game = new GameState();
+            game.Set(1, Half.Top, 0, new BaseOccupancy(true, false, false), 0, 0);
+            string start = game.ToString();
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.SwingingStrike);
+            game.ResetPlateAppearance();
+            Assert.AreEqual(start, game.ToString(), "mid plate appearance: back to 0–0");
+            for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);
+            Assert.AreEqual(new BaseOccupancy(true, true, false), game.Bases);
+            game.ResetPlateAppearance();
+            Assert.AreEqual(start, game.ToString(), "after the walk: the walk is replayed from 0–0");
+            Assert.AreEqual((0, 0), (game.PlateAppearance, game.Log.Count));
         }
 
         [Test]

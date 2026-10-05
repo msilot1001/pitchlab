@@ -39,8 +39,8 @@ namespace Pitchlab.Sandbox
             if (game == null) return;
             var state = new Rect(Screen.width - 330, 10, 320, 46);
             GUI.Box(state, GUIContent.none);
-            GUI.Label(new Rect(state.x + 8, state.y + 4, 310, 20), $"{game.HalfName} {game.Inning}   {game.Outs} out   {Bases(game.Bases)}   PA {game.PlateAppearance + 1}");
-            GUI.Label(new Rect(state.x + 8, state.y + 24, 310, 20), $"Away {game.AwayScore} – Home {game.HomeScore}   {(_lab.EditorLocked ? "live" : "ready")}   G editor");
+            GUI.Label(new Rect(state.x + 8, state.y + 4, 310, 20), $"{game.HalfName} {game.Inning}   {game.Outs} out   {Bases(game.Bases)}   PA {game.PlateAppearance + 1}   {game.Count.Balls}-{game.Count.Strikes}");
+            GUI.Label(new Rect(state.x + 8, state.y + 24, 310, 20), $"Away {game.AwayScore} – Home {game.HomeScore}   {(_lab.EditorLocked ? "live" : "ready")}   {End(_lab.LastEnd)}G editor");
             if (!_showEditor) return;
 
             GUILayout.BeginArea(new Rect(Screen.width - 330, 62, 320, 330), GUI.skin.box);
@@ -96,6 +96,8 @@ namespace Pitchlab.Sandbox
             for (int i = Mathf.Max(0, game.Log.Count - 3); i < game.Log.Count; i++) GUILayout.Label(game.Log[i]);
             GUILayout.EndArea();
         }
+
+        private static string End(PlateAppearanceEnd e) => e == PlateAppearanceEnd.Walk ? "WALK   " : e == PlateAppearanceEnd.Strikeout ? "STRIKEOUT   " : string.Empty;
 
         private static string Bases(BaseOccupancy b) =>
             b.First || b.Second || b.Third ? $"{(b.Third ? "3" : "-")}{(b.Second ? "2" : "-")}{(b.First ? "1" : "-")}" : "empty";

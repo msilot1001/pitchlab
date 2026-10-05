@@ -62,6 +62,49 @@ namespace Pitchlab.Tests
 
         private Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
+        /// <summary>Throws the next pitch at <paramref name="location"/> and takes it; returns once its result is applied.</summary>
+        private void Take(string location)
+        {
+            _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == location);
+            _lab.PressSwingButton(_now);
+            _release = _now + _lab.DeliveryLead;
+            double end = _lab.CurrentPitch.Flight.Final.Time;
+            At(end - 0.01);
+            Assert.IsNull(_lab.LastOutcome, "not decided before the pitch is over");
+            At(end + 0.01);
+        }
+
+        [UnityTest]
+        public IEnumerator TakenPitchesAreCalledAndCountedUntilAWalkOrAStrikeout()
+        {
+            yield return null;
+            GameState game = _lab.Game;
+            game.Set(GameState.Presets.First(p => p.Name == "R1, 1 out"));
+            Frame(_now);
+            Take("Ball high");
+            Assert.AreEqual(PitchOutcome.Ball, _lab.LastOutcome);
+            Assert.AreEqual(new Count(1, 0), game.Count);
+            Assert.AreEqual("Take · ball", _view.Feedback(_lab.RenderedSimTime));
+            Take("Middle");
+            Assert.AreEqual((PitchOutcome.CalledStrike, new Count(1, 1)), (_lab.LastOutcome.Value, game.Count));
+            Take("Ball away");
+            Take("Ball low");
+            Assert.AreEqual(new Count(3, 1), game.Count);
+            Assert.IsTrue(_lab.EditorLocked, "locked while the result shows");
+            At(_lab.CurrentPitch.Flight.Final.Time + BattingStateMachine.ResultPause + 0.01);
+            Assert.IsFalse(_lab.EditorLocked, "between pitches the editor works");
+            Take("Ball in");
+            Assert.AreEqual(PlateAppearanceEnd.Walk, _lab.LastEnd);
+            Assert.AreEqual((1, new BaseOccupancy(true, true, false), 1, new Count()), (game.Outs, game.Bases, game.PlateAppearance, game.Count), "walked: the runner forced to second");
+
+            // The next batter strikes out looking; the runners lead off again from where the walk put them.
+            Take("Up");
+            Take("Down");
+            Take("Away");
+            Assert.AreEqual(PlateAppearanceEnd.Strikeout, _lab.LastEnd);
+            Assert.AreEqual((2, new BaseOccupancy(true, true, false), 2), (game.Outs, game.Bases, game.PlateAppearance));
+        }
+
         [UnityTest]
         public IEnumerator ThePlaysResultIsAppliedWhenItIsOverAndRunnersLeadOff()
         {

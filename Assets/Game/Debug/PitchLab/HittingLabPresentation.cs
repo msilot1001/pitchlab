@@ -275,7 +275,7 @@ namespace Pitchlab.Sandbox
             if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
             BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration);
             if (state == BattingState.Ready) return "Click to pitch";
-            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? "Take" : string.Empty;
+            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? (StrikeZone.IsStrike(_pitch) ? "Take · called strike" : "Take · ball") : string.Empty;
             string timing = ContactFeedback.Timing(r);
             if (!r.IsContact)
                 return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;
