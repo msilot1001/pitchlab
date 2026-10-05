@@ -169,9 +169,16 @@ namespace Pitchlab.Sandbox
         public void FrameUpdate()
         {
             double t = _lab.CurrentPitch == null ? double.NegativeInfinity : _lab.RenderedSimTime;
+            // The next batter steps in (from his side) once the last plate appearance is over and the loop is ready: a new
+            // person, in his stance — never the last batter's follow-through mirrored into the other box.
+            BatterSide side = _lab.BatterSideAt(_lab.RenderedRealtime);
+            if (_batter.LeftHanded != (side == BatterSide.Left))
+            {
+                PlaceBatter(side);
+                _freshBatter = true;
+            }
+
             if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
-            // The next batter steps in (from his side) once the last plate appearance is over and the loop is ready.
-            if (_batter.LeftHanded != (_lab.BatterSideAt(_lab.Clock()) == BatterSide.Left)) PlaceBatter(_lab.BatterSideAt(_lab.Clock()));
             if (_lab.LastSwing.HasValue && !_swing.HasValue) OnSwing(_lab.LastSwing.Value, _lab.LastResult.Value);
 
             if (!_defense.DrivesPitcher(_lab.LastDefense, t)) AnimatePitcher(t);
@@ -340,7 +347,8 @@ namespace Pitchlab.Sandbox
             _deliveryClip.Sample(_deliveryClip.Marker("set"), _from);
             _pitcherTransition = pitch != null && Away(_pitcherFrom, _from);
             _swingClip.Sample(_uStance, _from);
-            _batterTransition = pitch != null && Away(_batterFrom, _from);
+            _batterTransition = pitch != null && !_freshBatter && Away(_batterFrom, _from);
+            _freshBatter = false;
         }
 
         /// <summary>
@@ -388,6 +396,9 @@ namespace Pitchlab.Sandbox
         }
 
         private void PlaceBatter() => PlaceBatter(_lab.Swing.Side);
+
+        /// <summary>A batter who has just stepped in shows his stance until the next pitch (not the last batter's motion).</summary>
+        private bool _freshBatter;
 
         private void PlaceBatter(BatterSide side)
         {
@@ -454,7 +465,7 @@ namespace Pitchlab.Sandbox
 
         private void AnimateBatter(double t)
         {
-            if (_pitch == null || double.IsNegativeInfinity(t))
+            if (_pitch == null || double.IsNegativeInfinity(t) || _freshBatter)
             {
                 _swingClip.Sample(_uStance, _pose);
             }

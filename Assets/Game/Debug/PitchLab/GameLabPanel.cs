@@ -26,8 +26,7 @@ namespace Pitchlab.Sandbox
             if (_lab != null) _lab.ClickBlocked = null;
         }
 
-        /// <summary>The panel's screen area (GUI coordinates, origin top-left).</summary>
-        /// <summary>Everything the panel draws (state box, and the editor below it when open): clicks there are not swings.</summary>
+        /// <summary>The panel's screen area (GUI coordinates, origin top-left): everything the panel draws (state box, and the editor below it when open): clicks there are not swings.</summary>
         private Rect PanelRect
         {
             get
@@ -50,7 +49,7 @@ namespace Pitchlab.Sandbox
             var state = new Rect(Screen.width - 330, 10, 320, 66 + 18 * pa.Pitches.Count);
             GUI.Box(state, GUIContent.none);
             GUI.Label(new Rect(state.x + 8, state.y + 4, 310, 20), $"{game.HalfName} {game.Inning}   {game.Outs} out   {Bases(game.Bases)}   PA {game.CompletedPlateAppearances + 1}   {game.Count.Balls}-{game.Count.Strikes}");
-            GUI.Label(new Rect(state.x + 8, state.y + 24, 310, 20), $"Away {game.AwayScore} – Home {game.HomeScore}   {(_lab.EditorLocked ? "live" : "ready")}   {End(_lab.LastEnd)}G editor");
+            GUI.Label(new Rect(state.x + 8, state.y + 24, 310, 20), $"Away {game.AwayScore} – Home {game.HomeScore}   {(_lab.EditorLocked ? "live" : "ready")}   {End(game)}G editor");
             GUI.Label(new Rect(state.x + 8, state.y + 44, 310, 20), $"{pa.Team} #{pa.Slot} {pa.Batter.Name} ({(pa.Batter.Bats == BatterSide.Left ? "L" : "R")})");
             for (int i = 0; i < pa.Pitches.Count; i++) GUI.Label(new Rect(state.x + 16, state.y + 62 + 18 * i, 300, 20), pa.Pitches[i].ToString());
             if (!_showEditor) return;
@@ -109,7 +108,14 @@ namespace Pitchlab.Sandbox
             GUILayout.EndArea();
         }
 
-        private static string End(PlateAppearanceEnd e) => e == PlateAppearanceEnd.Walk ? "WALK   " : e == PlateAppearanceEnd.Strikeout ? "STRIKEOUT   " : string.Empty;
+        /// <summary>The last plate appearance's walk or strikeout, until the next batter's first pitch (read from the game, so
+        /// a RESET PA or an edit never leaves a stale call up).</summary>
+        private static string End(GameState g)
+        {
+            if (g.CompletedPlateAppearances == 0 || g.Current.Pitches.Count > 0) return string.Empty;
+            PlateAppearanceEnd e = g.Completed[g.CompletedPlateAppearances - 1].End;
+            return e == PlateAppearanceEnd.Walk ? "WALK   " : e == PlateAppearanceEnd.Strikeout ? "STRIKEOUT   " : string.Empty;
+        }
 
         private static string Bases(BaseOccupancy b) =>
             b.First || b.Second || b.Third ? $"{(b.Third ? "3" : "-")}{(b.Second ? "2" : "-")}{(b.First ? "1" : "-")}" : "empty";

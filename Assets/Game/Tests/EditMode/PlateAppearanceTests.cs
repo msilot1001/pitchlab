@@ -71,6 +71,7 @@ namespace Pitchlab.Tests
             PlateAppearance k = game.Completed.Single();
             Assert.AreEqual((PlateAppearanceEnd.Strikeout, "strikeout swinging", 1, "A1"), (k.End, k.Result, k.OutsMade, k.Batter.Id));
             Assert.AreEqual(new Count(0, 2), k.Pitches.Last().Before);
+            Assert.AreEqual(1, game.Log.Count);
             Assert.AreEqual((1, 2, "A2", new Count()), (game.Outs, game.Current.Slot, game.Batter.Id, game.Count), "one out, the next batter at 0–0");
 
             for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);
@@ -112,6 +113,7 @@ namespace Pitchlab.Tests
             for (int w = 0; w < 4; w++)
                 for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);
             Assert.AreEqual(1, game.HomeScore, "a run forced in");
+            Assert.AreEqual((1, "walk"), (game.Completed.Last().Runs, game.Completed.Last().Result));
             for (int i = 0; i < 3; i++) StrikeOut(game);
             Assert.AreEqual((2, Half.Top, 4, "A4"), (game.Inning, game.Half, game.Current.Slot, game.Batter.Id), "top 2 resumes with the visitors' 4");
             Assert.AreEqual(8, game.UpNext(TeamSide.Home));
@@ -181,6 +183,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(3, game.Current.Slot);
             game.ResetPlateAppearance();
             Assert.AreEqual((2, 1, 1, 2), (game.Current.Slot, game.Outs, game.CompletedPlateAppearances, game.UpNext(TeamSide.Away)), "the strikeout is undone: batter 2 again");
+            Assert.AreEqual((false, 0, 2, 1), (game.Current.IsComplete, game.Current.Pitches.Count, game.Current.Number, game.Log.Count), "a fresh plate appearance, not the finished one");
 
             // The inning-ending strikeout undone: back in the top half with the visitors' batter.
             StrikeOut(game);
@@ -189,6 +192,50 @@ namespace Pitchlab.Tests
             game.ResetPlateAppearance();
             Assert.AreEqual((Half.Top, 2, 3, "A3"), (game.Half, game.Outs, game.Current.Slot, game.Batter.Id));
             Assert.AreEqual(1, game.UpNext(TeamSide.Home));
+            Assert.IsFalse(game.Current.IsComplete);
+        }
+
+        [Test]
+        public void ResetRestoresBothTeamsOrders()
+        {
+            var game = new GameState();
+            for (int i = 0; i < 3; i++) StrikeOut(game);              // top 1: A1–A3
+            for (int w = 0; w < 3; w++)
+                for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);   // bottom 1: H1–H3 walk
+            StrikeOut(game);
+            StrikeOut(game);                                           // H4, H5
+            Assert.AreEqual((6, 4), (game.UpNext(TeamSide.Home), game.UpNext(TeamSide.Away)));
+            StrikeOut(game);                                           // H6: the half ends
+            Assert.AreEqual((Half.Top, 7, 4), (game.Half, game.UpNext(TeamSide.Home), game.UpNext(TeamSide.Away)));
+            game.ResetPlateAppearance();
+            Assert.AreEqual((Half.Bottom, 2, "H6"), (game.Half, game.Outs, game.Batter.Id));
+            Assert.AreEqual((6, 4), (game.UpNext(TeamSide.Home), game.UpNext(TeamSide.Away)), "both orders as they were");
+            Assert.AreEqual(BaseOccupancy.Loaded, game.Bases);
+        }
+
+        [Test]
+        public void APlayIsAppliedAtMostOnceEvenAcrossOtherPlaysAndResets()
+        {
+            var game = new GameState();
+            LivePlay a = Foul(game), b = Foul(game);
+            game.Apply(a);
+            game.Apply(b);
+            Assert.Throws<InvalidOperationException>(() => game.Apply(a), "an earlier foul again");
+            Assert.AreEqual(new Count(0, 2), game.Count);
+            game.ResetPlateAppearance();
+            Assert.Throws<InvalidOperationException>(() => game.Apply(b), "nor after a reset");
+            Assert.AreEqual(new Count(), game.Count);
+        }
+
+        [Test]
+        public void TheCallDependsOnTheBattersZone()
+        {
+            // The same pitch, aimed up in the zone, is above a short batter's zone and inside a tall one's.
+            var shortOne = new PlayerProfile("S", "Short", BatterSide.Right, 60.0, "");
+            var tallOne = new PlayerProfile("T", "Tall", BatterSide.Right, 86.0, "");
+            HittingPitch up = HittingPitch.Create(PitchLocation.All.Single(l => l.Name == "Up").Aim(PitchPresets.FourSeam), EnvironmentState.Standard);
+            Assert.AreEqual(PitchOutcome.Ball, PitchOutcomes.Of(up, null, null, null, shortOne.ZoneBottom, shortOne.ZoneTop));
+            Assert.AreEqual(PitchOutcome.CalledStrike, PitchOutcomes.Of(up, null, null, null, tallOne.ZoneBottom, tallOne.ZoneTop));
         }
 
         [Test]
@@ -201,6 +248,8 @@ namespace Pitchlab.Tests
             game.Set(4, Half.Bottom, 1, BaseOccupancy.Empty, 0, 0);
             Assert.AreEqual((TeamSide.Home, "H1", new Count()), (game.Batting, game.Batter.Id, game.Count), "the home team's next batter");
             Assert.AreEqual(1, game.UpNext(TeamSide.Away));
+            game.Set(4, Half.Top, 1, BaseOccupancy.Empty, 0, 0);
+            Assert.AreEqual(("A1", new Count(), 0), (game.Batter.Id, game.Count, game.Current.Pitches.Count), "the interrupted batter is due again, at 0–0");
         }
     }
 }

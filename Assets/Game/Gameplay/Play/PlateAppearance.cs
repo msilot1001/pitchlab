@@ -35,6 +35,7 @@ namespace Pitchlab.Gameplay.Play
         public int StartOuts { get; }
         public BaseOccupancy StartBases { get; }
 
+        /// <summary>The count; a completed plate appearance reads 0–0 (its last count is its last pitch's <c>Before</c>).</summary>
         public Count Count { get; private set; }
         public IReadOnlyList<PitchEvent> Pitches => _pitches;
         public PlateAppearanceEnd End { get; private set; }

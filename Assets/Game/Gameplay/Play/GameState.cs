@@ -55,7 +55,8 @@ namespace Pitchlab.Gameplay.Play
         private readonly List<string> _log = new List<string>();
         private readonly List<PlateAppearance> _completed = new List<PlateAppearance>();
         private Snapshot _paStart;
-        private LivePlay _lastApplied;
+        /// <summary>Every play applied (by reference): a play is applied at most once, whatever happens in between.</summary>
+        private readonly HashSet<LivePlay> _applied = new HashSet<LivePlay>();
 
         public GameState() : this(Lineup.GenericAway(), Lineup.GenericHome()) { }
 
@@ -120,7 +121,6 @@ namespace Pitchlab.Gameplay.Play
         public void ResetPlateAppearance()
         {
             Restore(_paStart);
-            _lastApplied = null;
         }
 
         /// <summary>
@@ -143,7 +143,7 @@ namespace Pitchlab.Gameplay.Play
         {
             if (play == null) throw new ArgumentNullException(nameof(play));
             if (!play.IsOver) throw new InvalidOperationException("Apply a play once it is over.");
-            if (ReferenceEquals(play, _lastApplied)) throw new InvalidOperationException("This play has already been applied.");
+            if (_applied.Contains(play)) throw new InvalidOperationException("This play has already been applied.");
             if (play.Situation.Outs != Outs || !play.Situation.Bases.Equals(Bases)) throw new InvalidOperationException("The play did not start from this state.");
             return Record(play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay, info, play);
         }
@@ -151,7 +151,7 @@ namespace Pitchlab.Gameplay.Play
         private PlateAppearanceEnd Record(PitchOutcome result, PitchInfo info, LivePlay play)
         {
             if (Current.Pitches.Count == 0) _paStart = Capture(clearPitches: false);   // the first pitch: where RESET PA returns
-            if (play != null) _lastApplied = play;
+            if (play != null) _applied.Add(play);
             PitchEvent e = Current.Record(info, result);
             switch (e.End)
             {
@@ -171,7 +171,8 @@ namespace Pitchlab.Gameplay.Play
         }
 
         /// <summary>
-        /// The plate appearance is over: recorded, the batting order moves on (OBR 5.04(a)); runs, then the outs and bases — or,
+        /// The plate appearance is over: recorded, the batting order moves on (OBR 5.04(a)(1); the next inning starts after
+        /// the last batter who completed his time at bat, 5.04(a)(3)); runs, then the outs and bases — or,
         /// on the third out, the next half — and the next batter comes up.
         /// </summary>
         private void End(PlateAppearanceEnd end, string what, int runs, int outsMade, BaseOccupancy bases)

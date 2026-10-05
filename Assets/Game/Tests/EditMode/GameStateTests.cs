@@ -116,6 +116,7 @@ namespace Pitchlab.Tests
             game.Apply(Foul(game));
             Assert.AreEqual(new Count(0, 2), game.Count);
             Assert.AreEqual(PlateAppearanceEnd.Strikeout, game.Pitch(PitchOutcome.CalledStrike));
+            Assert.AreEqual("strikeout looking", game.Completed.Last().Result);
             Assert.AreEqual((2, new BaseOccupancy(false, true, false), new Count()), (game.Outs, game.Bases, game.Count), "the runner stays");
             StringAssert.Contains("strikeout looking", game.Log.Last());
             for (int i = 0; i < 3; i++) game.Pitch(PitchOutcome.SwingingStrike);

@@ -51,7 +51,7 @@ namespace Pitchlab.Gameplay.Play
         public override string ToString() => Name;
     }
 
-    /// <summary>A team's batting order: nine players who bat in turn (OBR 5.04(a)).</summary>
+    /// <summary>A team's batting order: nine players who bat in turn (OBR 5.04(a)(1)).</summary>
     public sealed class Lineup
     {
         public const int Size = 9;

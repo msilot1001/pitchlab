@@ -9,10 +9,10 @@ namespace Pitchlab.Gameplay.Hitting
 {
     /// <summary>
     /// The called strike (TASK-012): a pitch is a strike when any part of the ball passes through the zone where it crosses
-    /// the front plane of home plate (the Statcast plate_x / plate_z plane) — over the 17-inch plate, between the default
-    /// zone's bottom and top, each widened by the ball's radius. REFERENCE CONVENTION: the rulebook zone (OBR Definitions,
-    /// "Strike Zone") is the volume over the whole plate and its height comes from the batter's stance; this is the usual
-    /// 2-D approximation with a fixed batter.
+    /// the front plane of home plate (the Statcast plate_x / plate_z plane) — over the 17-inch plate, between the batter's
+    /// zone bottom and top (TASK-013: from his height; the default zone when there is no batter, as in the HittingLab), each
+    /// widened by the ball's radius. REFERENCE CONVENTION: the rulebook zone (OBR Definitions, "Strike Zone") is the volume
+    /// over the whole plate and its height comes from the batter's stance; this is the usual 2-D approximation.
     /// </summary>
     public static class StrikeZone
     {
