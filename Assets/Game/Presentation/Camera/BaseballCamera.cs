@@ -24,9 +24,17 @@ namespace Pitchlab.Presentation
         private Vector3 _lookPoint, _basePosition;
 
         public bool IsFollowing => _target != null;
+        /// <summary>What it follows (the ball after contact; null in the batting view).</summary>
+        public Transform Target => _target;
 
         /// <summary>A second subject kept in frame with the ball while following (the defender playing it); null for none.</summary>
         public void FollowAlso(Transform second) => _second = second;
+
+        /// <summary>Re-enabled while following (back to the auto camera mid-play): aim at the ball now, not where it was.</summary>
+        private void OnEnable()
+        {
+            if (_target != null) _lookPoint = new Vector3(_target.position.x, 0.5f * Mathf.Max(_target.position.y, 0f), _target.position.z);
+        }
 
         private void Awake()
         {
@@ -88,7 +96,9 @@ namespace Pitchlab.Presentation
             }
 
             // Shake is an offset on the recomputed base position, so it never accumulates.
-            Vector3 shake = now < _shakeUntil ? Random.insideUnitSphere * _shakeAmplitude * ((_shakeUntil - now) / _shakeSeconds) : Vector3.zero;
+            // Deterministic jitter (no random numbers anywhere in the game).
+            Vector3 jitter = new Vector3(Mathf.Sin(97.3f * now), Mathf.Sin(131.9f * now + 1.3f), Mathf.Sin(71.1f * now + 2.6f));
+            Vector3 shake = now < _shakeUntil ? jitter * _shakeAmplitude * ((_shakeUntil - now) / _shakeSeconds) : Vector3.zero;
             transform.position = _basePosition + shake;
         }
     }
