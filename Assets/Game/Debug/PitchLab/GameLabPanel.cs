@@ -95,6 +95,7 @@ namespace Pitchlab.Sandbox
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("START PA")) _lab.StartPlateAppearance();
+            if (GUILayout.Button("NEW GAME")) _lab.NewGame();
             if (GUILayout.Button("RESET PA")) game.ResetPlateAppearance();
             GUILayout.EndHorizontal();
             GUI.enabled = true;

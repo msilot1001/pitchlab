@@ -61,6 +61,8 @@ namespace Pitchlab.Sandbox
         /// <summary>The plate appearance whose pitches are shown: the one the last pitch belonged to until the loop is ready
         /// again, then the current one.</summary>
         public PlateAppearance Shown { get; private set; }
+        /// <summary>The final (score and how it ended) once the game is over and its last call has been shown; else empty.</summary>
+        public string FinalText { get; private set; } = string.Empty;
         public bool ShowLog { get; set; }
         public bool ShowPlot { get; set; } = true;
 
@@ -104,6 +106,7 @@ namespace Pitchlab.Sandbox
                 else flash = PitchOutcomes.Describe(o);
             }
 
+            if (g.IsOver && ready) flash = FinalFlash;
             if (ReferenceEquals(g, _built.Game) && g.Version == _built.Version && ReferenceEquals(shown, _built.Shown) && flash == _built.Flash) return;
             _built = (g, g.Version, shown, flash);
             Rebuild(g, shown, flash);
@@ -113,6 +116,9 @@ namespace Pitchlab.Sandbox
         {
             Shown = shown;
             Flash = flash;
+            FinalText = g.IsOver && ReferenceEquals(flash, FinalFlash)
+                ? $"FINAL\n{g.LineupOf(TeamSide.Away).Team.ToUpperInvariant()} {g.Result.Away}   {g.LineupOf(TeamSide.Home).Team.ToUpperInvariant()} {g.Result.Home}\n{g.Result.Reason}\n\nSpace / A: new game"
+                : string.Empty;
             InningText = $"{(g.Half == Half.Top ? "TOP" : "BOT")} {g.Inning}";
             AwayText = $"{g.LineupOf(TeamSide.Away).Team.ToUpperInvariant()}  {g.AwayScore}";
             HomeText = $"{g.LineupOf(TeamSide.Home).Team.ToUpperInvariant()}  {g.HomeScore}";
@@ -166,6 +172,9 @@ namespace Pitchlab.Sandbox
             _ => string.Empty,
         };
 
+        /// <summary>The flash slot while the final is up (the final has its own panel).</summary>
+        private const string FinalFlash = "FINAL";
+
         private static string Short(string label) => label.EndsWith("-like") ? label.Substring(0, label.Length - 5) : label;
 
         // ------------------------------------------------------------------ drawing
@@ -192,7 +201,13 @@ namespace Pitchlab.Sandbox
             }
 
             DrawScorebug(new Rect(12f, Screen.height - Band - 134f, 300f, 134f));
-            if (Flash.Length > 0) GUI.Label(new Rect(Screen.width * 0.5f - 250f, 54f, 500f, 44f), Flash, _flash);
+            if (FinalText.Length > 0)
+            {
+                var final = new Rect(Screen.width * 0.5f - 210f, Screen.height * 0.5f - 110f, 420f, 190f);
+                Fill(final, Panel);
+                GUI.Label(final, FinalText, _big);
+            }
+            else if (Flash.Length > 0) GUI.Label(new Rect(Screen.width * 0.5f - 250f, 54f, 500f, 44f), Flash, _flash);
             float right = Screen.width - 12f;
             if (History.Count > 0)
             {

@@ -435,6 +435,7 @@ namespace Pitchlab.Sandbox
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
             ApplyResult();   // a press during a play skips its remainder: its result stands
+            if (Game != null && Game.IsOver) return;   // the game is over: no more pitches (NewGame starts the next)
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
             // The game's batter (GameLab): his side for the swing, his zone for the call — fixed for this pitch.
             PitchBatter = Game?.Batter;
@@ -535,6 +536,14 @@ namespace Pitchlab.Sandbox
                 case BattingState.BallInPlay when ToSimTime(eventRealtime) < LastResult.Value.BattedBall.Time + DoublePressGrace:
                     return;   // a double click or switch bounce just after a hit must not throw the hit away
                 default:
+                    // After the final (and its call), a press starts a new game; until then it throws (or, when the game has
+                    // just ended, does nothing).
+                    if (Game != null && Game.IsOver && !_resultPending && StateAt(eventRealtime) == BattingState.Ready)
+                    {
+                        NewGame();
+                        return;
+                    }
+
                     ThrowPitch(_presetIndex, eventRealtime + _deliveryLead / _playbackSpeed);
                     return;
             }
@@ -573,7 +582,7 @@ namespace Pitchlab.Sandbox
             // The auto pitcher's next press: AutoPitchDelay after the loop is ready (or after auto was switched on), at that
             // exact time — not this frame's — unless the frame is far later (a pause): then now. Before rendering, so the new
             // pitch is drawn at its own time.
-            if (AutoPitch && Game != null && !_resultPending)
+            if (AutoPitch && Game != null && !Game.IsOver && !_resultPending)
             {
                 double ready = _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
                 double press = Math.Max(ready, _autoArmed) + AutoPitchDelay;
