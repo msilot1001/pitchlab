@@ -347,7 +347,20 @@ namespace Pitchlab.Tests
             Assert.AreEqual(PlayEventKind.ForceOut, third.Kind);
             Assert.AreEqual(OnFirst, third.Runner);
             Assert.AreEqual(3, play.Resolution.OutsAfter);
-            Assert.AreEqual(third.Time, play.Resolution.EndTime, play.Defense.EndTime - third.Time + 1e-9, "over with the third out (and the throw)");
+            Assert.AreEqual(third.Time, play.Resolution.EndTime, 0.0, "over with the third out");
+            Assert.AreEqual(PlayStatus.PlayComplete, play.Resolution.StatusAt(third.Time));
+            // A carried tag for the third out: the tag ends the play while the third baseman is still coming to rest.
+            RulesPlay tag = PlayResolver.Resolve(Field(80.0, -7.0, -30.0, -900.0), new BaseOccupancy(false, true, false), 2, runsOnContact: r => r == OnSecond,
+                choose: cs => cs.Single(a => a.Kind == DefensiveActionKind.TagRunner && a.Target == Base.Third && a.Play.Throw == null));
+            PlayEvent tagOut = tag.Resolution.Events.Single();
+            Assert.AreEqual(PlayEventKind.TagOut, tagOut.Kind);
+            Assert.AreEqual(tagOut.Time, tag.Resolution.EndTime, 0.0);
+            Assert.AreEqual(PlayStatus.PlayComplete, tag.Resolution.StatusAt(tagOut.Time));
+            // The boundary itself: a third out at 2.0 s while the defense is busy until 5.0 s ends the play at 2.0 s; with
+            // a second out instead, the play lasts until the defense is done.
+            var outAt2 = new[] { new PlayEvent(2.0, PlayEventKind.TagOut, OnSecond, Base.Third, DefensivePosition.ThirdBase) };
+            Assert.AreEqual(2.0, new PlayResolution(outAt2, 2, 5.0, false).EndTime, 0.0);
+            Assert.AreEqual(5.0, new PlayResolution(outAt2, 1, 5.0, false).EndTime, 0.0);
             Assert.Throws<ArgumentOutOfRangeException>(() => new PlayResolution(Array.Empty<PlayEvent>(), 3, 0.0, false), "a play never starts with three out");
             // One out before: the same play records every runner.
             Assert.AreEqual(4, PlayResolver.Resolve(SsGrounder(), BaseOccupancy.Loaded, 1).Resolution.Events.Count);

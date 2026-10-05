@@ -93,7 +93,10 @@ namespace Pitchlab.Gameplay.Rules
             OutsBefore = outsBefore;
             Outs = Events.Count(e => e.IsOut);
             BallDead = ballDead;
-            EndTime = Math.Max(defenseEnd, Events.Count > 0 ? Events[Events.Count - 1].Time : double.NegativeInfinity);
+            // The third out ends the play at once (whatever the defense is still doing); otherwise the later of the last
+            // event and the end of the defense's action.
+            EndTime = OutsAfter == OutsPerInning ? Events[Events.Count - 1].Time
+                : Math.Max(defenseEnd, Events.Count > 0 ? Events[Events.Count - 1].Time : double.NegativeInfinity);
         }
 
         public const int OutsPerInning = 3;
@@ -104,7 +107,8 @@ namespace Pitchlab.Gameplay.Rules
         public int Outs { get; }
         public int OutsAfter => OutsBefore + Outs;
         public bool BallDead { get; }
-        /// <summary>When the play is over: the last event or the end of the defense's action, whichever is later.</summary>
+        /// <summary>When the play is over: the third out; otherwise the last event or the end of the defense's action,
+        /// whichever is later.</summary>
         public double EndTime { get; }
 
         public IEnumerable<PlayEvent> EventsUntil(double time) => Events.Where(e => e.Time <= time);

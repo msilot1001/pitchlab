@@ -41,7 +41,7 @@ There is no continuous baserunning: TASK-007 replaces the runner timing placehol
 - [x] Continuation motion, the receiver continuity fix and its regression test; the thrower-settling regression test.
 - [x] Rules model (runners, occupancy, forces, timing, events, actions, decision, resolver) with EditMode tests.
 - [x] Unassisted touch in DefensivePlay; integration with FieldingLab and HittingLab; presentation; PlayMode tests.
-- [ ] Research and rules review, Unity and test reviewers, check.sh, runtime checks, Codex review, merge.
+- [x] Research and rules review, Unity and test reviewers, check.sh, runtime checks, Codex review (B: the third out now ends the play exactly; fixed and tested), merge.
 
 ## Verification
 - **check.sh:** EditMode 469 passed / 475 (6 skipped, unchanged), PlayMode 45/45.
@@ -76,7 +76,7 @@ There is no continuous baserunning: TASK-007 replaces the runner timing placehol
 - **No natural infield hit:** across ~1,700 grid infield balls the idealized fielding never loses a race to first by itself. The SAFE scenario is the 1B ranging right, 0.11 s late.
 - **Receiver adjustment:** before, it restarted from rest (up to ~3.9 m/s lost instantly). It is now continuous (`ContinuationMotion`, which the intercept solver also uses).
 - **Carried tags:** they stop on the bag (Unity review). Force touches still cross it at speed.
-- **Third out:** it ends the play's events (rules review, OBR 5.09(d)).
+- **Third out:** it ends the play's events (rules review, OBR 5.09(d)) and the play itself, even while the defense is still moving (Codex review).
 - **Batting-lab test premise:** the HittingLab test's "topped grounder" was a CF single. It now uses an on-time swing (an SS grounder) and keeps the single as a separate no-play test.
 
 ## Remaining risks
