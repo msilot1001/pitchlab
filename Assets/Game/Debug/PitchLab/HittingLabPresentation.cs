@@ -1,5 +1,6 @@
 using System;
 using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
@@ -45,6 +46,7 @@ namespace Pitchlab.Sandbox
         private Vector3 _target;            // world point the sweet spot aims at, at the contact time
         private TrailRenderer _sweetTrail;  // debug: sweet-spot path
         private DefenseView _defense;
+        private RunnerView _runners;
         private readonly System.Collections.Generic.List<MeshRenderer> _eventMarkers = new System.Collections.Generic.List<MeshRenderer>();
         private readonly System.Collections.Generic.List<Mesh> _builtMeshes = new System.Collections.Generic.List<Mesh>();
         private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
@@ -62,6 +64,7 @@ namespace Pitchlab.Sandbox
 
         public PlayerMannequin Pitcher => _pitcher;
         public PlayerMannequin Batter => _batter;
+        public RunnerView Runners => _runners;
         public bool LandingShown => _landingShown;
         public bool ContactShown => _contactShown;
         /// <summary>Deformation of the reference swing for the current swing, and the sweet spot's miss of its target at contact (m).</summary>
@@ -144,6 +147,9 @@ namespace Pitchlab.Sandbox
             _defense = new GameObject("Defense").AddComponent<DefenseView>();
             _defense.transform.SetParent(transform, false);
             _defense.Build(_mannequinPrefab, _pitcher, _pitcherShown, (t, pose) => _deliveryClip.Sample(_deliveryTime.U(t), pose), DefensiveAlignment.Standard);
+            _runners = new GameObject("Runners").AddComponent<RunnerView>();
+            _runners.transform.SetParent(transform, false);
+            _runners.Build(_mannequinPrefab);
             _builtMeshes.AddRange(OutfieldDressing.Build(transform, HittingLabController.Field));
             ResetForPitch(null);
         }
@@ -214,6 +220,12 @@ namespace Pitchlab.Sandbox
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C;
             _defense.Show(_lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
+
+            // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
+            LivePlay live = _lab.LastLive;
+            bool running = live != null && live.RunnerOf(Runner.Batter) != null && t >= live.ContactTime + live.Profile.BatterStartDelay;
+            _batter.gameObject.SetActive(!running);
+            _runners.Show(live, t, _batterRoot);
         }
 
         /// <summary>
@@ -251,7 +263,7 @@ namespace Pitchlab.Sandbox
             if (_lab.LastDefense?.Throw is ThrowPlay th && t >= th.ReleaseTime)
                 line += $" · throw to {Abbreviation(th.Target)}{(th.Caught ? t >= th.Catch.Time ? " ✓" : "" : t >= th.FirstContactTime ? " — not caught" : "")}";
             if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime && t < possession) line += " · ground-rule double";
-            if (_lab.LastRules is RulesPlay rules && RulesText.Latest(rules, t) is string calls && calls.Length > 0) line += $" · {calls}";
+            if (LiveText.Calls(_lab.LastLive, t) is string calls && calls.Length > 0) line += $" · {calls}";
             return line;
         }
 

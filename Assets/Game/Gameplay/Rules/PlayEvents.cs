@@ -17,6 +17,9 @@ namespace Pitchlab.Gameplay.Rules
         TagOut,
         /// <summary>A runner reached the base he was going to.</summary>
         Safe,
+        /// <summary>A runner off his base when a fly was caught, whose base was touched by a defender holding the ball before
+        /// he retouched it (OBR 5.09(b)(5), "doubled off").</summary>
+        RetouchOut,
     }
 
     /// <summary>One authoritative rules event of a play (a runner put out or safe), at its play time.</summary>

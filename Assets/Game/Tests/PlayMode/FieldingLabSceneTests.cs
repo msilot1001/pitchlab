@@ -2,7 +2,9 @@ using System.Collections;
 using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
+using Pitchlab.Gameplay.Running;
 using Pitchlab.Presentation;
 using Pitchlab.Simulation.Field;
 using Pitchlab.Sandbox;
@@ -205,14 +207,15 @@ namespace Pitchlab.Tests
             foreach (var (scenario, call) in expected)
             {
                 FieldingPlay f = Launch(FieldingLabController.IndexOf(scenario));
-                PlayEvent e = _lab.Rules.Resolution.Events.First(x => RulesText.IsCall(_lab.Rules, x));
+                PlayLogEntry e = _lab.Live.Log.First(x => x.Kind == PlayLogKind.Out || x.Kind == PlayLogKind.Safe || x.Kind == PlayLogKind.Run);
                 double t0 = f.Ball.First.Time;
                 At(e.Time - t0 - 1e-4);
                 Assert.AreEqual("", _lab.ResultText, $"{scenario}: no call before the event");
                 At(e.Time - t0 + 1e-4);
                 Assert.AreEqual(call, _lab.ResultText, scenario);
-                At(_lab.Rules.Resolution.EndTime - t0 + 5.0);
-                Assert.AreEqual(call.StartsWith("SAFE") ? 0 : 1, _lab.Rules.Resolution.OutsAt(_lab.Rules.Resolution.EndTime + 5.0), $"{scenario}: outs counted once");
+                At(_lab.Live.EndTime - t0 + 5.0);
+                Assert.AreEqual(call.StartsWith("SAFE") ? 0 : 1, _lab.Live.OutsMade, $"{scenario}: outs counted once");
+                Assert.AreEqual(_lab.Live.OutsMade, _lab.Live.Log.Count(x => x.Kind == PlayLogKind.Out), "one out entry per out");
             }
         }
 
@@ -223,7 +226,7 @@ namespace Pitchlab.Tests
             FieldingPlay f = Launch(FieldingLabController.IndexOf("1B grounder: unassisted"));
             Assert.IsNull(_lab.DefensivePlay.Throw, "no throw");
             Assert.IsNotNull(_lab.DefensivePlay.Carry, "he runs it to the bag");
-            PlayEvent e = _lab.Rules.Resolution.Events.Single();
+            PlayLogEntry e = _lab.Live.Log.Single(x => x.Kind == PlayLogKind.Out);
             double t0 = f.Ball.First.Time;
             At(e.Time - t0);
             PlayerMannequin first = _lab.Defense.Figure(DefensivePosition.FirstBase);
@@ -258,6 +261,50 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator RunnerFiguresFollowTheGameplayRunners()
+        {
+            // TASK-007: every runner figure stands exactly on its gameplay runner's position (no presentation offset),
+            // faces where he runs, disappears a moment after he is out or scores, and the result does not depend on the frame
+            // cadence.
+            yield return null;
+            foreach (string name in new[] { "Runner on 1B, ball off the wall", "Runner on 3B, 1 out, deep fly: tag-up", "Bases loaded, grounder to 3B" })
+            {
+                FieldingPlay f = Launch(FieldingLabController.IndexOf(name));
+                LivePlay live = _lab.Live;
+                double t0 = f.Ball.First.Time;
+                for (double t = t0; t < live.EndTime + 2.0; t += 0.1)
+                {
+                    At(t - t0);
+                    foreach (LiveRunner r in live.Runners)
+                    {
+                        PlayerMannequin m = _lab.Runners.Figure(r.Id);
+                        bool gone = r.IsOut && t > r.OutTime + RunnerView.LingerAfterOut || r.HasScored && t > r.ScoreTime + RunnerView.LingerAfterScore;
+                        Assert.AreEqual(!gone, m.gameObject.activeSelf, $"{name}: {r.Id} shown at +{t - t0:0.0}");
+                        if (gone) continue;
+                        Assert.Less(Vector3.Distance(Flat(m.transform.position), Flat(SimulationSpace.ToUnity(r.PositionAt(t)))), 1e-4f, $"{name}: {r.Id} at +{t - t0:0.0}");
+                        if (r.SpeedAt(t) > 1.0)
+                            Assert.Greater(Vector3.Dot(m.transform.forward, SimulationSpace.ToUnity(r.HeadingAt(t)).normalized), 0.99f, "faces his run");
+                    }
+                }
+            }
+
+            // Frame cadence: the same runner pose at the same play time.
+            var shown = new System.Collections.Generic.List<Vector3>();
+            foreach (double step in new[] { 0.0, 1.0 / 30.0, 1.0 / 144.0 })
+            {
+                FieldingPlay f = Launch(FieldingLabController.IndexOf("Runner on 1B, ball off the wall"));
+                double target = 6.0;
+                if (step > 0.0)
+                    for (double t = 0.0; t < target; t += step) At(t);
+                At(target);
+                shown.Add(_lab.Runners.Figure(new Runner(Base.First)).transform.position);
+            }
+
+            Assert.Less(Vector3.Distance(shown[0], shown[1]), 1e-4f);
+            Assert.Less(Vector3.Distance(shown[0], shown[2]), 1e-4f);
+        }
+
+        [UnityTest]
         public IEnumerator ReplayStartsClean()
         {
             yield return null;
@@ -271,7 +318,7 @@ namespace Pitchlab.Tests
             Assert.AreNotSame(rules, _lab.Rules, "a new play has its own rules state");
             At(0.0);
             Assert.AreEqual("", _lab.ResultText, "no call carried over");
-            Assert.AreEqual(0, _lab.Rules.Resolution.OutsAt(again.Ball.First.Time));
+            Assert.AreEqual(0, _lab.Live.Log.Count(x => x.Kind == PlayLogKind.Out && x.Time <= again.Ball.First.Time));
             Assert.AreEqual(BallAuthority.FreeBall, _lab.DefensivePlay.AuthorityAt(again.Ball.First.Time));
             Vector3 contact = SimulationSpace.ToUnity(FieldingLabController.ContactPoint);
             Assert.Less(Vector3.Distance(_lab.Ball.position, contact), 1e-3f, "ball back at the plate");

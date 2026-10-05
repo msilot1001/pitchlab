@@ -3,6 +3,7 @@ using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
@@ -451,10 +452,12 @@ namespace Pitchlab.Tests
             Assert.AreSame(chosen.Play, _lab.LastDefense, "the shown defense is the chosen action");
             Assert.AreEqual(Base.First, chosen.Target, "a force out at first");
             Assert.IsTrue(chosen.Retires);
-            PlayEvent outAtFirst = _lab.LastRules.Resolution.Events.Single();
+            // TASK-007: the out is made by the live play (possession on the bag before the batter-runner touches it).
+            PlayEvent outAtFirst = _lab.LastLive.RulesEvents.Single();
             Assert.AreEqual(PlayEventKind.ForceOut, outAtFirst.Kind);
-            Assert.AreEqual(chosen.OutTime, outAtFirst.Time, 0.0);
-            Assert.AreEqual(System.Math.Max(outAtFirst.Time, chosen.Play.EndTime), _lab.PlayEnd, 0.0, "the loop ends with the play");
+            Assert.AreEqual(chosen.OutTime, outAtFirst.Time, 1e-6, "when the decision predicted it");
+            Assert.AreEqual(_lab.LastLive.EndTime, _lab.PlayEnd, 0.0, "the loop ends with the play");
+            Assert.GreaterOrEqual(_lab.PlayEnd, outAtFirst.Time);
             At(f.PossessionTime + FieldingPlay.SecureTime + 0.02);   // secured (the ball settles into the glove over the secure time)
             Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
             PlayerMannequin holder = _view.Defense.Figure(f.Primary.Value);
@@ -486,8 +489,9 @@ namespace Pitchlab.Tests
             RulesPlay rules = _lab.LastRules;
             Assert.IsTrue(DefensiveDecision.IsOutfielder(rules.Fielding.Primary.Value));
             Assert.IsNull(rules.Chosen.Runner, "no play on a runner");
-            Assert.AreEqual(0, rules.Resolution.Outs);
-            Assert.AreEqual(rules.Resolution.EndTime, _lab.PlayEnd, 0.0);
+            Assert.AreEqual(0, _lab.LastLive.OutsMade);
+            Assert.AreEqual(_lab.LastLive.EndTime, _lab.PlayEnd, 0.0);
+            Assert.IsTrue(_lab.LastLive.ResultingBases().First, "a single: the batter-runner is on first");
             At(_lab.PlayEnd + 0.5);
             Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
             StringAssert.DoesNotContain("OUT", _view.Banner);

@@ -44,6 +44,20 @@ namespace Pitchlab.Presentation
 
         public bool IsBuilt => _visual != null;
 
+        /// <summary>Uniform colour (recolours a built body; equipment keeps its own materials).</summary>
+        public Color BodyColor
+        {
+            get => _bodyColor;
+            set
+            {
+                Material old = PresentationMaterials.Get(_bodyColor), body = PresentationMaterials.Get(value);
+                _bodyColor = value;
+                if (_visual == null) return;
+                foreach (MeshRenderer r in _visual.GetComponentsInChildren<MeshRenderer>(true))
+                    if (r.sharedMaterial == old) r.sharedMaterial = body;
+            }
+        }
+
         public bool LeftHanded
         {
             get => _leftHanded;
