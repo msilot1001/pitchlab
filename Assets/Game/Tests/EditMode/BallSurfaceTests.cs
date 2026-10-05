@@ -525,12 +525,23 @@ namespace Pitchlab.Tests
         public void QueriesAgreeWithEvents()
         {
             BallInPlay play = Run(Launch(80.0, 5.0, 20.0, 800.0));
-            foreach (BallEvent e in play.Events)
-            {
-                if (e.Kind != BallEventKind.GroundImpact && e.Kind != BallEventKind.WallImpact) continue;
-                // The event's After is exactly the state the play continues from (Codex review: no hidden v_z).
-                Assert.Less((play.StateAt(e.Time).Velocity - e.After.Velocity).Length, 1e-9, $"{e.Kind} at {e.Time:0.000}");
-            }
+            // Every impact's After is exactly the state the play continues from (position and velocity, Codex review),
+            // on the ground, off the wall in the air, and off the wall along the ground.
+            BallInPlay wallInAir = Run(Launch(110.0, 14.0, 0.0, 1500.0));
+            BallInPlay wallRolling = BallInPlaySimulation.Run(new BallState(0.0, new Vector3d(0.0, 380.0 * 0.3048, BallProperties.Baseball.Radius),
+                new Vector3d(0.0, 8.0, 0.0), new Vector3d(-8.0 / BallProperties.Baseball.Radius, 0.0, 0.0)), EnvironmentState.Standard, Field);
+            int impacts = 0;
+            foreach (BallInPlay p in new[] { play, wallInAir, wallRolling })
+                foreach (BallEvent e in p.Events)
+                {
+                    if (e.Kind != BallEventKind.GroundImpact && e.Kind != BallEventKind.WallImpact) continue;
+                    BallState q = p.StateAt(e.Time);
+                    Assert.AreEqual(0.0, (q.Velocity - e.After.Velocity).Length, 1e-9, $"{e.Kind} velocity at {e.Time:0.000}");
+                    Assert.AreEqual(0.0, (q.Position - e.After.Position).Length, 1e-9, $"{e.Kind} position at {e.Time:0.000}");
+                    impacts++;
+                }
+
+            Assert.Greater(impacts, 6);
 
             BallEvent roll = Array.Find(ToArray(play), e => e.Kind == BallEventKind.SlideToRoll);
             Assert.Less((play.StateAt(roll.Time - 1e-4).Velocity - play.StateAt(roll.Time + 1e-4).Velocity).Length, 0.01, "velocity continuous at slide → roll");
