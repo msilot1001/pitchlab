@@ -65,6 +65,8 @@ namespace Pitchlab.Sandbox
         public PlayerMannequin Pitcher => _pitcher;
         public PlayerMannequin Batter => _batter;
         public RunnerView Runners => _runners;
+        /// <summary>After a play ends its runners stay this long before the plate is the batter's again (s).</summary>
+        public const double ResultPause = 1.5;
         public bool LandingShown => _landingShown;
         public bool ContactShown => _contactShown;
         /// <summary>Deformation of the reference swing for the current swing, and the sweet spot's miss of its target at contact (m).</summary>
@@ -222,10 +224,12 @@ namespace Pitchlab.Sandbox
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
 
             // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
+            // When the play is over (and its result has been shown) the plate is the batter's again.
             LivePlay live = _lab.LastLive;
-            bool running = live != null && live.RunnerOf(Runner.Batter) != null && t >= live.ContactTime + live.Profile.BatterStartDelay;
-            _batter.gameObject.SetActive(!running);
-            _runners.Show(live, t, _batterRoot);
+            bool over = live != null && live.IsOver && t > live.EndTime + ResultPause;
+            bool running = !over && live != null && live.RunnerOf(Runner.Batter) != null && t >= live.ContactTime + live.Profile.BatterStartDelay;
+            if (_batter.gameObject.activeSelf == running) _batter.gameObject.SetActive(!running);
+            _runners.Show(over ? null : live, t, _batterRoot);
         }
 
         /// <summary>

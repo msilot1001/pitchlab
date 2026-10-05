@@ -6,26 +6,28 @@ Runners are gameplay entities (`Gameplay/Running`, `Gameplay/Play`). They run a 
 - **Legs:** home → 1B → 2B → 3B → home, on the ground, always passing through the bag centres (`FieldLayout.BasePosition`).
 - **Straight vs banana:**
   - A leg that ends at the runner's destination is straight.
-  - A leg ending at a base he will round is the **banana route**: from 55 % of the leg he drifts outward, away from the diamond, up to 1.2 m (≈ 4 ft), then cuts back across the bag toward the next base.
+  - A leg ending at a base he will round is the **banana route**: from 55 % of the leg he drifts outward, away from the diamond. The drift is a cubic that leaves the line tangentially (no kink) and is widest, 1.2 m (≈ 4 ft), two thirds of the way. He then crosses the bag already turned ≈ 33° toward the next base, so the remaining turn at the bag is ≈ 57°.
   - Coaching advice is to start the turn ~10 m before the bag (REPORTED). The 3–6 ft drift is ASSUMED.
   - Arc length is tabulated, so runners move by distance travelled.
 
 ## Running law (`RunnerProfile`, `PathMotion`)
-- **Model:** along the leg, the sprint law v(t) = s·v_max + (v₀ − s·v_max)·e^(−t/τ) with s = ±1, so a runner can reverse, then constant braking to the end speed at the target. Position and velocity are continuous and exact functions of time.
+- **Model:** along the leg, the sprint law v(t) = s·v_max + (v₀ − s·v_max)·e^(−t/τ) toward the target (s = ±1), then constant braking to the end speed at the target, landing exactly on it for a stop.
+  - A runner moving away from where he must now go first brakes to a stop at the normal braking deceleration, then turns around.
+  - Position and velocity are continuous and exact functions of time.
 - **Constants:**
 
 | Quantity | Value | Basis |
 |---|---|---|
 | Top speed | 27 ft/s (8.23 m/s) | MLB average Statcast sprint speed, MEASURED |
 | τ | 0.69 s | fits the average 90-ft split of 4.02 s from the first step at 27 ft/s (Statcast running splits), DERIVED |
-| Contact → first step (batter) | 0.25 s | 4.27 s home-to-first average − 4.02 s split, DERIVED |
-| Home to first (result) | 4.27 s | MLB average 4.26 LHB / 4.30 RHB, MEASURED; test ±0.06 s |
+| Contact → first step (batter) | 0.34 s | inside the 0.20–0.35 s range DERIVED from the 4.27 s home-to-first average minus the 4.02 s split; chosen so the foot reaches first at 4.28 s over this path (plate centre → bag centre, 27.05 m) |
+| Home to first, contact → foot on the bag (result) | 4.28 s | MLB average 4.26 LHB / 4.30 RHB, MEASURED; test ±0.02 s |
 | Read before committing (runner on base) | 0.25 s | ASSUMED |
 | Rounding speed | 0.8 · v_max | 15–25 % lost per turn, optimal-path model (Illinois), REPORTED |
 | Braking (stops, overrun of first) | 6 m/s² | ASSUMED; first is overrun by ~15–20 ft (15–25 ft REPORTED) |
 | Sliding stop on 2B / 3B | 10 m/s² | ASSUMED |
 | Leads at contact | 1B 12 ft, 2B 20 ft, 3B 10 ft | 1B: Statcast secondary lead 11.4–13.5 ft, REPORTED; 2B: coaching primary 15–18 / secondary ~29 ft; 3B ASSUMED |
-| Home to third (prediction) | ≈ 11.5 s | records scaled to an average runner, DERIVED; test 11.0–12.5 s |
+| Home to third (prediction, foot on the bag) | ≈ 11.5–11.8 s | records scaled to an average runner, DERIVED; test 11.0–12.5 s |
 
 ## Prediction equals execution (`RunnerPlanner`)
 - **The plan:** "go to base X" from (leg, distance, velocity) runs the leg's remainder, rounds each intermediate base at ≤ the rounding speed, and finishes at X:
@@ -62,18 +64,27 @@ Runners are gameplay entities (`Gameplay/Running`, `Gameplay/Play`). They run a 
 
 ## Base touches, outs and runs (`LivePlay`)
 All of these are decided by gameplay state, never by colliders or animation.
-- **Base touch:** the runner's path crosses the bag (logged, exact time). Foot reach is 0.3 m along the path (`LiveRunner.TouchDistance`, ASSUMED).
+- **Base touch:** his foot reaches the bag, 0.3 m before his body's centre gets there (`LiveRunner.TouchDistance`, ASSUMED). It is logged with its exact time and is what the rules use: safe, force over, run scored, retouch. Predictions (`RunnerPlanner.ArrivalTime`, the defense's `IRunnerTiming`) give this foot-on-the-bag time. The leg geometry (rounding onto the next leg, stopping) uses the bag centre.
 - **Force out:** while he is forced (TASK-006B force rules, with removal) and before his foot reaches the bag, the defender holding the ball is within the base-touch envelope.
 - **Tag out:** off a base and not protected, within 1.0 m of the defender holding the ball.
 - **Protection after overrunning first:** the batter-runner overrunning first and returning is protected (OBR 5.09(b)(4) Exception).
 - **Simultaneous is safe:** a force or tag within 1 ms of his foot reaching the bag counts as simultaneous (TASK-006B rule).
 - **Run:** crossing the plate.
-- **Third out:** ends the play immediately.
+- **Third out:** ends the play immediately. OBR 5.08(a): no run scores on a play whose third out is a force out, a fly out, or the batter-runner retired before he touches first. Runs that crossed before a tag-play or retouch third out count ("not a force play", 5.08 Approved Ruling).
+- **Overrun protection:** only while he returns from overrunning first. Heading for second ends it (OBR 5.09(b)(11)).
+- **Not modelled:**
+  - the force being reinstated when a runner who reached his forced base retreats (OBR 5.09(b)(6));
+  - a runner who has passed a base retouching his original base after a caught fly (a lab-scripted runner cannot run on a catchable fly).
 - **End of play:** the ball is held, the defense's action is finished, and every runner is on a base. The batter-runner walking back after overrunning first is already entitled to it.
 
 ## The engine
 - **Discrete events:** `LivePlay` is a deterministic discrete-event simulation on a fixed 1/120 s tick grid from contact.
-- **Event times are exact:** within a tick, base touches are located exactly from the closed-form motion. Out conditions are sampled at five points across the tick, then bisected.
+- **Event times are exact:** within a tick, base touches are located exactly from the closed-form motion.
+- **Out conditions** are probed at five points across the tick and at the instants they can start or stop holding, then bisected:
+  - the defense taking the ball (possession, release, catch, a planned base touch);
+  - each runner's foot one simultaneous window short of the bag.
+
+  A force made 1.1 ms ahead of the runner is an out every time, and the tests sweep 1.1–3 ms.
 - **Decisions happen only at events.**
 - **Frame-rate independent:** results do not depend on when or how often `AdvanceTo` is called. A test compares 30, 60 and 144 fps and a jittered schedule to 1e-9 s.
 - **Cost:** a whole play costs 0.3–3 ms to run and 10–30 ms to set up at contact (the defense's decision) in the Editor. The labs resolve it at contact; every motion keeps its history, so rendering any later time is exact.
@@ -81,7 +92,7 @@ All of these are decided by gameplay state, never by colliders or animation.
 ## Presentation (`RunnerView`)
 - **Figures:** runners are `PlayerMannequin`s in the offense's light uniform, on the authoritative position, facing where they run.
 - **Run cycle:** phased by the distance actually run, so there is no foot skating.
-- **Batter hand-over (batting lab):** the batter figure hands over to the batter-runner when he starts (contact + 0.25 s), blended from the batter's box onto the base path over 0.35 s. This is presentation only.
+- **Batter hand-over (batting lab):** the batter figure hands over to the batter-runner when he starts (contact + 0.34 s), blended from the batter's box onto the base path over 0.35 s. This is presentation only.
 - **Leaving the field:** retired runners disappear 1.2 s after the out, and scorers 1.5 s after crossing. Walking off is not modelled.
 
 ## Not yet (TASK-008/009/010)

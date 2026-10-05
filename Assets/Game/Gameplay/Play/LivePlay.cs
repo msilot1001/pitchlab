@@ -86,7 +86,8 @@ namespace Pitchlab.Gameplay.Play
         private readonly List<LiveRunner> _runners = new List<LiveRunner>();
         private readonly List<PlayLogEntry> _log = new List<PlayLogEntry>();
         private readonly List<PlayEvent> _rulesEvents = new List<PlayEvent>();
-        private readonly List<(double Time, int Seq, Action Act, string Name)> _scheduled = new List<(double, int, Action, string)>();
+        private readonly List<(double Time, int Seq, Action Act, string Name, bool Settle)> _scheduled = new List<(double, int, Action, string, bool)>();
+        private readonly List<double> _probes = new List<double>();
         private readonly Dictionary<Runner, double> _forcedTouch = new Dictionary<Runner, double>();
         private int _seq;
         private double _now;
@@ -112,7 +113,7 @@ namespace Pitchlab.Gameplay.Play
             // predicted arrivals under those intentions.
             var intents = new Dictionary<Runner, Intent>();
             foreach (LiveRunner r in _runners)
-                intents[r.Id] = Kind != BallKind.Dead && !r.Id.IsBatter && runsOnContact != null && runsOnContact(r.Id)
+                intents[r.Id] = Kind != BallKind.Dead && Kind != BallKind.Caught && !r.Id.IsBatter && runsOnContact != null && runsOnContact(r.Id)
                     ? new Intent(IntentKind.Go, r.Id.Next)
                     : RunnerBrain.Initial(this, r);
             var timing = new PredictedTiming(this, intents);
@@ -162,7 +163,8 @@ namespace Pitchlab.Gameplay.Play
         public bool IsOver => !double.IsPositiveInfinity(EndTime);
         public int OutsMade => _rulesEvents.Count(e => e.IsOut);
         public int Outs => Situation.Outs + OutsMade;
-        public int Runs => _runners.Count(r => r.HasScored);
+        /// <summary>Runs that count (OBR 5.08(a)).</summary>
+        public int Runs => _runners.Count(r => r.HasScored && r.RunCounts);
 
         public LiveRunner RunnerOf(Runner id) => _runners.FirstOrDefault(r => r.Id == id);
 
@@ -190,6 +192,7 @@ namespace Pitchlab.Gameplay.Play
             int guard = 0;
             while (_now < time && guard++ < 1_000_000)
             {
+                if (IsOver && _scheduled.Count == 0) return;   // nothing left to happen
                 double tickEnd = ContactTime + (Math.Floor((_now - ContactTime) / Tick + 1e-9) + 1.0) * Tick;
                 (double when, Action act) = NextOccurrence(_now, tickEnd);
                 if (act != null)
@@ -213,17 +216,15 @@ namespace Pitchlab.Gameplay.Play
             if (!IsOver) EndPlay(_now, "time limit");
         }
 
-        /// <summary>Events that only finish a motion after the action (the walk back after overrunning first).</summary>
-        private static bool Settling(string name) => name.StartsWith("overrun") || name.StartsWith("back on");
-
-        private void Schedule(double time, Action act, string name) => _scheduled.Add((Math.Max(time, _now), _seq++, act, name));
+        /// <param name="settle">Only finishes a motion after the action (the walk back after overrunning first): it neither
+        /// keeps the play alive nor is cancelled by its end.</param>
+        private void Schedule(double time, Action act, string name, bool settle = false) => _scheduled.Add((Math.Max(time, _now), _seq++, act, name, settle));
 
         /// <summary>The earliest scheduled or detected occurrence in (from, to].</summary>
         private (double, Action) NextOccurrence(double from, double to)
         {
             double best = double.PositiveInfinity;
-            Action act = null;
-            int bestSeq = int.MaxValue;
+            int bestScheduled = -1, bestSeq = int.MaxValue;
             for (int i = 0; i < _scheduled.Count; i++)
             {
                 var s = _scheduled[i];
@@ -231,68 +232,151 @@ namespace Pitchlab.Gameplay.Play
                 {
                     best = s.Time;
                     bestSeq = s.Seq;
-                    int index = i;
-                    act = () =>
-                    {
-                        var item = _scheduled[index];
-                        _scheduled.RemoveAt(index);
-                        item.Act();
-                    };
+                    bestScheduled = i;
                 }
             }
 
-            if (IsOver) return (best, act);   // only the settling motions remain
+            LiveRunner who = null;
+            int what = 0;   // 1 foot on the bag ahead, 2 end of leg, 3 foot back on the bag behind, 4 back at the leg's start, 10+ an out
+            PlayEventKind outKind = PlayEventKind.ForceOut;
+            if (!IsOver)
+            {
+                foreach (LiveRunner r in _runners)
+                {
+                    if (r.IsDone) continue;
+                    PathMotion m = r.Current.Motion;
+                    double L = r.Current.Leg.Length, d0 = m.DistanceAt(from), d1 = m.DistanceAt(to);
+                    // Rules touch a base when his foot reaches it (TouchDistance); the leg's geometry ends at the bag centre.
+                    Crossing(L - LiveRunner.TouchDistance, true, 1);
+                    Crossing(L, true, 2);
+                    Crossing(LiveRunner.TouchDistance, false, 3);
+                    Crossing(0.0, false, 4);
+
+                    void Crossing(double at, bool forward, int kind)
+                    {
+                        if (forward ? !(d0 < at && d1 >= at) : !(d0 > at && d1 <= at)) return;
+                        double t = m.Target == at && (forward ? m.Sign > 0.0 : m.Sign < 0.0) ? m.ArrivalTime : m.TimeAt(at);
+                        if (t > from && t <= to && (t < best || t == best && kind < what && who == r))
+                        {
+                            best = t;
+                            who = r;
+                            what = kind;
+                            bestScheduled = -1;
+                        }
+                    }
+                }
+
+                // Outs made by the gameplay state (possession, base touch, tag reach) — the first moment each holds: probed
+                // across the window and at the instants a condition can begin or end (the defense taking the ball, a runner's
+                // foot one simultaneous-window short of the bag), then located by bisection.
+                if (Kind != BallKind.Dead)
+                {
+                    CollectProbes(from, to);
+                    foreach (LiveRunner r in _runners)
+                    {
+                        if (r.IsDone) continue;
+                        for (int c = 0; c < 3; c++)
+                        {
+                            double t = FirstHolding(r, c, from);
+                            if (t < best)
+                            {
+                                best = t;
+                                who = r;
+                                what = 10 + c;
+                                outKind = c == 0 ? PlayEventKind.ForceOut : c == 1 ? PlayEventKind.TagOut : PlayEventKind.RetouchOut;
+                                bestScheduled = -1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (bestScheduled >= 0)
+            {
+                int index = bestScheduled;
+                return (best, () =>
+                {
+                    var item = _scheduled[index];
+                    _scheduled.RemoveAt(index);
+                    item.Act();
+                });
+            }
+
+            if (who == null) return (best, null);
+            LiveRunner runner = who;
+            PlayEventKind kindOfOut = outKind;
+            switch (what)
+            {
+                case 1: return (best, () => OnFootAhead(runner));
+                case 2: return (best, () => OnReachLegEnd(runner));
+                case 3: return (best, () => OnFootBack(runner));
+                case 4: return (best, () => OnReturnToLegStart(runner));
+                default: return (best, () => MakeOut(runner, kindOfOut, _now));
+            }
+        }
+
+        private void CollectProbes(double from, double to)
+        {
+            _probes.Clear();
+            for (int k = 0; k <= OutSamples; k++) _probes.Add(from + (to - from) * k / OutSamples);
+            void Add(double t)
+            {
+                if (t > from && t < to) _probes.Add(t);
+            }
+
+            Add(Fielding.PossessionTime);
+            if (Defense.Throw is ThrowPlay th)
+            {
+                Add(th.ReleaseTime);
+                if (th.Caught) Add(th.Catch.Time);
+            }
+
+            if (Rules.Chosen != null)
+            {
+                Add(Rules.Chosen.CompletionTime);
+                Add(Rules.Chosen.OutTime);
+            }
 
             foreach (LiveRunner r in _runners)
             {
                 if (r.IsDone) continue;
                 PathMotion m = r.Current.Motion;
-                BaseLeg leg = r.Current.Leg;
-                double d0 = m.DistanceAt(from), d1 = m.DistanceAt(to);
-                LiveRunner runner = r;
-                if (d0 < leg.Length && d1 >= leg.Length)
-                {
-                    double t = m.TimeAt(leg.Length);
-                    if (t > from && t <= to && t < best) { best = t; act = () => OnReachLegEnd(runner); }
-                }
-                else if (d0 > 0.0 && d1 <= 0.0)
-                {
-                    double t = m.TimeAt(0.0);
-                    if (t > from && t <= to && t < best) { best = t; act = () => OnReturnToLegStart(runner); }
-                }
+                double L = r.Current.Leg.Length;
+                // The last instant before a defensive action would be "simultaneous" with his foot reaching a bag.
+                double ahead = m.TimeAt(L - LiveRunner.TouchDistance), back = m.TimeAt(LiveRunner.TouchDistance);
+                if (m.Sign > 0.0) Add(ahead - TimingCall.Simultaneous - 1e-7);
+                else Add(back - TimingCall.Simultaneous - 1e-7);
             }
 
-            // Outs made by the gameplay state (possession, base touch, tag reach) — the first moment each holds.
-            foreach (LiveRunner r in _runners)
+            _probes.Sort();
+        }
+
+        /// <summary>The first probe time (bisected back to the start of the interval) at which out condition
+        /// <paramref name="c"/> holds for <paramref name="r"/>, or +∞.</summary>
+        private double FirstHolding(LiveRunner r, int c, double from)
+        {
+            double previous = from;
+            for (int k = 0; k < _probes.Count; k++)
             {
-                if (r.IsDone) continue;
-                LiveRunner runner = r;
-                foreach (var (kind, check) in OutConditions(runner))
+                double probe = _probes[k];
+                if (OutCondition(r, c, probe))
                 {
-                    // Sampled across the window (start, three interior points, end) so a condition that holds only briefly —
-                    // a force completed just before the runner's foot arrives — is not missed; then located by bisection.
-                    double t = double.PositiveInfinity, previous = from;
-                    for (int k = 0; k <= OutSamples; k++)
+                    if (probe <= from) return from;
+                    double lo = previous, hi = probe;
+                    for (int i = 0; i < 50 && hi - lo > 1e-9; i++)
                     {
-                        double probe = from + (to - from) * k / OutSamples;
-                        if (check(probe))
-                        {
-                            t = k == 0 ? from : First(check, previous, probe);
-                            break;
-                        }
-
-                        previous = probe;
+                        double mid = 0.5 * (lo + hi);
+                        if (OutCondition(r, c, mid)) hi = mid;
+                        else lo = mid;
                     }
 
-                    if (t < best)
-                    {
-                        best = t;
-                        act = () => MakeOut(runner, kind, _now);
-                    }
+                    return hi;
                 }
+
+                previous = probe;
             }
 
-            return (best, act);
+            return double.PositiveInfinity;
         }
 
         private const int OutSamples = 4;
@@ -312,32 +396,28 @@ namespace Pitchlab.Gameplay.Play
 
         // ------------------------------------------------------------------ outs from gameplay state
 
-        private IEnumerable<(PlayEventKind, Func<double, bool>)> OutConditions(LiveRunner r)
+        /// <summary>
+        /// Out condition <paramref name="c"/> at <paramref name="t"/> — 0 force (still forced, the defender holding the ball
+        /// on his base first), 1 tag (off a base and unprotected, within reach of the defender holding the ball), 2 retouch
+        /// (a caught fly found him off his base; the defender holding the ball touches it before he does). A defensive action
+        /// within the simultaneous window of his foot reaching the bag is safe.
+        /// </summary>
+        private bool OutCondition(LiveRunner r, int c, double t)
         {
-            // Force out: he is still forced to his next base, the defender holding the ball touches it first.
-            yield return (PlayEventKind.ForceOut, t =>
+            if (t < ContactTime) return false;
+            DefensivePosition? holder = Defense.HolderAt(t);
+            if (!(holder is DefensivePosition h)) return false;
+            switch (c)
             {
-                if (!ForcedAt(r, t) || TouchesWithin(r, t, TimingCall.Simultaneous)) return false;
-                DefensivePosition? holder = Defense.HolderAt(t);
-                return holder is DefensivePosition h && BaseTouch.IsTouching(Defense.FielderPositionAt(h, t), r.Id.Next);
-            });
-            // Tag out: off his base and unprotected, within reach of the defender holding the ball.
-            yield return (PlayEventKind.TagOut, t =>
-            {
-                if (r.Phase == RunnerPhase.Overrunning || r.Phase == RunnerPhase.Scored || r.Phase == RunnerPhase.Out) return false;
-                if (t < ContactTime + 1e-9 && r.Id.IsBatter) return false;
-                if (r.TouchingBaseAt(t, out _) || TouchesWithin(r, t, TimingCall.Simultaneous)) return false;
-                if (r.Phase == RunnerPhase.Returning && r.Id.IsBatter && r.LastTouched == Base.First) return false;   // returning after an overrun of first
-                DefensivePosition? holder = Defense.HolderAt(t);
-                return holder is DefensivePosition h && t >= ContactTime && TagRules.CanTag(Defense.FielderPositionAt(h, t), r.PositionAt(t), true);
-            });
-            // Doubled off: a caught fly found him off his base and the defender holding the ball touches it before he does.
-            yield return (PlayEventKind.RetouchOut, t =>
-            {
-                if (!r.MustRetouch) return false;
-                DefensivePosition? holder = Defense.HolderAt(t);
-                return holder is DefensivePosition h && BaseTouch.IsTouching(Defense.FielderPositionAt(h, t), r.LastTouched);
-            });
+                case 0:
+                    return ForcedAt(r, t) && !TouchesWithin(r, t, TimingCall.Simultaneous) && BaseTouch.IsTouching(Defense.FielderPositionAt(h, t), r.Id.Next);
+                case 1:
+                    if (r.Phase == RunnerPhase.Scored || r.Phase == RunnerPhase.Out || r.OverrunProtected) return false;
+                    if (r.TouchingBaseAt(t, out _) || TouchesWithin(r, t, TimingCall.Simultaneous)) return false;
+                    return TagRules.CanTag(Defense.FielderPositionAt(h, t), r.PositionAt(t), true);
+                default:
+                    return r.MustRetouch && !TouchesWithin(r, t, TimingCall.Simultaneous) && BaseTouch.IsTouching(Defense.FielderPositionAt(h, t), r.LastTouched);
+            }
         }
 
         /// <summary>He reaches the bag he is running to within <paramref name="window"/> of <paramref name="t"/> — a defensive
@@ -380,7 +460,21 @@ namespace Pitchlab.Gameplay.Play
                 _ => $"OUT AT {Bases.Name(at).ToUpperInvariant()} (tag)",
             };
             Note(time, PlayLogKind.Out, r.Id, at, holder, $"{what} — {r.Id}");
-            if (Outs >= PlayResolution.OutsPerInning) EndPlay(time, "third out");
+            if (Outs >= PlayResolution.OutsPerInning)
+            {
+                // OBR 5.08(a) Exception: no run scores on a play whose third out is made by the batter-runner before he
+                // touches first base (a fly out included), or by any runner being forced out. On a tag play or a retouch
+                // ("not a force play", 5.08 Approved Ruling) runs that crossed before the out count.
+                bool batterBeforeFirst = r.Id.IsBatter && r.LastTouched == Base.Home;
+                if (kind == PlayEventKind.ForceOut || kind == PlayEventKind.FlyOut || batterBeforeFirst)
+                    foreach (LiveRunner scorer in _runners.Where(x => x.HasScored && x.RunCounts))
+                    {
+                        scorer.RunCounts = false;
+                        Note(time, PlayLogKind.Run, scorer.Id, Base.Home, null, $"run does not count (OBR 5.08(a)) — {scorer.Id}");
+                    }
+
+                EndPlay(time, "third out");
+            }
         }
 
         private static Base NearestBase(LiveRunner r, double time)
@@ -391,27 +485,30 @@ namespace Pitchlab.Gameplay.Play
 
         // ------------------------------------------------------------------ runner events
 
+        /// <summary>His foot reaches the bag ahead (the rules' touch): safe there, his force over, a run at home.</summary>
+        private void OnFootAhead(LiveRunner r)
+        {
+            double t = _now;
+            Base b = r.Current.Leg.To;
+            if (r.Phase == RunnerPhase.Reading || r.IsDone) return;
+            r.LastTouched = b;
+            if (Forces.IsForced(r.Id, Situation.Bases) && b == r.Id.Next && !_forcedTouch.ContainsKey(r.Id)) _forcedTouch[r.Id] = t;
+            Note(t, PlayLogKind.BaseTouch, r.Id, b, null, $"{r.Id} touches {Bases.Name(b)}");
+            if (PlayOnBase(b, t)) Note(t, PlayLogKind.Safe, r.Id, b, null, $"SAFE AT {Bases.Name(b).ToUpperInvariant()} — {r.Id}");
+            if (b != Base.Home) return;
+            r.ScoreTime = t;
+            r.Phase = RunnerPhase.Scored;
+            Note(t, PlayLogKind.Run, r.Id, Base.Home, null, $"RUN SCORES — {r.Id}");
+        }
+
+        /// <summary>He reaches the bag's centre at the leg's end: on to the next leg, through first, or standing on it.</summary>
         private void OnReachLegEnd(LiveRunner r)
         {
             double t = _now;
             BaseLeg leg = r.Current.Leg;
             Base b = leg.To;
             PathMotion m = r.Current.Motion;
-            if (r.Phase == RunnerPhase.Reading || r.Phase == RunnerPhase.Out) return;
-            r.LastTouched = b;
-            if (Forces.IsForced(r.Id, Situation.Bases) && b == r.Id.Next && !_forcedTouch.ContainsKey(r.Id)) _forcedTouch[r.Id] = t;
-            Note(t, PlayLogKind.BaseTouch, r.Id, b, null, $"{r.Id} touches {Bases.Name(b)}");
-            if (PlayOnBase(b, t)) Note(t, PlayLogKind.Safe, r.Id, b, null, $"SAFE AT {Bases.Name(b).ToUpperInvariant()} — {r.Id}");
-
-            if (b == Base.Home)
-            {
-                r.ScoreTime = t;
-                r.Phase = RunnerPhase.Scored;
-                Note(t, PlayLogKind.Run, r.Id, Base.Home, null, $"RUN SCORES — {r.Id}");
-                r.Add(leg, m);   // keeps braking past the plate
-                return;
-            }
-
+            if (r.Phase == RunnerPhase.Reading || r.IsDone) return;   // a scorer keeps braking past the plate
             if (r.Continue is Base next && next != b)
             {
                 // Round the base onto the next leg at the speed he reached it with.
@@ -425,8 +522,9 @@ namespace Pitchlab.Gameplay.Play
             {
                 // Through first: overrun, then back to the bag (protected — OBR 5.09(b)(4) exception).
                 r.Phase = RunnerPhase.Overrunning;
+                r.OverrunProtected = true;
                 LiveRunner runner = r;
-                Schedule(m.RestTime, () => ReturnAfterOverrun(runner), "overrun over");
+                Schedule(m.RestTime, () => ReturnAfterOverrun(runner), "overrun over", true);
                 return;
             }
 
@@ -449,20 +547,30 @@ namespace Pitchlab.Gameplay.Play
             {
                 if (runner.IsDone) return;
                 runner.Phase = RunnerPhase.Standing;
-            }, "back on first");
+                runner.OverrunProtected = false;
+            }, "back on first", true);
         }
 
-        private void OnReturnToLegStart(LiveRunner r)
+        /// <summary>His foot is back on the bag behind him (a retouch, or back to his base).</summary>
+        private void OnFootBack(LiveRunner r)
         {
+            if (r.IsDone) return;
             BaseLeg leg = r.Current.Leg;
             r.LastTouched = leg.From;
-            r.Target = leg.From;
             Note(_now, PlayLogKind.BaseTouch, r.Id, leg.From, null, $"{r.Id} back to {Bases.Name(leg.From)}");
             bool retouch = r.MustRetouch;
             r.MustRetouch = false;
+            if (retouch && Kind == BallKind.Caught) Apply(r, RunnerBrain.AfterCatch(this, r, _now), _now);   // tag up from here?
+        }
+
+        /// <summary>Back on the bag's centre: standing there.</summary>
+        private void OnReturnToLegStart(LiveRunner r)
+        {
+            if (r.IsDone || r.Current.Motion.Sign > 0.0) return;
+            BaseLeg leg = r.Current.Leg;
+            r.Target = leg.From;
             r.Phase = RunnerPhase.Standing;
             r.Add(leg, new PathMotion(Profile, _now, 0.0, 0.0, 0.0, 0.0));
-            if (retouch && Kind == BallKind.Caught) Apply(r, RunnerBrain.AfterCatch(this, r, _now), _now);   // tag up late?
         }
 
         /// <summary>Is the defense making a play at <paramref name="b"/> as the runner arrives (a throw on its way or a fielder
@@ -590,8 +698,9 @@ namespace Pitchlab.Gameplay.Play
 
             r.Target = destination;
             r.Phase = RunnerPhase.Running;
-            r.ThroughFirst = destination == Base.First && RunnerBrain.RunsThroughFirst(this, r);
-            List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(Profile, leg, d, v, t, destination, r.ThroughFirst);
+            r.OverrunProtected = false;   // heading on: no longer returning from an overrun (OBR 5.09(b)(11))
+            bool throughFirst = destination == Base.First && RunnerBrain.RunsThroughFirst(this, r);
+            List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(Profile, leg, d, v, t, destination, throughFirst);
             PathMotion m = plan[0].Motion;
             r.Add(leg, m);
             r.Continue = leg.To != destination ? destination : (Base?)null;
@@ -611,7 +720,6 @@ namespace Pitchlab.Gameplay.Play
                     Base next = BaseLeg.Bases(destination);
                     Note(_now, PlayLogKind.Decision, runner.Id, next, null, $"{runner.Id}: rounds {Bases.Name(destination)} for {Bases.Name(next)}");
                     Go(runner, runner.Current.Leg, runner.Current.Motion.DistanceAt(_now), runner.Current.Motion.VelocityAt(_now), _now, next);
-                    RunnerBrain.MakeRoomBehind(this, runner, next, _now);
                 }
             }, $"{r.Id} decides at {Bases.Name(destination)}");
         }
@@ -622,8 +730,6 @@ namespace Pitchlab.Gameplay.Play
             double d = m.DistanceAt(t), v = m.VelocityAt(t);
             return new PathMotion(Profile, t, d, v, d + (Math.Abs(v) > 1e-6 ? Math.Sign(v) * v * v / (2.0 * Profile.BrakeDeceleration) : 0.0), 0.0);
         }
-
-        internal void Replan(LiveRunner r, Intent intent, double t) => Apply(r, intent, t);
 
         // ------------------------------------------------------------------ the end
 
@@ -636,13 +742,13 @@ namespace Pitchlab.Gameplay.Play
                 return;
             }
 
-            if (_scheduled.Any(s => !Settling(s.Name))) return;
+            if (_scheduled.Any(s => !s.Settle)) return;
             if (Defense.AuthorityAt(t) != BallAuthority.Possessed || t < Defense.EndTime) return;
             foreach (LiveRunner r in _runners)
             {
                 if (r.IsDone) continue;
                 // The batter-runner past first (overrun) is entitled to it while he walks back (OBR 5.09(b)(4)).
-                bool overrun = r.Id.IsBatter && r.LastTouched == Base.First && (r.Phase == RunnerPhase.Overrunning || r.Phase == RunnerPhase.Returning);
+                bool overrun = r.OverrunProtected;
                 if (!overrun && (r.Phase != RunnerPhase.Standing || r.SpeedAt(t) > 1e-6 || r.MustRetouch)) return;
             }
 
@@ -656,7 +762,7 @@ namespace Pitchlab.Gameplay.Play
             // Settling motions (a walk back to first, braking after the plate) continue to be shown; on a third out
             // everyone pulls up.
             bool third = Outs >= PlayResolution.OutsPerInning;
-            _scheduled.RemoveAll(s => third || !Settling(s.Name));
+            _scheduled.RemoveAll(s => third || !s.Settle);
             foreach (LiveRunner r in _runners)
                 if (third && !r.IsDone && r.SpeedAt(t) > 1e-6) r.Add(r.Current.Leg, Hold(r, t));
             Note(t, PlayLogKind.PlayOver, null, null, null, $"PLAY OVER ({why})");
@@ -782,7 +888,7 @@ namespace Pitchlab.Gameplay.Play
             }
 
             public double TimeToNextBase(Runner runner) =>
-                _plans.TryGetValue(runner, out var plan) ? plan[plan.Count - 1].Motion.ArrivalTime - _contact : double.PositiveInfinity;
+                _plans.TryGetValue(runner, out var plan) ? RunnerPlanner.TouchTime(plan) - _contact : double.PositiveInfinity;
 
             public Vector3d PositionAt(Runner runner, double sinceContact)
             {

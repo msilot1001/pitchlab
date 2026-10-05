@@ -13,10 +13,26 @@ namespace Pitchlab.Sandbox
         public static string Calls(LivePlay play, double time)
         {
             if (play == null) return "";
-            string[] calls = play.Log.Where(e => e.Time <= time && (e.Kind == PlayLogKind.Out || e.Kind == PlayLogKind.Safe || e.Kind == PlayLogKind.Run))
-                .Select(e => e.Text.Split('—')[0].Trim()).ToArray();
-            return string.Join(" · ", calls);
+            var text = new StringBuilder();
+            foreach (PlayLogEntry e in play.Log)
+            {
+                if (e.Time > time) break;
+                string call = e.Kind switch
+                {
+                    PlayLogKind.Out => e.Text.StartsWith("FLY") ? "FLY OUT" : e.Text.StartsWith("DOUBLED") ? $"DOUBLED OFF {Name(e)}" : $"OUT AT {Name(e)}{(e.Text.Contains("(tag)") ? " (tag)" : "")}",
+                    PlayLogKind.Safe => $"SAFE AT {Name(e)}",
+                    PlayLogKind.Run => e.Text.StartsWith("RUN SCORES") ? "RUN SCORES" : "NO RUN",
+                    _ => null,
+                };
+                if (call == null) continue;
+                if (text.Length > 0) text.Append(" · ");
+                text.Append(call);
+            }
+
+            return text.ToString();
         }
+
+        private static string Name(PlayLogEntry e) => e.At is Pitchlab.Simulation.Field.Base b ? Bases.Name(b).ToUpperInvariant() : "";
 
         public static string Report(LivePlay play, double time)
         {

@@ -51,6 +51,19 @@ Codex: B (Illinois termination), fixed and merged.
 - **Arrival times:** slides on 2B/3B (10 m/s²) give force-play arrivals of ~4.2 s from contact for a runner on first. Without the slide model it was ~4.5 s.
 - **Out detection within a tick:** out conditions must be sampled within a tick. A force completed just before the runner's foot arrived was missed when only the tick's end was checked, and the force-boundary test found it.
 - **Safe calls:** these are logged only for plays on a runner, not for a return throw.
+- **Review fixes:**
+
+| Review | Fixes |
+|---|---|
+| Rules | OBR 5.08(a) runs on a force, fly-out or batter-before-first third out; overrun protection only while returning from an overrun; dead-ball guard on outs |
+| Physics | exact stops on the bag; reversal brakes first; foot-on-bag touch time for rules and predictions (−0.245 s on slides); cubic banana without a kink; out conditions probed at their exact boundary instants (a 1.1–3 ms force is always an out) |
+| Unity | figures toggled once; the batter returns to the plate after the play; no per-tick closures; the engine stops after the end; calls built from event kinds |
+| Tests | the force-boundary test now detects removal of the 1 ms window, plus a 1.1–3 ms sweep; every play must end for a reason; protected overrun with the first baseman holding the ball; double-off at second; foul with runners; send margin flips with outs; third-out run rule; mid-run prediction = execution; exact stops and reversal |
+
+- **Calibration:** contact → first step recalibrated to 0.34 s (range 0.20–0.35 s), so the foot reaches first at 4.28 s over the plate-centre → bag path (27.05 m).
+- **Mutations:**
+  - Caught: no simultaneous window, no foot-window probes, no 5.08(a).
+  - Not caught: "no overrun protection". The play ends once the ball is held and every runner is settled, and the protected batter's walk back happens after that. Protection only matters while a play is still live, which first arises with TASK-009's chained defensive actions; the decisive test belongs there.
 
 ## Remaining risks
 (filled in at the end)

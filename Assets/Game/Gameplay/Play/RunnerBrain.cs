@@ -126,11 +126,5 @@ namespace Pitchlab.Gameplay.Play
 
         /// <summary>A base's place in a runner's trip around the bases (home is 4 once he has left it).</summary>
         private static int Index(LiveRunner r, Base b) => b == Base.Home ? 4 : (int)b;   // runners only ever head for home after third
-
-        public static void MakeRoomBehind(LivePlay play, LiveRunner r, Base next, double now)
-        {
-            // Runners only ever extend their targets in TASK-007, after checking the runner ahead (Blocked), so the order
-            // holds by construction; nothing to do.
-        }
     }
 }

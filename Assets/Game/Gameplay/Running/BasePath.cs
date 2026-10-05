@@ -7,9 +7,11 @@ namespace Pitchlab.Gameplay.Running
     /// <summary>
     /// One leg of the base path, from a base to the next (home → first → second → third → home), on the ground. Straight
     /// between the bags, or — when the runner may round the next base — the "banana" route coaches teach: drifting out
-    /// (away from the diamond) over the last part of the leg and cutting back across the bag toward the following base, so
-    /// the turn is not a right angle at a point. The path always passes through the bag centres. Arc length is tabulated so
-    /// motion is along distance travelled.
+    /// (away from the diamond) over the last part of the leg and cutting back across the bag toward the following base. The
+    /// drift is the cubic o(s) = (27/4)·w·s²·(1 − s) over the last part of the leg (s from 0 to 1): it leaves the straight line
+    /// tangentially (no kink), is widest (w) two thirds of the way, and crosses the bag already turned ≈ 33° toward the next
+    /// base, so the remaining turn at the bag is ≈ 57°, not 90°. The path always passes through the bag centres. Arc length
+    /// is tabulated so motion is along distance travelled.
     /// </summary>
     public sealed class BaseLeg
     {
@@ -106,7 +108,11 @@ namespace Pitchlab.Gameplay.Running
         private Vector3d AtFraction(double u)
         {
             double offset = 0.0;
-            if (Banana && u > BananaStart) offset = BananaWidth * Math.Sin(Math.PI * (u - BananaStart) / (1.0 - BananaStart));
+            if (Banana && u > BananaStart)
+            {
+                double s = (u - BananaStart) / (1.0 - BananaStart);
+                offset = 6.75 * BananaWidth * s * s * (1.0 - s);
+            }
             return Start + u * _chord * _along + offset * _outward;
         }
     }

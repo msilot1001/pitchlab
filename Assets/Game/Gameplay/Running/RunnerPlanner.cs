@@ -58,18 +58,16 @@ namespace Pitchlab.Gameplay.Running
             throw new ArgumentException("Destination is not ahead of the runner.", nameof(destination));
         }
 
-        /// <summary>When he would touch <paramref name="destination"/> going there now.</summary>
-        public static double ArrivalTime(RunnerProfile p, BaseLeg leg, double d, double v, double time, Base destination, bool throughFirst)
+        /// <summary>When he would touch <paramref name="destination"/> (his foot on the bag — the rules' touch, LiveRunner.TouchDistance
+        /// before its centre) going there now.</summary>
+        public static double ArrivalTime(RunnerProfile p, BaseLeg leg, double d, double v, double time, Base destination, bool throughFirst) =>
+            TouchTime(Plan(p, leg, d, v, time, destination, throughFirst));
+
+        /// <summary>The foot-on-the-bag time at the end of a plan.</summary>
+        public static double TouchTime(List<PlannedLeg> plan)
         {
-            List<PlannedLeg> plan = Plan(p, leg, d, v, time, destination, throughFirst);
-            return plan[plan.Count - 1].Motion.ArrivalTime;
+            PlannedLeg last = plan[plan.Count - 1];
+            return last.Motion.TimeAt(last.Leg.Length - LiveRunner.TouchDistance);
         }
-
-        /// <summary>Order of bases around the diamond for a runner who started at <paramref name="from"/> (home last when it
-        /// is a destination): used to keep runners in order.</summary>
-        public static int Progress(Base from, Base b) => b == Base.Home && from != Base.Home ? 4 : (int)b;
-
-        /// <summary>The base after <paramref name="b"/> as a destination index, or −1 past home.</summary>
-        public static Base Next(Base b) => BaseLeg.Bases(b);
     }
 }

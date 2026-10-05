@@ -31,20 +31,22 @@ namespace Pitchlab.Gameplay.Running
         public double SlideDeceleration { get; }
         /// <summary>Highest speed through a base he rounds: 0.8·v_max (15–25 % lost per turn, optimal-path model — REPORTED).</summary>
         public double RoundingSpeed { get; }
-        /// <summary>Contact → the batter's first step toward first (s): 0.25 s = 4.27 s home-to-first (MEASURED average) − the
-        /// 4.02 s split from the first step (DERIVED).</summary>
+        /// <summary>Contact → the batter's first step toward first (s): 0.34 s, chosen in the 0.20–0.35 s range DERIVED from
+        /// the 4.27 s home-to-first average (MEASURED, contact → foot on the bag) minus the 4.02 s 90-ft split from the first
+        /// step, so that his foot reaches first 4.28 s after contact over this path (plate centre → bag, 27.05 m).</summary>
         public double BatterStartDelay { get; }
         /// <summary>A runner on base reading the batted ball before he commits (s; ASSUMED).</summary>
         public double ReadDelay { get; }
 
-        public static RunnerProfile Standard => new RunnerProfile(27.0 * 0.3048, 0.69, 6.0, 0.8, 0.25, 0.25);
+        public static RunnerProfile Standard => new RunnerProfile(27.0 * 0.3048, 0.69, 6.0, 0.8, 0.34, 0.25);
     }
 
     /// <summary>
-    /// A runner's movement along one base-path leg (distance d from its start bag), from (d₀, v₀) at t₀: the sprint law
-    /// v(t) = s·v_max + (v₀ − s·v_max)·e^(−t/τ) toward the target (s = ±1, so he can reverse), then constant braking so he
-    /// reaches the target distance at the end speed (0 = stop on it; above 0 = through it — rounding or overrunning — then
-    /// braking to rest past it). Position and velocity are continuous and exact functions of time; prediction and
+    /// A runner's movement along one base-path leg (distance d from its start bag), from (d₀, v₀) at t₀. If he is moving away
+    /// from the target he first brakes to a stop at the braking deceleration (no sharper than any other stop), then runs the
+    /// sprint law v(t) = s·v_max·(1 − e^(−t/τ)) toward the target (s = ±1), then brakes at constant deceleration so he
+    /// reaches the target distance at the end speed (0 = stop exactly on it; above 0 = through it — rounding or overrunning
+    /// — then braking to rest past it). Position and velocity are continuous and exact functions of time; prediction and
     /// execution use this same law.
     /// </summary>
     public sealed class PathMotion
@@ -53,16 +55,33 @@ namespace Pitchlab.Gameplay.Running
         public PathMotion(RunnerProfile p, double startTime, double d0, double v0, double target, double endSpeed, double topSpeed = double.NaN,
             double deceleration = double.NaN)
         {
+            if (double.IsNaN(d0) || double.IsNaN(v0) || double.IsNaN(target)) throw new ArgumentException("Motion state must be finite.");
             Profile = p;
             _brake = double.IsNaN(deceleration) ? p.BrakeDeceleration : deceleration;
             StartTime = startTime;
             D0 = d0;
             V0 = v0;
             Target = target;
-            _sign = target >= d0 ? 1.0 : -1.0;
             _top = double.IsNaN(topSpeed) ? p.MaxSpeed : Math.Min(topSpeed, p.MaxSpeed);
-            double remaining = Math.Abs(target - d0);
-            if (remaining < 1e-12 && Math.Abs(v0) < 1e-9)
+            if (!(_top > 0.0)) throw new ArgumentOutOfRangeException(nameof(topSpeed));
+
+            // Moving away from where he now has to go: brake to a stop first.
+            double towards = target >= d0 ? 1.0 : -1.0;
+            if (v0 * towards < 0.0)
+            {
+                _reverse = Math.Abs(v0) / _brake;
+                _d1 = d0 + 0.5 * v0 * _reverse;
+                _sign = target >= _d1 ? 1.0 : -1.0;
+            }
+            else
+            {
+                _d1 = d0;
+                _sign = towards;
+                _u0 = Math.Abs(v0);
+            }
+
+            double remaining = Math.Abs(target - _d1);
+            if (remaining < 1e-12 && _u0 < 1e-9)
             {
                 _brakeStart = 0.0;
                 _arrival = 0.0;
@@ -96,6 +115,7 @@ namespace Pitchlab.Gameplay.Running
             {
                 _arrival = _brakeStart + (vb - vEnd) / _brake;
                 EndSpeed = vEnd;
+                _exactStop = vEnd == 0.0;
             }
             else
             {
@@ -115,7 +135,8 @@ namespace Pitchlab.Gameplay.Running
             }
         }
 
-        private readonly double _sign, _top, _brakeStart, _arrival, _brake;
+        private readonly double _sign, _top, _brakeStart, _arrival, _brake, _reverse, _d1, _u0;
+        private readonly bool _exactStop;
 
         public RunnerProfile Profile { get; }
         public double StartTime { get; }
@@ -125,10 +146,10 @@ namespace Pitchlab.Gameplay.Running
         /// <summary>Speed (≥ 0) when he reaches the target.</summary>
         public double EndSpeed { get; }
         /// <summary>When he reaches the target.</summary>
-        public double ArrivalTime => StartTime + _arrival;
+        public double ArrivalTime => StartTime + _reverse + _arrival;
         /// <summary>When he starts braking (= arrival if he reaches it at speed).</summary>
-        public double BrakeTime => StartTime + _brakeStart;
-        /// <summary>Direction of travel (+1 forward along the leg, −1 back toward its start).</summary>
+        public double BrakeTime => StartTime + _reverse + _brakeStart;
+        /// <summary>Direction of travel toward the target (+1 forward along the leg, −1 back toward its start).</summary>
         public double Sign => _sign;
         /// <summary>When he comes to rest after the target (overrun) — the arrival when he stops on it.</summary>
         public double RestTime => ArrivalTime + EndSpeed / _brake;
@@ -138,9 +159,12 @@ namespace Pitchlab.Gameplay.Running
         {
             double t = time - StartTime;
             if (!(t > 0.0)) return D0;
-            if (t <= _brakeStart) return D0 + _sign * Along(t);
+            if (_exactStop && time >= ArrivalTime) return Target;   // exactly on the bag, not a rounding error short of it
+            if (t < _reverse) return D0 + V0 * t - Math.Sign(V0) * 0.5 * _brake * t * t;
+            t -= _reverse;
+            if (t <= _brakeStart) return _d1 + _sign * Along(t);
             double vb = AlongSpeed(_brakeStart), tb = Math.Min(t - _brakeStart, vb / _brake);
-            return D0 + _sign * (Along(_brakeStart) + vb * tb - 0.5 * _brake * tb * tb);
+            return _d1 + _sign * (Along(_brakeStart) + vb * tb - 0.5 * _brake * tb * tb);
         }
 
         /// <summary>Signed velocity along the leg (m/s).</summary>
@@ -148,54 +172,39 @@ namespace Pitchlab.Gameplay.Running
         {
             double t = time - StartTime;
             if (!(t > 0.0)) return V0;
+            if (t < _reverse) return V0 - Math.Sign(V0) * _brake * t;
+            t -= _reverse;
             if (t <= _brakeStart) return _sign * AlongSpeed(t);
             return _sign * Math.Max(0.0, AlongSpeed(_brakeStart) - _brake * (t - _brakeStart));
         }
 
-        /// <summary>Time ≥ start when the distance first equals <paramref name="d"/> (+∞ if never): bisection over the
-        /// monotone run (the reversal of a returning runner happens before he heads for the target).</summary>
+        /// <summary>
+        /// The first time ≥ the end of any reversal at which he is at distance <paramref name="d"/> on his way to the target
+        /// (+∞ if he never gets there): bisection over the monotone run toward and past the target.
+        /// </summary>
         public double TimeAt(double d)
         {
-            double end = RestTime - StartTime;
-            double F(double t) => _sign * (DistanceAt(StartTime + t) - d);
-            // The law can first move against the direction (initial velocity the other way): find the turnaround.
-            double turn = 0.0;
-            double along0 = _sign * V0;
-            if (along0 < 0.0) turn = Profile.AccelerationTime * Math.Log(1.0 - along0 / _top);   // velocity crosses zero
-            double lo = Math.Min(turn, end), hi = end;
-            if (F(hi) < 0.0) return double.PositiveInfinity;
-            if (F(lo) >= 0.0)
+            double a = StartTime + _reverse, b = RestTime;
+            double F(double t) => _sign * (DistanceAt(t) - d);
+            if (F(a) >= 0.0) return a;
+            if (F(b) < 0.0) return double.PositiveInfinity;
+            for (int i = 0; i < 64 && b - a > 1e-13; i++)
             {
-                // Already at/through it at the turnaround: the first crossing is before it (moving the other way).
-                double a = 0.0, b = lo;
-                if (F(0.0) >= 0.0) return StartTime;
-                for (int i = 0; i < 64; i++)
-                {
-                    double mid = 0.5 * (a + b);
-                    if (F(mid) >= 0.0) b = mid;
-                    else a = mid;
-                }
-
-                return StartTime + b;
+                double mid = 0.5 * (a + b);
+                if (F(mid) < 0.0) a = mid;
+                else b = mid;
             }
 
-            for (int i = 0; i < 64 && hi - lo > 1e-13; i++)
-            {
-                double mid = 0.5 * (lo + hi);
-                if (F(mid) < 0.0) lo = mid;
-                else hi = mid;
-            }
-
-            return StartTime + hi;
+            return b;
         }
 
-        // Distance and speed along the travel direction under the sprint law (before braking).
+        // Distance and speed along the travel direction under the sprint law (after any reversal, before braking).
         private double Along(double t)
         {
             double g = Profile.AccelerationTime * (1.0 - Math.Exp(-t / Profile.AccelerationTime));
-            return _top * t + (_sign * V0 - _top) * g;
+            return _top * t + (_u0 - _top) * g;
         }
 
-        private double AlongSpeed(double t) => _top + (_sign * V0 - _top) * Math.Exp(-t / Profile.AccelerationTime);
+        private double AlongSpeed(double t) => _top + (_u0 - _top) * Math.Exp(-t / Profile.AccelerationTime);
     }
 }

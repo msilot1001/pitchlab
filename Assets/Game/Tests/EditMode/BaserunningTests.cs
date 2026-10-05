@@ -30,7 +30,15 @@ namespace Pitchlab.Tests
         {
             var play = new LivePlay(f, new Situation(outs, bases), profile);
             play.RunToEnd();
+            AssertEndedForAReason(play);
             return play;
+        }
+
+        /// <summary>A play ends on its own (third out, ball held with everyone on a base, dead ball) — never on the safety limit.</summary>
+        private static void AssertEndedForAReason(LivePlay play)
+        {
+            Assert.IsFalse(play.Log.Any(e => e.Kind == PlayLogKind.PlayOver && e.Text.Contains("time limit")), "the play ended by itself");
+            Assert.Less(play.EndTime, play.ContactTime + 30.0);
         }
 
         private static FieldingPlay SsGrounder() => Field(85.0, -8.0, -15.0, -1000.0);
@@ -58,10 +66,30 @@ namespace Pitchlab.Tests
                 {
                     Assert.Greater(leg.Length, chord, "the banana is longer");
                     Assert.Less(leg.Length, chord * 1.02, "but only slightly");
-                    // Its widest point is outside the diamond, by the banana width.
+                    // It drifts outward (away from the diamond) by the banana width at its widest.
                     Vector3d centre = 0.5 * (FieldLayout.BasePosition(Base.Home) + FieldLayout.BasePosition(Base.Second));
-                    Vector3d mid = leg.PositionAt(0.775 * leg.Length), onLine = leg.Start + 0.775 * (leg.End - leg.Start);
-                    Assert.Greater((mid - centre).Length, (onLine - centre).Length + 0.9 * BaseLeg.BananaWidth - 1e-6, $"{from} drifts out");
+                    double widest = 0.0;
+                    for (double u = 0.0; u <= 1.0; u += 0.005)
+                    {
+                        Vector3d p = leg.PositionAt(u * leg.Length), chordPoint = leg.Start + Vector3d.Dot(p - leg.Start, (leg.End - leg.Start) / chord) * (leg.End - leg.Start) / chord;
+                        double off = (p - chordPoint).Length * Math.Sign(Vector3d.Dot(p - chordPoint, chordPoint - centre));
+                        widest = Math.Max(widest, off);
+                        Assert.GreaterOrEqual(off, -1e-9, $"{from}: never inside the line");
+                    }
+
+                    Assert.AreEqual(BaseLeg.BananaWidth, widest, 0.02, $"{from} drifts out by the banana width");
+                    // No kink where the drift begins: the heading changes smoothly (consecutive 5 cm steps turn < 1°).
+                    Vector3d previous = leg.DirectionAt(0.0);
+                    for (double dd = 0.05; dd < leg.Length - 0.05; dd += 0.05)
+                    {
+                        Vector3d dir = leg.DirectionAt(dd);
+                        Assert.Greater(Vector3d.Dot(dir, previous), Math.Cos(Math.PI / 180.0), $"{from}: heading jump at {dd:0.00} m");
+                        previous = dir;
+                    }
+
+                    // It crosses the bag turned toward the next base (the cut-back), so the turn at the bag is well under 90°.
+                    double inward = Math.Acos(Math.Min(1.0, Vector3d.Dot(leg.EndDirection, (leg.End - leg.Start) / chord))) * 180.0 / Math.PI;
+                    Assert.That(inward, Is.InRange(20.0, 45.0), "cut-back angle at the bag");
                 }
             }
         }
@@ -73,9 +101,7 @@ namespace Pitchlab.Tests
             // 4.28 s on average (Statcast; RHB 4.30, LHB 4.26).
             LivePlay play = Play(SsGrounder(), 0, new BaseOccupancy(true, false, false));
             double t = TouchTime(play, Runner.Batter, Base.First) - play.ContactTime;
-            Assert.AreEqual(4.28, t, 0.06);
-            // 90 ft from the first step (Statcast split average 4.02 s) at top speed 27 ft/s.
-            Assert.AreEqual(4.02, t - P.BatterStartDelay, 0.06);
+            Assert.AreEqual(4.28, t, 0.02, "contact → foot on first");
         }
 
         [Test]
@@ -96,10 +122,20 @@ namespace Pitchlab.Tests
             double toThird = RunnerPlanner.ArrivalTime(P, BaseLeg.Of(Base.Home, true), 0.0, 0.0, go, Base.Third, false);
             List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(P, BaseLeg.Of(Base.Home, true), 0.0, 0.0, go, Base.Third, false);
             Assert.AreEqual(3, plan.Count);
-            Assert.AreEqual(toThird, plan[2].Motion.ArrivalTime, 0.0);
+            Assert.Less(toThird, plan[2].Motion.ArrivalTime, "the foot reaches the bag before the body stops on its centre");
+            Assert.AreEqual(plan[2].Motion.TimeAt(plan[2].Leg.Length - LiveRunner.TouchDistance), toThird, 0.0);
             Assert.AreEqual(plan[0].Motion.ArrivalTime, plan[1].Motion.StartTime, 0.0, "legs chain without a gap");
             Assert.AreEqual(plan[0].Motion.EndSpeed, plan[1].Motion.V0, 1e-12, "and without a speed jump");
-            Assert.That(toThird - contact, Is.InRange(11.0, 12.5), "home to third ≈ 11.5 s for an average runner (DERIVED from Statcast records)");
+            Assert.That(toThird - contact, Is.InRange(11.0, 12.5), "home to third ≈ 11.5–11.8 s for an average runner (DERIVED from Statcast records)");
+
+            // Re-planned mid-run: in the wall-ball play the runner from first decides at third to go home; the arrival
+            // predicted from his state at that instant is the executed touch of the plate.
+            LivePlay wall = Play(Field(105.0, 14.0, -20.0, 1800.0), 0, new BaseOccupancy(true, false, false));
+            var r1 = new Runner(Base.First);
+            LiveRunner runner = wall.RunnerOf(r1);
+            double decided = wall.Log.First(e => e.Kind == PlayLogKind.Decision && e.Runner == r1 && e.Text.Contains("rounds 3B")).Time;
+            double predictedHome = RunnerPlanner.ArrivalTime(P, runner.LegAt(decided), runner.DistanceAlongAt(decided), runner.PathVelocityAt(decided), decided, Base.Home, false);
+            Assert.AreEqual(predictedHome, TouchTime(wall, r1, Base.Home), 1e-6, "prediction at the decision = execution");
         }
 
         [Test]
@@ -122,20 +158,30 @@ namespace Pitchlab.Tests
         [Test]
         public void BatterRunsThroughFirstAndReturnsProtected()
         {
-            LivePlay play = Play(CenterFieldSingle(), 0, BaseOccupancy.Empty);   // a single: he does not go on to second
+            // A quick batter-runner beats the shortstop's throw to first: he overruns the bag and walks back past the first
+            // baseman, who stands on it holding the ball — protected (OBR 5.09(b)(4) Exception).
+            var quick = new RunnerProfile(1.4 * P.MaxSpeed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
+            var play = new LivePlay(SsGrounder(), new Situation(0, BaseOccupancy.Empty), quick,
+                cs => cs.First(a => a.Kind == DefensiveActionKind.ThrowToBase && a.Target == Base.First));
+            play.RunToEnd();
+            AssertEndedForAReason(play);
             LiveRunner batter = play.RunnerOf(Runner.Batter);
+            Assert.Less(TouchTime(play, Runner.Batter, Base.First), play.Defense.Throw.Catch.Time, "he beat the throw");
             double touch = TouchTime(play, Runner.Batter, Base.First);
-            double past = 0.0;
-            for (double t = touch; t < touch + 3.0; t += 0.01)
-                past = Math.Max(past, batter.DistanceAlongAt(t) - BaseLeg.Of(Base.Home, true).Length);
-            Assert.That(past / 0.3048, Is.InRange(8.0, 25.0), "overruns first by a few strides (15–25 ft reported; less after slowing to round)");
-            Assert.AreEqual(Base.First, batter.LastTouched);
-            Assert.AreEqual(BaseOccupancy.Empty.Equals(play.ResultingBases()), false);
+            double past = 0.0, closest = double.PositiveInfinity;
+            for (double t = touch; t < touch + 6.0; t += 0.01)
+            {
+                past = Math.Max(past, batter.DistanceAlongAt(t) - BaseLeg.Of(Base.Home, false).Length);
+                if (play.Defense.HolderAt(t) == DefensivePosition.FirstBase && t > touch + 0.5)
+                    closest = Math.Min(closest, (play.Defense.FielderPositionAt(DefensivePosition.FirstBase, t) - batter.PositionAt(t)).Length);
+            }
+
+            Assert.That(past / 0.3048, Is.InRange(15.0, 40.0), "overruns first (15–25 ft reported for an average runner; v²/2a ≈ 36 ft for this faster one)");
+            Assert.Less(closest, TagRules.Reach, "the first baseman with the ball is within tag reach as he walks back");
+            Assert.IsFalse(batter.IsOut, "never tagged while returning from the overrun");
             Assert.IsTrue(play.ResultingBases().First, "safe at first");
-            Assert.IsFalse(batter.IsOut, "never tagged while returning");
-            // He ends up back on the bag.
             Vector3d end = batter.PositionAt(play.EndTime + 10.0);
-            Assert.Less((end - FieldLayout.BasePosition(Base.First)).Length, 0.05);
+            Assert.Less((end - FieldLayout.BasePosition(Base.First)).Length, 0.05, "back on the bag");
         }
 
         // ---------------------------------------------------------------- decisions
@@ -261,8 +307,137 @@ namespace Pitchlab.Tests
             double catchAt = boundary.Defense.Throw.Catch.Time;
             LiveRunner r1 = boundary.RunnerOf(new Runner(Base.First));
             // His foot reaches the bag (touch distance) within 1 ms after the receiver has the ball on it: simultaneous, safe.
-            double footOn = Enumerable.Range(0, 200000).Select(i => catchAt - 0.05 + i * 1e-6).First(t => r1.TouchingBaseAt(t, out Base b) && b == Base.Second);
-            Assert.That(footOn - catchAt, Is.InRange(0.0, TimingCall.Simultaneous + 2e-6));
+            Assert.That(TouchTime(boundary, r1.Id, Base.Second) - catchAt, Is.InRange(TimingCall.Simultaneous - 2e-5, TimingCall.Simultaneous + 2e-5),
+                "the boundary is the 1 ms window, not a tie");
+
+            // Just slower runners — the defense first by 1.1 to 3 ms — are out every time (not missed between samples). His
+            // foot-on-the-bag time is the planner's (equal to execution: PredictionEqualsExecution).
+            int outs = 0;
+            for (double speed = lo; speed > 0.5 * P.MaxSpeed; speed -= 0.0005)
+            {
+                LivePlay p = Run(speed);
+                var profile = new RunnerProfile(speed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
+                double footOn = RunnerPlanner.ArrivalTime(profile, BaseLeg.Of(Base.First, false), LivePlay.Lead(Base.First), 0.0, p.ContactTime + profile.ReadDelay, Base.Second, false);
+                double gap = footOn - p.Defense.Throw.Catch.Time;
+                if (gap > 3e-3) break;
+                if (gap < 1.1e-3) continue;
+                Assert.IsTrue(p.RulesEvents.Any(e => e.Runner == new Runner(Base.First) && e.Kind == PlayEventKind.ForceOut), $"out by {gap * 1e3:0.00} ms");
+                outs++;
+            }
+
+            Assert.Greater(outs, 3, "the sweep covered the 1.1–3 ms range");
+        }
+
+        [Test]
+        public void OffTheBaseOnACatchIsDoubledOffWhenTheBaseIsTouchedFirst()
+        {
+            // The shortstop stands on second base and catches a line drive up the middle (the pitcher moved aside); the runner
+            // from second is off at his lead: the defender holding the ball on the bag before the runner retouches it —
+            // doubled off (OBR 5.09(b)(5)).
+            Vector3d bag = FieldLayout.BasePosition(Base.Second);
+            var alignment = new DefensiveAlignment(Enumerable.Range(0, DefensiveAlignment.Count).Select(i =>
+                (DefensivePosition)i == DefensivePosition.Shortstop ? bag
+                : (DefensivePosition)i == DefensivePosition.P ? new Vector3d(-8.0, 16.0, 0.0)
+                : DefensiveAlignment.Standard[(DefensivePosition)i]).ToArray());
+            FieldingPlay liner = FieldingSolver.Solve(BallInPlaySimulation.Run(new BattedBallLaunch(85.0, 10.0, 0.0, 0.0).ToState(Contact),
+                EnvironmentState.Standard, FieldLayout.Standard), alignment, FielderProfile.For, FieldLayout.Standard);
+            Assert.AreEqual(DefensivePosition.Shortstop, liner.Primary);
+            Assert.AreEqual(InterceptKind.FlyCatch, liner.Intercept.Kind);
+            Assert.IsTrue(BaseTouch.IsTouching(liner.Motion(DefensivePosition.Shortstop).PositionAt(liner.PossessionTime), Base.Second), "caught on the bag");
+            LivePlay play = Play(liner, 0, new BaseOccupancy(false, true, false));
+            Assert.Less(play.CatchHang, LivePlay.LineDriveHang, "a line drive: the runner froze at his lead");
+            PlayEvent doubled = play.RulesEvents.Single(e => e.Runner == new Runner(Base.Second));
+            Assert.AreEqual(PlayEventKind.RetouchOut, doubled.Kind);
+            Assert.AreEqual(Base.Second, doubled.At);
+            Assert.AreEqual(2, play.Outs, "the catch and the double-off");
+            Assert.AreEqual(BaseOccupancy.Empty, play.ResultingBases());
+        }
+
+        [Test]
+        public void FoulBallSendsRunnersBack()
+        {
+            FieldingPlay foul = Field(85.0, 35.0, 50.0, 2000.0);
+            Assert.AreEqual(FieldingOutcome.DeadFoul, foul.Outcome);
+            var bases = new BaseOccupancy(true, true, false);
+            LivePlay play = Play(foul, 1, bases);
+            Assert.IsNull(play.RunnerOf(Runner.Batter), "no batter-runner on a foul");
+            Assert.AreEqual(bases, play.ResultingBases());
+            Assert.AreEqual(1, play.Outs);
+            Assert.AreEqual(0, play.Runs);
+            foreach (LiveRunner r in play.Runners)
+                Assert.Less((r.PositionAt(play.EndTime) - FieldLayout.BasePosition(r.Id.From)).Length, 0.05, $"{r.Id} back on his base");
+        }
+
+        [Test]
+        public void SendDecisionGetsBolderWithTwoOut()
+        {
+            // The wall-ball single with a runner on first: find the runner speed at which he is no longer sent home with none
+            // out; just below it he is held with none out but sent with two out (margin 0.30 s → −0.10 s).
+            FieldingPlay wall = Field(105.0, 14.0, -20.0, 1800.0);
+            bool Sent(double speed, int outs)
+            {
+                var p = new RunnerProfile(speed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
+                LivePlay play = Play(wall, outs, new BaseOccupancy(true, false, false), p);
+                return play.Log.Any(e => e.Kind == PlayLogKind.Decision && e.Runner == new Runner(Base.First) && e.Text.Contains("for home"));
+            }
+
+            double lo = 0.6 * P.MaxSpeed, hi = P.MaxSpeed;   // held at lo, sent at hi (none out)
+            Assert.IsTrue(Sent(hi, 0));
+            Assert.IsFalse(Sent(lo, 0));
+            for (int i = 0; i < 25; i++)
+            {
+                double mid = 0.5 * (lo + hi);
+                if (Sent(mid, 0)) hi = mid;
+                else lo = mid;
+            }
+
+            Assert.IsFalse(Sent(lo, 0), "held with none out");
+            Assert.IsTrue(Sent(lo, 2), "sent with two out at the same speed");
+        }
+
+        [Test]
+        public void ThirdOutRules()
+        {
+            // OBR 5.08(a): two out, runner on third running on contact; he crosses the plate before a deep fly is caught —
+            // the catch is the third out and the run does not count.
+            LivePlay fly = Play(DeepCenterFly(), 2, new BaseOccupancy(false, false, true));
+            LiveRunner r3 = fly.RunnerOf(new Runner(Base.Third));
+            Assert.Less(r3.ScoreTime, fly.Fielding.PossessionTime, "crossed before the catch");
+            Assert.AreEqual(3, fly.Outs);
+            Assert.AreEqual(0, fly.Runs, "no run on a fly-out third out");
+            Assert.IsTrue(fly.Log.Any(e => e.Text.Contains("does not count")));
+            // One out: the same runner tags and scores — the run counts.
+            Assert.AreEqual(1, Play(DeepCenterFly(), 1, new BaseOccupancy(false, false, true)).Runs);
+            // Two out, bases loaded, force at second for the third out before anyone scores: nothing happens after it.
+            LivePlay force = Play(SsGrounder(), 2, BaseOccupancy.Loaded);
+            Assert.AreEqual(3, force.Outs);
+            Assert.AreEqual(0, force.Runs);
+            Assert.IsFalse(force.Log.Any(e => e.Time > force.EndTime), "the third out ends the play");
+            Assert.AreEqual(BaseOccupancy.Empty, force.ResultingBases());
+        }
+
+        [Test]
+        public void StopsLandExactlyOnTheBagAndReversingBrakesNormally()
+        {
+            for (int i = 0; i < 2700; i++)
+            {
+                double d0 = 0.01 * i, target = 27.43;
+                foreach (double decel in new[] { P.BrakeDeceleration, P.SlideDeceleration })
+                {
+                    var m = new PathMotion(P, 0.0, d0, 0.0, target, 0.0, double.NaN, decel);
+                    Assert.AreEqual(target, m.DistanceAt(m.RestTime), 0.0, $"from {d0}");
+                    Assert.AreEqual(target, m.DistanceAt(m.RestTime + 5.0), 0.0);
+                }
+            }
+
+            // Told to go back while running full speed the other way: he first brakes at the braking deceleration.
+            var back = new PathMotion(P, 0.0, 10.0, P.MaxSpeed, 0.0, 0.0);
+            double worst = 0.0;
+            for (double t = 0.0; t < back.RestTime; t += 0.001)
+                worst = Math.Max(worst, Math.Abs(back.VelocityAt(t + 0.001) - back.VelocityAt(t)) / 0.001);
+            Assert.LessOrEqual(worst, Math.Max(P.BrakeDeceleration, P.MaxSpeed / P.AccelerationTime) + 0.1, "no sharper than braking or the start");
+            Assert.AreEqual(P.BrakeDeceleration, (back.VelocityAt(0.0) - back.VelocityAt(0.01)) / 0.01, 1e-6, "brakes first");
+            Assert.AreEqual(0.0, back.DistanceAt(back.RestTime), 0.0, "and stops on the bag behind him");
         }
 
         // ---------------------------------------------------------------- determinism and state
@@ -311,8 +486,10 @@ namespace Pitchlab.Tests
             foreach (Runner r in after.Runners)
                 Assert.Less((next.RunnerOf(r).PositionAt(next.ContactTime) - BaseLeg.Of(r.From, false).PositionAt(LivePlay.Lead(r.From))).Length, 1e-9);
             Assert.AreEqual(after.Runners.Count() + 1, next.Runners.Count, "plus the new batter-runner");
-            next.RunToEnd();
-            Assert.AreEqual(first.Outs + next.OutsMade, next.Outs);
+            // Everyone left on base ended the play standing on his bag, one runner per base.
+            foreach (LiveRunner r in first.Runners.Where(r => !r.IsDone))
+                Assert.Less((r.PositionAt(first.EndTime + 10.0) - FieldLayout.BasePosition(r.LastTouched)).Length, 0.05, $"{r.Id} on {r.LastTouched}");
+            Assert.AreEqual(first.Runners.Count(r => !r.IsDone), first.Runners.Where(r => !r.IsDone).Select(r => r.LastTouched).Distinct().Count());
         }
     }
 }

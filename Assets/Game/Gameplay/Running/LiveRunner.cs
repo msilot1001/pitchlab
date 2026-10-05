@@ -50,8 +50,11 @@ namespace Pitchlab.Gameplay.Running
         public RunnerPhase Phase { get; internal set; }
         /// <summary>A caught fly found him off his base: he must retouch it before advancing (OBR 5.09(b)(5)).</summary>
         public bool MustRetouch { get; internal set; }
-        /// <summary>Runs through first base (no stop) on the current leg.</summary>
-        internal bool ThroughFirst { get; set; }
+        /// <summary>Returning to first after overrunning it: he cannot be tagged (OBR 5.09(b)(4) Exception) until he heads
+        /// for second.</summary>
+        public bool OverrunProtected { get; internal set; }
+        /// <summary>His run counts (false when a third out on the same play cancels it, OBR 5.08(a)).</summary>
+        public bool RunCounts { get; internal set; } = true;
         /// <summary>Base to round toward when the current leg ends (null: stop at its end).</summary>
         internal Base? Continue { get; set; }
         public double OutTime { get; internal set; } = double.PositiveInfinity;
@@ -91,6 +94,9 @@ namespace Pitchlab.Gameplay.Running
         }
 
         public double SpeedAt(double time) => Math.Abs(At(time).Motion.VelocityAt(time));
+
+        /// <summary>Signed velocity along his leg (+ toward its end bag).</summary>
+        public double PathVelocityAt(double time) => At(time).Motion.VelocityAt(time);
 
         /// <summary>Heading (unit; the leg direction, reversed while returning).</summary>
         public Vector3d HeadingAt(double time)

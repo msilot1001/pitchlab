@@ -65,15 +65,20 @@ namespace Pitchlab.Sandbox
         /// </summary>
         public void Show(LivePlay play, double time, Vector3? batterFrom = null)
         {
-            foreach (var pair in _figures) pair.Value.gameObject.SetActive(false);
+            // Each figure's visibility is decided once (no off/on toggling of its renderers every frame).
+            foreach (var pair in _figures)
+            {
+                LiveRunner r = play?.RunnerOf(new Runner(pair.Key));
+                bool shown = r != null && !(r.IsOut && time > r.OutTime + LingerAfterOut) && !(r.HasScored && time > r.ScoreTime + LingerAfterScore)
+                             && !(r.Id.IsBatter && batterFrom.HasValue && time < play.ContactTime + play.Profile.BatterStartDelay);
+                if (pair.Value.gameObject.activeSelf != shown) pair.Value.gameObject.SetActive(shown);
+            }
+
             if (play == null) return;
             foreach (LiveRunner r in play.Runners)
             {
                 PlayerMannequin m = _figures[r.Id.From];
-                bool shown = !(r.IsOut && time > r.OutTime + LingerAfterOut) && !(r.HasScored && time > r.ScoreTime + LingerAfterScore);
-                if (r.Id.IsBatter && time < play.ContactTime + play.Profile.BatterStartDelay && batterFrom.HasValue) shown = false;
-                m.gameObject.SetActive(shown);
-                if (!shown) continue;
+                if (!m.gameObject.activeSelf) continue;
                 Vector3 root = SimulationSpace.ToUnity(r.PositionAt(time));
                 if (r.Id.IsBatter && batterFrom.HasValue)
                 {
