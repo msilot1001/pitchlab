@@ -63,7 +63,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction, _pathsAction, _panelAction,
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction,
             _clickAction, _releaseCursorAction;
         private int _presetIndex;
         private PciTrack _pciTrack;
@@ -190,6 +190,7 @@ namespace Pitchlab.Sandbox
             _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", c => { if (!CameraHasArrows(c)) _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length; });
             _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
             _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
+            _slowestSpeedAction = Button("<Keyboard>/digit3", null, _ => _playbackSpeed = 0.25f);   // motion inspection (TASK-011.8)
             _pathsAction = Button("<Keyboard>/t", null, _ => SetDebugPaths(!_showDebugPaths));
             _panelAction = Button("<Keyboard>/h", null, _ => _showPanel = !_showPanel);
             _clickAction = Button("<Mouse>/leftButton", null, context =>
@@ -248,6 +249,7 @@ namespace Pitchlab.Sandbox
             _previousPresetAction?.Enable();
             _normalSpeedAction?.Enable();
             _slowSpeedAction?.Enable();
+            _slowestSpeedAction?.Enable();
             _pathsAction?.Enable();
             _panelAction?.Enable();
             _clickAction?.Enable();
@@ -270,6 +272,7 @@ namespace Pitchlab.Sandbox
             _previousPresetAction?.Disable();
             _normalSpeedAction?.Disable();
             _slowSpeedAction?.Disable();
+            _slowestSpeedAction?.Disable();
             _pathsAction?.Disable();
             _panelAction?.Disable();
             _clickAction?.Disable();
@@ -287,6 +290,7 @@ namespace Pitchlab.Sandbox
             _previousPresetAction?.Dispose();
             _normalSpeedAction?.Dispose();
             _slowSpeedAction?.Dispose();
+            _slowestSpeedAction?.Dispose();
             _pathsAction?.Dispose();
             _panelAction?.Dispose();
             _clickAction?.Dispose();
@@ -577,7 +581,7 @@ namespace Pitchlab.Sandbox
             GUILayout.Label($"Pitch: {Presets[_presetIndex].Label}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
             GUILayout.Label(_readout);
             GUILayout.Label((_requireMouseCapture && !MouseCaptured ? "Click to capture the mouse.  " : "Mouse PCI · click throw/swing · Esc release.  ") +
-                            "Space/A throw·swing  WASD/stick PCI  ←/→ pitch  1/2 speed  T debug  H panel");
+                            "Space/A throw·swing  WASD/stick PCI  ←/→ pitch  1/2/3 speed  T debug  H panel");
             if (_showDebugPaths) GUILayout.Label(DebugOverlay());
             GUILayout.EndArea();
         }

@@ -106,6 +106,7 @@ namespace Pitchlab.Gameplay.Play
             _now = ContactTime;
             Kind = Classify(fielding);
             AwardedBases = Award(fielding);
+            if (AwardedBases > 0) Profile = Profile.Trot();   // an awarded advance is a trot, not a sprint (TASK-011.7)
 
             // Runners: on their bases at their leads; the batter-runner at home once the ball is fair in play.
             foreach (Runner r in situation.Bases.Runners)

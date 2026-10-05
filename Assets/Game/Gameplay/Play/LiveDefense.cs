@@ -153,6 +153,25 @@ namespace Pitchlab.Gameplay.Play
         public IReadOnlyList<BallTake> Takes => _takes;
         public IReadOnlyList<LiveThrow> Throws => _throws;
         public IReadOnlyList<HolderDecision> Decisions => _decisions;
+
+        /// <summary>The tag outs of the play: when, by whom (the defender with the ball), and where the runner was (for the
+        /// tag motion; the out itself is the rules' decision).</summary>
+        public IReadOnlyList<(double Time, DefensivePosition Fielder, Vector3d Runner)> Tags
+        {
+            get
+            {
+                if (_tagsFrom == _play.RulesEvents.Count) return _tags;
+                _tags.Clear();
+                foreach (PlayEvent e in _play.RulesEvents)
+                    if (e.Kind == PlayEventKind.TagOut && e.Fielder is DefensivePosition f)
+                        _tags.Add((e.Time, f, _play.RunnerOf(e.Runner).PositionAt(e.Time)));
+                _tagsFrom = _play.RulesEvents.Count;
+                return _tags;
+            }
+        }
+
+        private readonly List<(double, DefensivePosition, Vector3d)> _tags = new List<(double, DefensivePosition, Vector3d)>();
+        private int _tagsFrom = -1;
         public FielderTrack Track(DefensivePosition p) => _tracks[(int)p];
         public double FirstMoveTime(DefensivePosition p) => _tracks[(int)p].FirstMoveTime;
 
@@ -167,7 +186,9 @@ namespace Pitchlab.Gameplay.Play
 
         // ------------------------------------------------------------------ timeline
 
+        public double StartTime => _play.ContactTime;
         public Vector3d FielderPositionAt(DefensivePosition p, double t) => _tracks[(int)p].PositionAt(t);
+        public Vector3d FielderVelocityAt(DefensivePosition p, double t) => _tracks[(int)p].VelocityAt(t);
         public double FielderSpeedAt(DefensivePosition p, double t) => _tracks[(int)p].SpeedAt(t);
         public double FielderDistanceAt(DefensivePosition p, double t) => _tracks[(int)p].DistanceAt(t);
         public Vector3d FielderDirectionAt(DefensivePosition p, double t) => _tracks[(int)p].DirectionAt(t);
@@ -275,16 +296,16 @@ namespace Pitchlab.Gameplay.Play
             if (f.Outcome != FieldingOutcome.Fielded) return;   // a dead ball: everyone holds
             DefensivePosition primary = f.Primary.Value;
             Reassign(_play.ContactTime, primary, f.Intercept.Ball.Position, null);
-            _play.ScheduleDefense(f.PossessionTime, () => Possess(primary, f.PossessionTime, f.Intercept.Ball.Position, true), "possession");
+            _play.ScheduleDefense(f.PossessionTime, () => Possess(primary, f.PossessionTime, f.Intercept.Ball.Position, true, f.Action), "possession");
         }
 
         /// <summary><paramref name="p"/> takes the ball at <paramref name="t"/>.</summary>
-        private void Possess(DefensivePosition p, double t, Vector3d ballPoint, bool batted)
+        private void Possess(DefensivePosition p, double t, Vector3d ballPoint, bool batted, FieldingAction action)
         {
             FielderTrack track = _tracks[(int)p];
             Vector3d at = track.PositionAt(t);
             _ball.Add(new Segment { Kind = SegmentKind.Held, Start = t, Holder = p, TakeOffset = ballPoint - at });
-            _takes.Add(new BallTake(t, p, ballPoint));
+            _takes.Add(new BallTake(t, p, ballPoint, action));
             // He keeps moving as his momentum carries him (no dead stop when he takes it).
             track.Add(t, new ContinuationMotion(track.Profile, at, track.VelocityAt(t), t));
             _play.OnDefenseTook(p, t, batted);
@@ -313,7 +334,7 @@ namespace Pitchlab.Gameplay.Play
             }
             else (chosen, reason) = Choose(h, candidates);
 
-            double commit = took + ThrowProfile.For(h).TransferTime - DefensivePlay.ArmAction;
+            double commit = took + ThrowProfile.For(h).TransferTime + Recovery(h, took) - DefensivePlay.ArmAction;
             if (chosen.Kind == LiveActionKind.Throw && t < commit - 1e-9 && _firstChoice == null && reason != "override")
             {
                 // Not yet: he gathers himself and decides when he must start the throw.
@@ -352,7 +373,7 @@ namespace Pitchlab.Gameplay.Play
                     if (th.ReceiverMotion != null) _tracks[(int)th.Receiver].Add(th.SwitchTime, th.ReceiverMotion);
                     Reassign(t, h, _tracks[(int)h].PositionAt(t), th);
                     _play.ScheduleDefense(th.ReleaseTime, () => _play.OnThrowReleased(th), "release");
-                    if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Possess(th.Receiver, th.Catch.Time, th.Catch.Ball.Position, false), "catch");
+                    if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Possess(th.Receiver, th.Catch.Time, th.Catch.Ball.Position, false, FieldingAction.ReceiveThrow), "catch");
                     else _play.ScheduleDefense(th.FirstContactTime, () => Loose(th), "loose");
                     return;
                 }
@@ -390,7 +411,8 @@ namespace Pitchlab.Gameplay.Play
                 tr.Add(Math.Max(go, tr.CurrentStart), new ContinuationMotion(tr.Profile, tr.PositionAt(go), tr.VelocityAt(go), go, take.FielderTarget, take.Time));
             _retriever = who;
             Reassign(t, who, take.Ball.Position, null);
-            _play.ScheduleDefense(take.Time, () => Possess(who, take.Time, take.Ball.Position, false), "retrieve");
+            FieldingAction action = FieldingActions.Classify(th.Flight, take, tr.PositionAt(take.Time), tr.VelocityAt(take.Time), _play.Field);
+            _play.ScheduleDefense(take.Time, () => Possess(who, take.Time, take.Ball.Position, false, action), "retrieve");
         }
 
         // ------------------------------------------------------------------ roles
@@ -493,7 +515,7 @@ namespace Pitchlab.Gameplay.Play
             // Full effort on the turn of a double play and from the outfield (Statcast's arm strength is measured on those
             // competitive throws); an infielder's routine throw otherwise.
             ThrowProfile arm = SegmentAt(t).Turn || DefensiveDecision.IsOutfielder(h) ? ThrowProfile.Full(h) : ThrowProfile.For(h);
-            double ready = Math.Max(t, took + arm.TransferTime);
+            double ready = Math.Max(t, took + arm.TransferTime + Recovery(h, took));
             var planned = new Dictionary<Base, LiveThrow>();
 
             foreach (LiveRunner r in _play.Runners)
@@ -559,6 +581,15 @@ namespace Pitchlab.Gameplay.Play
             }
 
             return list;
+        }
+
+        /// <summary>Extra time before <paramref name="h"/> can throw after his take at <paramref name="took"/>: getting up from a
+        /// diving catch (TASK-011.6); none otherwise.</summary>
+        private double Recovery(DefensivePosition h, double took)
+        {
+            foreach (BallTake k in _takes)
+                if (k.Fielder == h && k.Time == took) return k.Action == FieldingAction.DivingCatch ? FieldingActions.DiveRecovery : 0.0;
+            return 0.0;
         }
 
         /// <summary>A planned throw, reused while nothing it depends on has changed (the holder's options are evaluated at the
@@ -647,7 +678,7 @@ namespace Pitchlab.Gameplay.Play
                 {
                     DefensivePosition primary = f.Primary.Value;
                     Vector3d at = f.Motion(primary).PositionAt(f.PossessionTime);
-                    return f.PossessionTime + ThrowProfile.For(primary).TransferTime + Flight(at, primary);
+                    return f.PossessionTime + ThrowProfile.For(primary).TransferTime + (f.Action == FieldingAction.DivingCatch ? FieldingActions.DiveRecovery : 0.0) + Flight(at, primary);
                 }
                 case SegmentKind.Free:
                     return now + 3.0;   // a loose ball (ASSUMED)
@@ -662,7 +693,7 @@ namespace Pitchlab.Gameplay.Play
                 {
                     Vector3d at = _tracks[(int)s.Holder].PositionAt(now);
                     if (BaseTouch.IsTouching(at, b)) return now;
-                    double ready = s.Next != null ? s.Next.ReleaseTime : Math.Max(now, s.Start + ThrowProfile.For(s.Holder).TransferTime);
+                    double ready = s.Next != null ? s.Next.ReleaseTime : Math.Max(now, s.Start + ThrowProfile.For(s.Holder).TransferTime + Recovery(s.Holder, s.Start));
                     return Math.Max(now, ready) + Flight(at, s.Holder);
                 }
             }

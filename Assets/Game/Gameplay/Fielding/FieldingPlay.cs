@@ -39,9 +39,10 @@ namespace Pitchlab.Gameplay.Fielding
         private readonly Intercept[] _candidates;
 
         internal FieldingPlay(BallInPlay ball, FieldingOutcome outcome, DefensivePosition? primary, Intercept intercept, FielderMotion[] motions,
-            Intercept[] candidates, BallInPlayCall call, double endTime)
+            Intercept[] candidates, BallInPlayCall call, double endTime, FieldingAction action = FieldingAction.None)
         {
             EndTime = endTime;
+            Action = action;
             Ball = ball;
             Outcome = outcome;
             Primary = primary;
@@ -63,6 +64,8 @@ namespace Pitchlab.Gameplay.Fielding
         public DefensivePosition? Primary { get; }
         public Intercept Intercept { get; }
         public BallInPlayCall Call { get; }
+        /// <summary>How the primary takes the ball (TASK-011.6; from the take's geometry and timing).</summary>
+        public FieldingAction Action { get; }
 
         /// <summary>When a defender takes the ball (+∞ if nobody does).</summary>
         public double PossessionTime => Outcome == FieldingOutcome.Fielded ? Intercept.Time : double.PositiveInfinity;
@@ -142,6 +145,23 @@ namespace Pitchlab.Gameplay.Fielding
             for (int i = 0; i < motions.Length; i++)
                 candidates[i] = InterceptSolver.Solve(ball, alignment[(DefensivePosition)i], profiles((DefensivePosition)i), field, playable, unfielded.At.Time);
             int best = SelectPrimary(candidates);
+            // Nobody can catch it normally: the earliest diving catch, if any (TASK-011.6, conservative envelope).
+            if (Array.TrueForAll(candidates, c => !c.Feasible || c.Kind != InterceptKind.FlyCatch))
+            {
+                int diver = -1;
+                Intercept dive = Intercept.None;
+                for (int i = 0; i < motions.Length; i++)
+                {
+                    Intercept d = InterceptSolver.SolveDive(ball, alignment[(DefensivePosition)i], profiles((DefensivePosition)i), field, playable, unfielded.At.Time);
+                    if (d.Feasible && (!dive.Feasible || d.Time < dive.Time)) (diver, dive) = (i, d);
+                }
+
+                if (dive.Feasible && (best < 0 || dive.Time < candidates[best].Time))
+                {
+                    candidates[diver] = dive;
+                    best = diver;
+                }
+            }
 
             if (best < 0)
                 return groundFoul
@@ -157,14 +177,16 @@ namespace Pitchlab.Gameplay.Fielding
             (_, double stopTime) = RunningLaw.StopTime(profile, intercept.RouteDistance);
             // Time to spare: run, brake and wait at the spot. Tight: arrive at speed exactly at the intercept (a later
             // start absorbs any spare time shorter than the braking would need) and brake past it after the take.
-            motions[best] = reacts + stopTime <= intercept.Time - SettleMargin
+            motions[best] = !intercept.Dive && reacts + stopTime <= intercept.Time - SettleMargin   // a dive is taken at full speed
                 ? new FielderMotion(profile, start, intercept.FielderTarget, reacts, true)
                 : new FielderMotion(profile, start, intercept.FielderTarget, intercept.Time - RunningLaw.RunThroughTime(profile, intercept.RouteDistance), false);
 
             // Fielded before the call was decided (e.g. a slow roller taken before first base): judged where it was taken —
             // fair, as only fair-ground takes are allowed then. A ball taken before it leaves the park is taken before the call.
             BallInPlayCall call = intercept.Time < unfielded.At.Time ? BallInPlayCall.Fair : unfielded.Call;   // early takes are over fair ground
-            return new FieldingPlay(ball, FieldingOutcome.Fielded, position, intercept, motions, candidates, call, intercept.Time);
+            FielderMotion m = motions[best];
+            FieldingAction action = FieldingActions.Classify(ball, intercept, m.PositionAt(intercept.Time), m.VelocityAt(intercept.Time), field);
+            return new FieldingPlay(ball, FieldingOutcome.Fielded, position, intercept, motions, candidates, call, intercept.Time, action);
         }
 
         public static FieldingPlay Solve(BallInPlay ball) => Solve(ball, DefensiveAlignment.Standard, FielderProfile.For, FieldLayout.Standard);

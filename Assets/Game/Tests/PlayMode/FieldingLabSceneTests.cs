@@ -6,6 +6,7 @@ using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Running;
 using Pitchlab.Presentation;
+using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Field;
 using Pitchlab.Sandbox;
 using UnityEngine;
@@ -65,6 +66,7 @@ namespace Pitchlab.Tests
             for (int k = 0; k < FieldingLabController.Presets.Length; k++)
             {
                 FieldingPlay f = Launch(k);
+                if (FieldingLabController.Presets[k].Name == "Home run, R1 (trot)") continue;   // a home run: nobody fields it
                 Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome, $"{FieldingLabController.Presets[k].Name} is fielded");
                 DefensivePosition p = f.Primary.Value;
                 // Before the take the shown ball is still the free trajectory.
@@ -77,11 +79,13 @@ namespace Pitchlab.Tests
                 Assert.Less(d, f.Intercept.Kind == InterceptKind.GroundPickup ? 0.10f : 0.20f, $"{FieldingLabController.Presets[k].Name}");
                 // At the take the shown ball is exactly the gameplay ball (no jump); once secured it sits in the glove.
                 At(t + 1e-5);
-                Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, "no jump at the take");
-                // Held until the throwing arm action starts (TASK-006A), or for good without a throw.
+                Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, $"{FieldingLabController.Presets[k].Name}: no jump at the take");
+                // Held in the glove until the wind-up (0.15 s before the arm action, not before it is secured; from there the
+                // ball is between the hands), or for good without a throw.
                 LiveThrow th = _lab.Team.Throws.FirstOrDefault();
-                At(th == null ? t + 0.5 : th.ReleaseTime - DefensivePlay.ArmAction - f.Ball.First.Time - 1e-3);
-                Assert.Less(Vector3.Distance(_lab.Ball.position, _lab.Defense.Figure(p).GloveAnchor.position), 1e-4f, "held in the glove");
+                double windUp = th == null ? 0.0 : System.Math.Max(th.ReleaseTime - DefensivePlay.ArmAction - 0.15, f.Intercept.Time + FieldingPlay.SecureTime);
+                At(th == null ? t + 0.5 : windUp - f.Ball.First.Time - 1e-3);
+                Assert.Less(Vector3.Distance(_lab.Ball.position, _lab.Defense.Figure(p).GloveAnchor.position), 1e-4f, $"{FieldingLabController.Presets[k].Name}: held in the glove");
             }
 
             TestContext.WriteLine(log.ToString());
@@ -102,7 +106,10 @@ namespace Pitchlab.Tests
                 foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
                 {
                     if (p == DefensivePosition.P || p == DefensivePosition.C) continue;
-                    Vector3 shown = Flat(_lab.Defense.Figure(p).transform.position), gameplay = Flat(SimulationSpace.ToUnity(_lab.Team.FielderPositionAt(p, t0 + t)));
+                    // Exactly the gameplay defender — plus the documented bag-side offset of a fielder standing on a base (TASK-011.6).
+                    Vector3d at = _lab.Team.FielderPositionAt(p, t0 + t);
+                    Vector3 shown = Flat(_lab.Defense.Figure(p).transform.position);
+                    Vector3 gameplay = Flat(SimulationSpace.ToUnity(at) + DefenseView.BagSide(at, (float)_lab.Team.FielderSpeedAt(p, t0 + t)));
                     Assert.Less(Vector3.Distance(shown, gameplay), 1e-3f, $"{p} at +{t:0.00}");
                 }
             }
@@ -288,9 +295,13 @@ namespace Pitchlab.Tests
                         bool gone = r.IsOut && t > r.OutTime + RunnerView.LingerAfterOut || r.HasScored && t > r.ScoreTime + RunnerView.LingerAfterScore;
                         Assert.AreEqual(!gone, m.gameObject.activeSelf, $"{name}: {r.Id} shown at +{t - t0:0.0}");
                         if (gone) continue;
-                        Assert.Less(Vector3.Distance(Flat(m.transform.position), Flat(SimulationSpace.ToUnity(r.PositionAt(t)))), 1e-4f, $"{name}: {r.Id} at +{t - t0:0.0}");
-                        if (r.SpeedAt(t) > 1.0)
-                            Assert.Greater(Vector3.Dot(m.transform.forward, SimulationSpace.ToUnity(r.HeadingAt(t)).normalized), 0.99f, "faces his run");
+                        // Exactly the gameplay runner, plus the documented bag-side offset when standing on a base (TASK-011.7).
+                        Assert.Less(Vector3.Distance(Flat(m.transform.position), Flat(SimulationSpace.ToUnity(r.PositionAt(t)) + RunnerView.BagSide(r, t))), 1e-4f, $"{name}: {r.Id} at +{t - t0:0.0}");
+                        // Faces where he runs once he has been running that way for a moment (TASK-011.5: the figure turns at a
+                        // limited rate — no instant 180° — so right after the break or a reversal it is still turning).
+                        Vector3 now = SimulationSpace.ToUnity(r.HeadingAt(t)).normalized, before = SimulationSpace.ToUnity(r.HeadingAt(t - 0.3)).normalized;
+                        if (r.SpeedAt(t) > 1.0 && r.SpeedAt(t - 0.3) > 1.0 && Vector3.Dot(now, before) > 0.97f)
+                            Assert.Greater(Vector3.Dot(m.transform.forward, now), 0.99f, $"{name}: {r.Id} faces his run at +{t - t0:0.0}");
                     }
                 }
             }

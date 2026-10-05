@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
@@ -47,7 +48,7 @@ namespace Pitchlab.Sandbox
         /// Between plays: the runners on <paramref name="bases"/>, <paramref name="leadOff"/> of the way from their bags to
         /// their leads (1 = exactly where the next play starts them: no jump at contact). Presentation only.
         /// </summary>
-        public void ShowSituation(BaseOccupancy bases, float leadOff)
+        public void ShowSituation(BaseOccupancy bases, float leadOff, float secondary = 0f)
         {
             foreach (var pair in _figures)
             {
@@ -56,9 +57,13 @@ namespace Pitchlab.Sandbox
                 if (!on) continue;
                 BaseLeg leg = BaseLeg.Of(pair.Key, false);
                 float u = Mathf.SmoothStep(0f, 1f, leadOff);
-                Vector3 at = SimulationSpace.ToUnity(leg.PositionAt(u * LivePlay.Lead(pair.Key)));
+                // From the bag's outside edge (where the play left him, RunnerBagSide) out to his lead.
+                Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(pair.Key));
+                Vector3 at = SimulationSpace.ToUnity(leg.PositionAt(u * LivePlay.Lead(pair.Key))) + (bag - Mound).normalized * (RunnerBagSide * (1f - u));
                 Vector3 toNext = SimulationSpace.ToUnity(FieldLayout.BasePosition(BaseLeg.Bases(pair.Key))) - at;
-                Pose(pair.Value, at, toNext, leadOff > 0f && leadOff < 1f ? 1.2f : 0f, 0f);
+                // Leading off: the lead stance, lower during the delivery (the secondary lead, in place).
+                var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN, Ready = ReadyStyle.Runner, LeadStance = u, Secondary = secondary };
+                Pose(pair.Value, at, YawOf(Mound - Flat(at)), Vector3.zero, 0f, 0f, 0f, input);
             }
         }
 
@@ -91,20 +96,170 @@ namespace Pitchlab.Sandbox
                     root = Vector3.Lerp(new Vector3(batterFrom.Value.x, 0f, batterFrom.Value.z), root, u);
                 }
 
-                Vector3 heading = SimulationSpace.ToUnity(r.HeadingAt(time));
-                Pose(m, root, heading, (float)r.SpeedAt(time), (float)r.DistanceRunAt(time));
+                // Standing on a bag he is shown on its outside edge (a foot on it), clear of a fielder covering it from the
+                // infield side (DefenseView.BagSide) — presentation only, gone once he runs.
+                root += BagSide(r, time);
+
+                MotionTrack track = Track(r.Id.From);
+                if (!track.Follows(play)) track.Follow(play, play.ContactTime, YawOf(Facing(r, play.ContactTime)), Sampler(r));
+                (float phase, float yaw) = track.At(time);
+                Vector3 velocity = Flat(SimulationSpace.ToUnity(r.VelocityAt(time)));
+                float speed = velocity.magnitude;
+                float accel = (float)((r.SpeedAt(time + 0.05) - r.SpeedAt(Math.Max(play.ContactTime, time - 0.05))) / 0.1);
+                // The secondary lead he had at the pitch eases off over the first moment of the play (no pop at contact).
+                var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN, Secondary = 1f - Mathf.SmoothStep(0f, 1f, (float)((time - play.ContactTime) / 0.3)) };
+                Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+                Action(play, r, time, root, rotation, ref input);
+                _shown[r.Id.From] = input.Action;
+                Pose(m, root, yaw, velocity, phase, accel, speed * track.TurnRate(time) * Mathf.Deg2Rad, input);
             }
         }
+
+        /// <summary>A runner standing on a bag is shown this far (m) from its centre, away from the mound.</summary>
+        public const float RunnerBagSide = 0.3f;
+
+        /// <summary>The presentation offset of a runner standing on a bag (zero elsewhere, fading out as he runs).</summary>
+        public static Vector3 BagSide(LiveRunner r, double time)
+        {
+            if (!r.TouchingBaseAt(time, out Base on) || on == Base.Home) return Vector3.zero;
+            Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(on));
+            float still = 1f - Mathf.SmoothStep(0f, 1f, (float)r.SpeedAt(time) / 2f);
+            return (bag - Mound).normalized * (RunnerBagSide * still);
+        }
+
+        /// <summary>Time a runner stays down after a slide before getting up (s).</summary>
+        public const float SlideRecovery = 0.5f;
+        /// <summary>A throw caught within this long (s) of a runner's arrival makes it a close play (he slides).</summary>
+        public const double ClosePlay = 1.0;
+
+        /// <summary>
+        /// The runner's body action at <paramref name="time"/>, chosen deterministically from the play: a feet-first slide into
+        /// second or third whenever gameplay stops him there with the slide deceleration (covering exactly that braking, so he
+        /// reaches the bag at the authoritative time); a feet-first slide across the plate on a close play at home; a head-first
+        /// slide back to a base with a throw coming there; the lead-off stance off a base. Never at first (he runs through it).
+        /// </summary>
+        public static void Action(LivePlay play, LiveRunner r, double time, Vector3 root, Quaternion rotation, ref FieldingPoseInput input)
+        {
+            // The lead stance by how far he is from the nearest bag (continuous: on the bag 0, at his lead 1).
+            input.Ready = ReadyStyle.Runner;
+            input.LeadStance = Mathf.SmoothStep(0f, 1f, (float)(NearestBag(r.PositionAt(time)) / 2.0));
+            IReadOnlyList<LiveRunner.Segment> legs = r.Segments;
+            for (int i = 0; i < legs.Count; i++)
+            {
+                PathMotion m = legs[i].Motion;
+                BaseLeg leg = legs[i].Leg;
+                double next = i + 1 < legs.Count ? legs[i + 1].Motion.StartTime : double.PositiveInfinity;
+                // Put out on the way (tagged before he gets there): the slide is cut at the out, not dropped.
+                if (r.IsOut && Math.Abs(next - r.OutTime) < 1e-6) next = double.PositiveInfinity;
+                if (m.Sign > 0.0 && m.EndSpeed == 0.0 && leg.To != Base.First && leg.To != Base.Home && m.Deceleration == play.Profile.SlideDeceleration
+                    && m.Target >= leg.Length - 1e-6 && m.ArrivalTime <= next + 1e-6)
+                {
+                    // Into second or third: the authoritative slide (its braking phase) — shown as a slide on a close play; with no
+                    // throw coming he pulls up standing (the same braking, upright).
+                    if (!CloseThrow(play, leg.To, m.ArrivalTime)) continue;
+                    double lead = m.ArrivalTime - m.BrakeTime;
+                    if (time >= m.BrakeTime && time <= m.ArrivalTime + SlideRecovery + FieldingPoser.GetUp)
+                        Set(ref input, BodyAction.Slide, time - m.ArrivalTime, (float)lead, root, rotation, leg.End);
+                }
+                else if (m.Sign > 0.0 && leg.To == Base.Home)
+                {
+                    // Home: run through it, unless the throw home is close — then slide across the plate.
+                    double touch = m.TimeAt(leg.Length - LiveRunner.TouchDistance);
+                    if (double.IsNaN(touch) || double.IsInfinity(touch) || touch > next + 1e-6) continue;
+                    if (!CloseThrow(play, Base.Home, touch)) continue;
+                    const double lead = 0.45;
+                    if (time >= touch - lead && time <= touch + SlideRecovery + FieldingPoser.GetUp)
+                        Set(ref input, BodyAction.Slide, time - touch, (float)lead, root, rotation, leg.End);
+                }
+                else if (m.Sign < 0.0 && m.Target <= 1e-6 && m.ArrivalTime <= next + 1e-6)
+                {
+                    // Back to the base he left with a throw coming there: head-first.
+                    if (!CloseThrow(play, leg.From, m.ArrivalTime)) continue;
+                    const double lead = 0.35;
+                    if (time >= m.ArrivalTime - lead && time <= m.ArrivalTime + SlideRecovery + FieldingPoser.GetUp)
+                        Set(ref input, BodyAction.HeadFirst, time - m.ArrivalTime, (float)lead, root, rotation, leg.Start);
+                }
+            }
+        }
+
+        private static void Set(ref FieldingPoseInput input, BodyAction action, double t, float lead, Vector3 root, Quaternion rotation, Vector3d bag)
+        {
+            input.Action = action;
+            input.ActionTime = (float)t;
+            input.ActionLead = lead;
+            input.Recovery = SlideRecovery;
+            Vector3 world = SimulationSpace.ToUnity(new Vector3d(bag.X, bag.Y, 0.0));
+            input.ActionPoint = Quaternion.Inverse(rotation) * (world - new Vector3(root.x, 0f, root.z));
+        }
+
+        private static bool CloseThrow(LivePlay play, Base b, double arrival)
+        {
+            IReadOnlyList<Gameplay.Fielding.LiveThrow> throws = play.Defense.Throws;
+            for (int i = 0; i < throws.Count; i++)
+                if (throws[i].Target == b && throws[i].Caught && Math.Abs(throws[i].Catch.Time - arrival) < ClosePlay) return true;
+            return false;
+        }
+
+        private static Func<double, MotionSample> Sampler(LiveRunner r) => t => Sample(r, t);
+
+        private static readonly Base[] AllBases = { Base.First, Base.Second, Base.Third, Base.Home };
+
+        private static double NearestBag(Vector3d at)
+        {
+            double best = double.PositiveInfinity;
+            foreach (Base b in AllBases)
+            {
+                Vector3d bag = FieldLayout.BasePosition(b);
+                best = Math.Min(best, new Vector3d(at.X - bag.X, at.Y - bag.Y, 0.0).Length);
+            }
+
+            return best;
+        }
+
+        private readonly Dictionary<Base, MotionTrack> _tracks = new Dictionary<Base, MotionTrack>();
+        private readonly Dictionary<Base, BodyAction> _shown = new Dictionary<Base, BodyAction>();
+
+        /// <summary>Motion debug: the body action shown for a runner last frame.</summary>
+        public BodyAction ShownAction(Runner r) => _shown.TryGetValue(r.From, out BodyAction a) ? a : BodyAction.None;
+
+        private MotionTrack Track(Base from)
+        {
+            if (!_tracks.TryGetValue(from, out MotionTrack t)) _tracks[from] = t = new MotionTrack();
+            return t;
+        }
+
+        /// <summary>Where a runner faces: along his path while moving, toward the mound (the pitcher, the ball's way) standing.</summary>
+        private static Vector3 Facing(LiveRunner r, double time)
+        {
+            Vector3 velocity = Flat(SimulationSpace.ToUnity(r.VelocityAt(time)));
+            if (velocity.magnitude > 0.3f) return Flat(SimulationSpace.ToUnity(r.HeadingAt(time)));
+            Vector3 at = Flat(SimulationSpace.ToUnity(r.PositionAt(time)));
+            return Mound - at;
+        }
+
+        private static MotionSample Sample(LiveRunner r, double time) =>
+            new MotionSample { Velocity = Flat(SimulationSpace.ToUnity(r.VelocityAt(time))), Facing = Facing(r, time), MaxTurnRate = 540f };
+
+        private static readonly Vector3 Mound = new Vector3(0f, 0f, 18.44f);
+
+        private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
+
+        private static float YawOf(Vector3 v) => v.sqrMagnitude > 1e-8f ? Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg : 0f;
 
         /// <summary>Batter → batter-runner hand-over blend (s).</summary>
         public const double HandOver = 0.35;
 
-        private void Pose(PlayerMannequin m, Vector3 root, Vector3 heading, float speed, float distance)
+        private void Pose(PlayerMannequin m, Vector3 root, float yaw, Vector3 velocity, float phase, float accel, float lateral, FieldingPoseInput input)
         {
-            heading.y = 0f;
-            Quaternion rotation = heading.sqrMagnitude > 1e-6f ? Quaternion.LookRotation(heading) : m.transform.rotation;
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
             m.transform.SetPositionAndRotation(new Vector3(root.x, 0f, root.z), rotation);
-            var input = new FieldingPoseInput { Speed = speed, Distance = distance };
+            Vector3 local = Quaternion.Inverse(rotation) * velocity;
+            float speed = velocity.magnitude;
+            input.Speed = speed;
+            input.GaitPhase = phase;
+            input.MoveDir = speed > 0.05f ? new Vector2(local.x, local.z) : Vector2.zero;
+            input.Accel = accel;
+            input.LateralAccel = lateral;
             FieldingPoser.Compose(input, _pose);
             m.ApplyPose(_pose);
         }

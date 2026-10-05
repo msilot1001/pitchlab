@@ -123,6 +123,17 @@ namespace Pitchlab.Tests
             Runner[] order = play.Log.Where(e => e.Kind == PlayLogKind.Run).Select(e => e.Runner.Value).ToArray();
             CollectionAssert.AreEqual(new[] { new Runner(Base.Third), new Runner(Base.Second), new Runner(Base.First), Runner.Batter }, order, "in order");
             Assert.Greater(play.EndTime, play.Log.Last(e => e.Kind == PlayLogKind.Run).Time - 1e-9, "the play ends once he has scored");
+            // A trot, not a sprint: the batter rounds the bases in about the measured 22 s (SABR average 22.0–22.7 s).
+            double trot = play.Log.Last(e => e.Kind == PlayLogKind.Run).Time - play.ContactTime;
+            Assert.That(trot, Is.InRange(19.5, 24.5), "home-run trot");
+            Assert.That(play.Runners.Max(r => r.SpeedAt(play.ContactTime + 8.0)), Is.LessThan(RunnerProfile.Standard.MaxSpeed * RunnerProfile.TrotFactor * 1.05), "nobody sprints");
+            // Every runner touches each base on his way in order.
+            foreach (LiveRunner r in play.Runners)
+            {
+                Base[] touched = play.Log.Where(e => e.Kind == PlayLogKind.BaseTouch && e.Runner == r.Id).Select(e => e.At.Value).ToArray();
+                Base[] expected = new[] { Base.First, Base.Second, Base.Third, Base.Home }.SkipWhile(b => b != r.Id.Next).ToArray();
+                CollectionAssert.AreEqual(expected, touched, $"{r.Id}");
+            }
         }
 
         [TestCase(Base.Home, 4, Base.Home)]

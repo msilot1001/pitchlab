@@ -30,9 +30,12 @@ namespace Pitchlab.Gameplay.Fielding
         /// <summary>Earliest time he can be at <see cref="FielderTarget"/> (reaction + fastest run).</summary>
         public readonly double EarliestArrival;
         public readonly InterceptKind Kind;
+        /// <summary>A diving catch (TASK-011.6): taken in the air beyond the normal reach, within the dive envelope.</summary>
+        public readonly bool Dive;
 
-        public Intercept(double time, BallState ball, Vector3d fielderTarget, double routeDistance, double earliestArrival, InterceptKind kind)
+        public Intercept(double time, BallState ball, Vector3d fielderTarget, double routeDistance, double earliestArrival, InterceptKind kind, bool dive = false)
         {
+            Dive = dive;
             Feasible = true;
             Time = time;
             Ball = ball;
@@ -151,6 +154,42 @@ namespace Pitchlab.Gameplay.Fielding
                 : ball.Position.Z <= profile.PickupHeightMax ? InterceptKind.GroundPickup : InterceptKind.HopCatch;
             intercept = new Intercept(t, ball, target, route, arrival, kind);
             return true;
+        }
+
+        /// <summary>Extra horizontal reach of a dive (m): the glove laid out ≈ one body length beyond the running reach
+        /// (Docs/FIELDING_MOTION_REFERENCE.md; conservative).</summary>
+        public const double DiveReach = 1.0;
+        /// <summary>A dive takes a ball this low and no higher (centre, m): from just off the grass to about the waist.</summary>
+        public const double DiveLow = 0.15, DiveHigh = 1.2;
+        /// <summary>He dives only out of a run: at least this far run to the take-off (m; at ≈ 70 % of top speed by then).</summary>
+        public const double DiveRunUp = 6.0;
+
+        /// <summary>
+        /// The earliest diving catch of a fly ball that would otherwise drop: before its first contact, low enough to dive for,
+        /// the ball's ground point within the running reach plus <see cref="DiveReach"/> after a run of at least
+        /// <see cref="DiveRunUp"/>. The fielder runs through his take-off point at full speed (no stop).
+        /// </summary>
+        public static Intercept SolveDive(BallInPlay play, Vector3d start, FielderProfile profile, FieldLayout field, double playableUntil, double fairBefore = double.NegativeInfinity)
+        {
+            double t0 = play.First.Time;
+            for (double t = t0 + SearchStep; t <= playableUntil && BeforeFirstContact(play, t); t += SearchStep)
+            {
+                BallState ball = play.StateAt(t);
+                if (ball.Position.Z < DiveLow || ball.Position.Z > DiveHigh) continue;
+                if (t < fairBefore && !FairFoul.OverFairTerritory(ball.Position)) continue;
+                Vector3d toBall = Ground(ball.Position - start);
+                double gap = toBall.Length;
+                double route = Math.Max(0.0, gap - profile.ReachAt(ball.Position.Z) - DiveReach);
+                if (route < DiveRunUp) continue;
+                double available = t - t0 - profile.ReactionTime;
+                if (available < 0.0 || route > RunningLaw.Distance(profile, available)) continue;
+                Vector3d target = start + toBall * (route / gap);
+                if (!InsidePark(field, target)) continue;
+                double arrival = t0 + profile.ReactionTime + RunningLaw.RunThroughTime(profile, route);
+                return new Intercept(t, ball, target, route, arrival, InterceptKind.FlyCatch, dive: true);
+            }
+
+            return Intercept.None;
         }
 
         /// <summary>The ball has not yet touched the ground or the wall at <paramref name="t"/>.</summary>

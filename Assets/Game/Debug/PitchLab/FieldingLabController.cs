@@ -4,6 +4,7 @@ using System.Linq;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
+using Pitchlab.Gameplay.Running;
 using Pitchlab.Presentation;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Batting;
@@ -86,6 +87,16 @@ namespace Pitchlab.Sandbox
             new Scenario("F: R1, 2 out, gap ball", new BattedBallLaunch(100.0, 20.0, -15.0, 1800.0), OnFirst, outs: 2),
             new Scenario("H: loaded, 1 out, grounder to 3B", new BattedBallLaunch(80.0, -7.0, -30.0, -900.0), BaseOccupancy.Loaded, outs: 1),
             new Scenario("I: R2, 2 out, single to CF", new BattedBallLaunch(95.0, 6.0, 0.0, 700.0), OnSecond, outs: 2),
+            // TASK-011.6 fielding actions (the classification comes from the take's geometry; these batted balls produce them).
+            new Scenario("Slow roller: charge (3B)", new BattedBallLaunch(50.0, -25.0, -30.0, -900.0)),
+            new Scenario("Backhand (3B)", new BattedBallLaunch(50.0, -8.0, -40.0, -900.0)),
+            new Scenario("Sliding catch (3B)", new BattedBallLaunch(60.0, 10.0, -20.0, 1500.0)),
+            new Scenario("Diving catch (LF)", new BattedBallLaunch(80.0, 22.0, -40.0, 1500.0)),
+            new Scenario("Diving catch (2B)", new BattedBallLaunch(60.0, 16.0, 0.0, 1500.0)),
+            new Scenario("Over-the-shoulder catch (3B)", new BattedBallLaunch(60.0, 16.0, -30.0, 1500.0)),
+            // TASK-011.7 baserunning motion.
+            new Scenario("Head-first back (R2)", new BattedBallLaunch(70.0, 8.0, -35.0, 1500.0), new BaseOccupancy(true, true, false)),
+            new Scenario("Home run, R1 (trot)", new BattedBallLaunch(106.0, 28.0, -10.0, 2000.0), OnFirst),
         };
 
         public static int IndexOf(string name) => Array.FindIndex(Presets, p => p.Name == name);
@@ -96,6 +107,8 @@ namespace Pitchlab.Sandbox
         [SerializeField] private BaseballCamera _camera;
         [SerializeField] private Transform _ball;
         [SerializeField] private bool _debug = true;
+        /// <summary>Motion debug overlay (M): per figure the gameplay state, the shown action, the glove–ball error.</summary>
+        [SerializeField] private bool _motionDebug;
 
         private readonly List<Mesh> _meshes = new List<Mesh>();
         private DefenseView _defense;
@@ -233,7 +246,8 @@ namespace Pitchlab.Sandbox
                     Launch(PresetIndex);
                 }
                 if (k.spaceKey.wasPressedThisFrame) Launch(PresetIndex);
-                if (k.sKey.wasPressedThisFrame) SetSpeed(_speed > 0.75f ? 0.5f : 1f);
+                if (k.sKey.wasPressedThisFrame) SetSpeed(_speed > 0.75f ? 0.5f : _speed > 0.375f ? 0.25f : 1f);   // 1× → 0.5× → 0.25×
+                if (k.mKey.wasPressedThisFrame) _motionDebug = !_motionDebug;
                 if (k.tKey.wasPressedThisFrame) _debug = !_debug;
             }
 
@@ -259,7 +273,7 @@ namespace Pitchlab.Sandbox
         {
             _style ??= new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft, fontSize = 12 };
             _bigStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter, fontSize = 30, fontStyle = FontStyle.Bold };
-            var text = new System.Text.StringBuilder("Fielding Lab — 1–8 rules · ←→ all · Space replay · S speed · T debug\nZ/X/C/V throw 1B/2B/3B/home · N hold · B decision\n");
+            var text = new System.Text.StringBuilder("Fielding Lab — 1–8 rules · ←→ all · Space replay · S speed 1/0.5/0.25× · T debug · M motion\nZ/X/C/V throw 1B/2B/3B/home · N hold · B decision\n");
             for (int i = Math.Max(0, PresetIndex - 4); i < Math.Min(Presets.Length, Math.Max(0, PresetIndex - 4) + 10); i++)
                 text.AppendLine($"{(i == PresetIndex ? "▶" : "  ")} {(i < 8 ? (i + 1).ToString() : " ")}  {Presets[i].Name}");
             if (Play != null)
@@ -272,7 +286,28 @@ namespace Pitchlab.Sandbox
             }
 
             GUI.Label(new Rect(10f, 10f, 420f, 640f), text.ToString(), _style);
+            if (_motionDebug && Live != null) GUI.Label(new Rect(Screen.width - 430f, Screen.height - 330f, 420f, 320f), MotionDebugText(), _style);
             GUI.Label(new Rect(0f, 40f, Screen.width, 50f), ResultText, _bigStyle);
+        }
+
+        /// <summary>Motion debug: for each defender and runner, the gameplay state, the shown action and (holding or reaching
+        /// for the ball) the glove–ball error.</summary>
+        private string MotionDebugText()
+        {
+            double t = PlayTime;
+            var s = new System.Text.StringBuilder("MOTION\n");
+            foreach (DefensivePosition p in Enum.GetValues(typeof(DefensivePosition)))
+            {
+                PlayerMannequin m = _defense.Figure(p);
+                if (m == null || !m.gameObject.activeInHierarchy) continue;
+                // Glove against the authoritative ball (the shown ball is placed in the glove, so it would always read 0).
+                string err = Team.HolderAt(t) == p ? $"  glove–ball {Vector3.Distance(m.GloveAnchor.position, SimulationSpace.ToUnity(Team.BallPositionAt(t))):0.00} m" : "";
+                s.AppendLine($"{LivePlayNames.Abbrev(p),-3} {Team.FielderSpeedAt(p, t),4:0.0} m/s  game {_defense.GameplayAction(p)}  shown {_defense.ShownAction(p)}{err}");
+            }
+
+            foreach (LiveRunner r in Live.Runners)
+                s.AppendLine($"{r.Id,-14} {r.SpeedAt(t),4:0.0} m/s  game {r.LegAt(t).From}→{r.LegAt(t).To}  shown {_runners.ShownAction(r.Id)}");
+            return s.ToString();
         }
 
         /// <summary>The objective scenario report: selected fielder, start, reaction, route, intercept and result.</summary>
