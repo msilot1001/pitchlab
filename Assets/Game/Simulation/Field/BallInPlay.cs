@@ -196,10 +196,9 @@ namespace Pitchlab.Simulation.Field
                         }
 
                         BallState after = SurfaceImpact.Resolve(atWall, normal, BallSurfaceProperties.Wall, ball);
-                        events.Add(new BallEvent(BallEventKind.WallImpact, atWall, after, SurfaceKind.Wall));
-                        state = after;
-                        airborne = state.Position.Z - ball.Radius > 1e-6 || state.Velocity.Z > HopSpeed;
-                        if (!airborne) state = OnGround(state, ball);
+                        airborne = after.Position.Z - ball.Radius > 1e-6 || after.Velocity.Z > HopSpeed;
+                        state = airborne ? after : OnGround(after, ball);
+                        events.Add(new BallEvent(BallEventKind.WallImpact, atWall, state, SurfaceKind.Wall));
                         if (++impacts >= MaxImpacts) return Finish(segments, events, BallPhase.Airborne);
                         continue;
                     }
@@ -215,15 +214,19 @@ namespace Pitchlab.Simulation.Field
 
                     SurfaceKind surface = field.SurfaceAt(landing.Position.X, landing.Position.Y);
                     BallState bounced = SurfaceImpact.Resolve(landing, new Vector3d(0.0, 0.0, 1.0), BallSurfaceProperties.For(surface), ball);
-                    events.Add(new BallEvent(BallEventKind.GroundImpact, landing, bounced, surface));
+                    // The event records the state the play continues from (a rebound below HopSpeed stays down: v_z = 0),
+                    // so StateAt(event time) and the event agree.
+                    bool hops = bounced.Velocity.Z > HopSpeed;
+                    BallState continues = hops ? bounced : OnGround(bounced, ball);
+                    events.Add(new BallEvent(BallEventKind.GroundImpact, landing, continues, surface));
                     if (++impacts >= MaxImpacts) return Finish(segments, events, BallPhase.Airborne);
-                    if (bounced.Velocity.Z > HopSpeed)
+                    if (hops)
                     {
                         state = new BallState(bounced.Time, new Vector3d(bounced.Position.X, bounced.Position.Y, ball.Radius + Lift), bounced.Velocity, bounced.Spin);
                         continue;
                     }
 
-                    state = OnGround(bounced, ball);
+                    state = continues;
                     airborne = false;
                     continue;
                 }
@@ -403,8 +406,10 @@ namespace Pitchlab.Simulation.Field
                     samples.Add(next);
                     segments.Add(new BallSegment(rolling ? BallPhase.Rolling : BallPhase.Sliding, new TrajectoryResult(samples.ToArray(), FlightEnd.ReachedGround)));
                     BallState after = SurfaceImpact.Resolve(next, normal, BallSurfaceProperties.Wall, ball);
-                    events.Add(new BallEvent(BallEventKind.WallImpact, next, after, SurfaceKind.Wall));
-                    return new GroundResult(GroundEnd.Wall, after);
+                    // Record the state the play continues from (on the ground unless the wall pops it up past HopSpeed).
+                    BallState continues = after.Velocity.Z > HopSpeed ? after : OnGround(after, ball);
+                    events.Add(new BallEvent(BallEventKind.WallImpact, next, continues, SurfaceKind.Wall));
+                    return new GroundResult(GroundEnd.Wall, continues);
                 }
 
                 if (step % RecordEvery == 0) samples.Add(next);

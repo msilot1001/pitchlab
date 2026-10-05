@@ -63,7 +63,7 @@ The PCI keeps its position between pitches. With a mouse it is where the hand le
 - **Over the fence on the fly:** judged where the ball leaves the field. Fair means a home run, which includes off the pole.
 - **Bounce over the fence:** a fair ball that bounces over the fence is judged by its landing, so it is a ground-rule double, not a home run.
 - **Off the wall on the fly:** fair. The wall stands only over fair territory and the line.
-- **Beyond first or third base:** judged where it first lands.
+- **Beyond first or third base:** judged where it first lands. "Past first or third base" means past the line through first and third base (90 ft·√½ toward centre). That line meets each foul line at its bag and also covers balls hit up the middle.
 - **Before the bases:** judged where it passes first or third base, or where it settles.
 - **The lines and poles are fair territory.** The ball is judged by its own position: it is fair if any part of it is over the line (its centre within one radius outside the line).
 

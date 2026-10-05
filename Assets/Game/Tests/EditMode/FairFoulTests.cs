@@ -73,7 +73,7 @@ namespace Pitchlab.Tests
             FairFoulResult call = FairFoul.Call(play);
             Assert.AreEqual(BallInPlayCall.Foul, call.Call);
             Assert.AreEqual(CallBasis.PassingBase, call.Basis);
-            Assert.AreEqual(Base, (call.At.Position.X + call.At.Position.Y) / Math.Sqrt(2.0), 1e-9, "judged at the base");
+            Assert.AreEqual(Base * Math.Sqrt(0.5), call.At.Position.Y, 1e-9, "judged as it passes the base (the line through first and third)");
         }
 
         [Test]
@@ -130,12 +130,25 @@ namespace Pitchlab.Tests
         [Test]
         public void LandingAtTheBaseDistanceIsBeyondTheBase()
         {
-            // Just past the base, landing foul: decided at once. Just short of it and staying there: judged where it settles.
-            BallInPlay past = Play(new[] { new Vector3d(0, 0.7, 0.9), FirstBaseSide(Base + 1e-6, 0.5) }, 1, BallPhase.Rest);
+            // Just past the base, landing 0.5 m foul: decided at once. Just short of it and staying there: judged where it
+            // settles. "Past the base" = past the line through first and third base (y = 90 ft·√½), which meets the foul
+            // line at the bag.
+            double yb = Base * Math.Sqrt(0.5), foul = 0.5 * Math.Sqrt(2.0);
+            BallInPlay past = Play(new[] { new Vector3d(0, 0.7, 0.9), new Vector3d(yb + 1e-6 + foul, yb + 1e-6, R) }, 1, BallPhase.Rest);
             Assert.AreEqual(CallBasis.FirstLandingBeyondBase, FairFoul.Call(past).Basis);
-            BallInPlay shortOf = Play(new[] { new Vector3d(0, 0.7, 0.9), FirstBaseSide(Base - 1e-3, 0.5) }, 1, BallPhase.Rest);
+            BallInPlay shortOf = Play(new[] { new Vector3d(0, 0.7, 0.9), new Vector3d(yb - 1e-3 + foul, yb - 1e-3, R) }, 1, BallPhase.Rest);
             Assert.AreEqual(CallBasis.Settled, FairFoul.Call(shortOf).Basis);
             Assert.AreEqual(BallInPlayCall.Foul, FairFoul.Call(shortOf).Call);
+        }
+
+        [Test]
+        public void FairLandingInShallowCentreIsPastTheBasesEvenIfItRollsFoul()
+        {
+            // Codex review: lands 100 ft straight toward centre (past the first–third line), then rolls into foul ground.
+            BallInPlay play = Play(new[] { new Vector3d(0, 0.7, 0.9), new Vector3d(0.0, 30.48, R), new Vector3d(30.0, 25.0, R) }, 1, BallPhase.Rest);
+            FairFoulResult call = FairFoul.Call(play);
+            Assert.AreEqual(BallInPlayCall.Fair, call.Call);
+            Assert.AreEqual(CallBasis.FirstLandingBeyondBase, call.Basis);
         }
 
         [TestCase(0.03, BallInPlayCall.Fair)]

@@ -528,10 +528,8 @@ namespace Pitchlab.Tests
             foreach (BallEvent e in play.Events)
             {
                 if (e.Kind != BallEventKind.GroundImpact && e.Kind != BallEventKind.WallImpact) continue;
-                // Post-impulse state at the instant (a bounce that stays down keeps its horizontal velocity; v_z < HopSpeed is dropped).
-                Vector3d d = play.StateAt(e.Time).Velocity - e.After.Velocity;
-                Assert.Less(new Vector3d(d.X, d.Y, 0.0).Length, 1e-6, $"{e.Kind} at {e.Time:0.000}");
-                Assert.LessOrEqual(Math.Abs(d.Z), BallInPlaySimulation.HopSpeed + 1e-9);
+                // The event's After is exactly the state the play continues from (Codex review: no hidden v_z).
+                Assert.Less((play.StateAt(e.Time).Velocity - e.After.Velocity).Length, 1e-9, $"{e.Kind} at {e.Time:0.000}");
             }
 
             BallEvent roll = Array.Find(ToArray(play), e => e.Kind == BallEventKind.SlideToRoll);

@@ -61,12 +61,16 @@ namespace Pitchlab.Gameplay.Hitting
         /// <summary>Ball centre over fair territory or over the line (any part of the ball above it).</summary>
         public static bool OverFairTerritory(Vector3d p) => OutsideFoulLine(p.X, p.Y) <= BallProperties.Baseball.Radius;
 
-        /// <summary>Distance along the nearer foul line (from home toward first base for x ≥ 0, third base otherwise).</summary>
-        private static double AlongLine(Vector3d p) => (p.Y + Math.Abs(p.X)) / Math.Sqrt(2.0);
+        /// <summary>
+        /// Depth toward centre field. "Past first or third base" is past the line through the two bases (y ≥ 90 ft·√½):
+        /// that line meets each foul line exactly at its bag, and it also covers balls up the middle (a ball that first
+        /// lands 100 ft toward centre is past the bases, Codex review).
+        /// </summary>
+        private static double Depth(Vector3d p) => p.Y;
 
         public static FairFoulResult Call(BallInPlay play)
         {
-            double baseLine = FieldLayout.BaseDistance;
+            double baseLine = FieldLayout.BaseDistance * Math.Sqrt(0.5);
             // The first decisive event in the air: clearing the fence (home run if over fair territory or the pole), or
             // touching the wall (which stands only over fair territory and the line: fair, whatever happens after). A
             // ball that bounces first is judged by its landing — a fair bounce over the fence is a ground-rule double.
@@ -80,7 +84,7 @@ namespace Pitchlab.Gameplay.Hitting
             }
 
             BallEvent? landing = play.FirstGroundContact;
-            if (landing is BallEvent l && AlongLine(l.Before.Position) >= baseLine)
+            if (landing is BallEvent l && Depth(l.Before.Position) >= baseLine)
                 return new FairFoulResult(Judge(l.Before.Position), CallBasis.FirstLandingBeyondBase, l.Before);
 
             // Landed (or still in the air) before the bases: the first moment it passes first or third base decides,
@@ -92,7 +96,7 @@ namespace Pitchlab.Gameplay.Hitting
                 {
                     BallState s = segment.Path.Samples[i];
                     if (s.Time <= start) continue;
-                    if (AlongLine(previous.Position) < baseLine && AlongLine(s.Position) >= baseLine)
+                    if (Depth(previous.Position) < baseLine && Depth(s.Position) >= baseLine)
                     {
                         BallState at = Crossing(previous, s, baseLine);
                         return new FairFoulResult(Judge(at.Position), CallBasis.PassingBase, at);
@@ -109,7 +113,7 @@ namespace Pitchlab.Gameplay.Hitting
         /// <summary>Linear interpolation to where the ball passes the base line (sub-centimetre between samples).</summary>
         private static BallState Crossing(BallState a, BallState b, double line)
         {
-            double fa = AlongLine(a.Position) - line, fb = AlongLine(b.Position) - line;
+            double fa = Depth(a.Position) - line, fb = Depth(b.Position) - line;
             double u = fa / (fa - fb);
             return new BallState(a.Time + u * (b.Time - a.Time), a.Position + u * (b.Position - a.Position), a.Velocity + u * (b.Velocity - a.Velocity), a.Spin);
         }
