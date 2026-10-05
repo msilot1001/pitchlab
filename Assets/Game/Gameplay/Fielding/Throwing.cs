@@ -404,7 +404,7 @@ namespace Pitchlab.Gameplay.Fielding
     /// intercept solver. A throw is caught only on the fly; otherwise it
     /// stays a free ball on its own trajectory.
     /// </summary>
-    public static class ThrowPlanner
+    public static partial class ThrowPlanner
     {
         /// <summary>Receivers adjust to a throw this long after its release (s, ASSUMED: they track the ball's flight).</summary>
         public const double AdjustReaction = 0.1;
@@ -516,5 +516,149 @@ namespace Pitchlab.Gameplay.Fielding
 
         public static DefensivePlay Plan(FieldingPlay fielding, Base? target) =>
             Plan(fielding, target, FielderProfile.For, ThrowProfile.For, EnvironmentState.Standard, FieldLayout.Standard);
+    }
+}
+
+namespace Pitchlab.Gameplay.Fielding
+{
+    /// <summary>
+    /// A throw in a live play (TASK-008): from any holder to any receiver who is covering a base or standing at a cut-off
+    /// point — the authoritative flight, the receiver's catch on the fly (or not), and how he moves to make it.
+    /// </summary>
+    public sealed class LiveThrow
+    {
+        internal LiveThrow(DefensivePosition thrower, DefensivePosition receiver, Base? target, Vector3d aimPoint, double releaseTime,
+            Vector3d releasePoint, BallInPlay flight, bool reaches, Intercept catchIntercept, double switchTime, ContinuationMotion receiverMotion)
+        {
+            Thrower = thrower;
+            Receiver = receiver;
+            Target = target;
+            AimPoint = aimPoint;
+            ReleaseTime = releaseTime;
+            ReleasePoint = releasePoint;
+            Flight = flight;
+            ReachesTarget = reaches;
+            Catch = catchIntercept;
+            SwitchTime = switchTime;
+            ReceiverMotion = receiverMotion;
+            double first = flight.EndTime;
+            foreach (BallEvent e in flight.Events)
+                if (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact || e.Kind == BallEventKind.LeftPlay)
+                {
+                    first = e.Time;
+                    break;
+                }
+
+            FirstContactTime = first;
+        }
+
+        public DefensivePosition Thrower { get; }
+        public DefensivePosition Receiver { get; }
+        /// <summary>The base it is thrown to (null: to a cut-off or relay man's spot).</summary>
+        public Base? Target { get; }
+        /// <summary>Where it is aimed on the ground (the bag, or the cut-off man's spot).</summary>
+        public Vector3d AimPoint { get; }
+        public double ReleaseTime { get; }
+        public Vector3d ReleasePoint { get; }
+        public BallInPlay Flight { get; }
+        public bool ReachesTarget { get; }
+        public Intercept Catch { get; }
+        public bool Caught => Catch.Feasible;
+        /// <summary>When the receiver leaves his cover/spot to take the throw (+∞: he stays).</summary>
+        public double SwitchTime { get; }
+        /// <summary>The receiver's move to the catch from his state at <see cref="SwitchTime"/> (null: he stays).</summary>
+        public ContinuationMotion ReceiverMotion { get; }
+        public double FirstContactTime { get; }
+        /// <summary>When the ball is no longer this throw's: the catch, or its first contact if missed.</summary>
+        public double EndTime => Caught ? Catch.Time : FirstContactTime;
+    }
+
+    public static partial class ThrowPlanner
+    {
+        /// <summary>
+        /// Plans a throw in a live play (TASK-008): <paramref name="thrower"/> (moving per <paramref name="throwerTrack"/>) releases
+        /// no earlier than <paramref name="ready"/> — later if the receiver would not be there when the throw arrives (hold-for-
+        /// cover, iterated); aimed at the receiver's chest over <paramref name="point"/>; the receiver, moving per
+        /// <paramref name="receiverTrack"/> and at <paramref name="point"/> from <paramref name="onPoint"/>, takes a throw passing
+        /// within reach there without leaving it, otherwise adjusts from his position and velocity (on the fly or on a hop).
+        /// <paramref name="onPoint"/> = −∞: no waiting for him (a throw to a cut-off man, who adjusts to it).
+        /// </summary>
+        public static LiveThrow PlanLive(DefensivePosition thrower, FielderTrack throwerTrack, double ready, ThrowProfile arm,
+            DefensivePosition receiver, FielderTrack receiverTrack, double onPoint, Vector3d point, Base? target,
+            EnvironmentState environment, FieldLayout field)
+        {
+            var aim = new Vector3d(point.X, point.Y, TargetHeight);
+            double release = ready;
+            Vector3d releasePoint = ReleaseFrom(throwerTrack.PositionAt(release), point, arm);
+            BallState launch = ThrowSolver.Launch(releasePoint, aim, arm.Speed, release, environment, out bool reaches);
+            // ponytail: the throw is followed for twice its straight-line time plus 2 s (a catch, or a hop, is well inside); a
+            // missed throw's retrieval past that sees the ball stop there. Lengthen if throwing errors are modelled.
+            double horizon = 2.0 * new Vector3d(aim.X - releasePoint.X, aim.Y - releasePoint.Y, 0.0).Length / arm.Speed + 2.0;
+            BallInPlay flight = BallInPlaySimulation.Run(launch, environment, field, ThrowSolver.Aerodynamics, horizon);
+            for (int i = 0; i < 4; i++)
+            {
+                double wait = onPoint - ArrivalAtBase(flight, point);
+                if (wait <= 1e-3) break;
+                release += wait;
+                Vector3d moved = ReleaseFrom(throwerTrack.PositionAt(release), point, arm);
+                // Waiting where he stands: the same throw, later (the flight does not depend on the time).
+                if (moved.Equals(releasePoint)) launch = new BallState(release, launch.Position, launch.Velocity, launch.Spin);
+                else launch = ThrowSolver.Launch(moved, aim, arm.Speed, release, environment, out reaches);
+                releasePoint = moved;
+                flight = BallInPlaySimulation.Run(launch, environment, field, ThrowSolver.Aerodynamics, horizon);
+            }
+
+            // A live throw may be taken on a hop (long throws home are one-hoppers); it is playable until it leaves the park.
+            double playable = double.PositiveInfinity;
+            foreach (BallEvent e in flight.Events)
+                if (e.Kind == BallEventKind.LeftPlay || e.Kind == BallEventKind.ClearedFence)
+                {
+                    playable = e.Time;
+                    break;
+                }
+
+            FielderProfile p = receiverTrack.Profile;
+            double switchAt = release + AdjustReaction;
+            double arrived = Math.Max(switchAt, onPoint);
+            var atPoint = new FielderProfile(arrived - release, p.MaxSpeed, p.AccelerationTime, p.BrakeDeceleration, p.Reach, p.GroundReach, p.CatchHeightMax, p.PickupHeightMax);
+            double pass = ArrivalAtBase(flight, point);
+            Vector3d from = receiverTrack.PositionAt(arrived);
+            bool onIt = new Vector3d(from.X - point.X, from.Y - point.Y, 0.0).Length < 0.05;
+            Intercept take = Intercept.None;
+            Vector3d adjustFrom = from, adjustVelocity = Vector3d.Zero;
+            double adjustStart = arrived;
+            FielderProfile adjust = atPoint;
+            if (onIt)
+            {
+                take = pass >= arrived && pass < playable && InterceptSolver.Feasible(flight, from, atPoint, field, pass, out Intercept there) && there.RouteDistance == 0.0
+                    ? there
+                    : InterceptSolver.Solve(flight, from, atPoint, field, playable);
+            }
+
+            if (!take.Feasible)
+            {
+                // Adjusting from where he is, as he is moving, shortly after the release.
+                adjustStart = switchAt;
+                adjustFrom = receiverTrack.PositionAt(switchAt);
+                adjustVelocity = receiverTrack.VelocityAt(switchAt);
+                adjust = new FielderProfile(AdjustReaction, p.MaxSpeed, p.AccelerationTime, p.BrakeDeceleration, p.Reach, p.GroundReach, p.CatchHeightMax, p.PickupHeightMax);
+                take = InterceptSolver.Solve(flight, adjustFrom, adjust, field, playable, initialVelocity: adjustVelocity);
+            }
+
+            ContinuationMotion motion = take.Feasible && take.RouteDistance > 0.0
+                ? new ContinuationMotion(adjust, adjustFrom, adjustVelocity, adjustStart, take.FielderTarget, take.Time)
+                : null;
+            return new LiveThrow(thrower, receiver, target, point, release, releasePoint, flight, reaches, take,
+                motion != null ? adjustStart : double.PositiveInfinity, motion);
+        }
+
+        /// <summary>The ball at hand height on the throwing side, a step toward the target.</summary>
+        private static Vector3d ReleaseFrom(Vector3d holder, Vector3d target, ThrowProfile arm)
+        {
+            Vector3d toTarget = new Vector3d(target.X - holder.X, target.Y - holder.Y, 0.0);
+            Vector3d facing = toTarget.Length > 1e-6 ? toTarget / toTarget.Length : new Vector3d(0.0, 1.0, 0.0);
+            Vector3d right = new Vector3d(facing.Y, -facing.X, 0.0);
+            return new Vector3d(holder.X, holder.Y, 0.0) + 0.3 * facing + 0.25 * right + new Vector3d(0.0, 0.0, arm.ReleaseHeight);
+        }
     }
 }

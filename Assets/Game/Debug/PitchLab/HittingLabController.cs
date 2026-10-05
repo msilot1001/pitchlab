@@ -92,9 +92,8 @@ namespace Pitchlab.Sandbox
         public LivePlay LastLive { get; private set; }
         /// <summary>The play under the rules (TASK-006B; bases empty in the batting loop): the defense's decision and the
         /// OUT/SAFE events. The batting loop observes its end; it holds no rules itself.</summary>
-        public RulesPlay LastRules => LastLive?.Rules;
         /// <summary>The chosen defensive action's play: the ball's authority at every instant.</summary>
-        public DefensivePlay LastDefense => LastLive?.Defense;
+        public LiveDefense LastDefense => LastLive?.Defense;
         /// <summary>Distance to show for the hit: carry (first bounce), or the projected distance off or over the fence.</summary>
         public double ShownCarry => LastPlay == null ? double.NaN : LastPlay.ReachedFenceInTheAir ? LastBattedBall.Metrics.Distance : LastPlay.CarryDistance;
         public static readonly FieldLayout Field = FieldLayout.Standard;

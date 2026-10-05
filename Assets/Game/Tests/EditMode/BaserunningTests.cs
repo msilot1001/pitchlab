@@ -110,7 +110,7 @@ namespace Pitchlab.Tests
             // The planner's arrival at the start of a run is the moment the executed run touches the base (same law).
             LivePlay play = Play(LeftSideGrounder(), 1, BaseOccupancy.Loaded);
             double contact = play.ContactTime;
-            foreach (Runner r in new[] { Runner.Batter, new Runner(Base.First), new Runner(Base.Third) })
+            foreach (Runner r in new[] { Runner.Batter, new Runner(Base.First), new Runner(Base.Second) })
             {
                 double start = contact + (r.IsBatter ? P.BatterStartDelay : P.ReadDelay);
                 double predicted = RunnerPlanner.ArrivalTime(P, BaseLeg.Of(r.From, false), LivePlay.Lead(r.From), 0.0, start, r.Next, r.IsBatter);
@@ -133,9 +133,9 @@ namespace Pitchlab.Tests
             LivePlay wall = Play(Field(105.0, 14.0, -20.0, 1800.0), 0, new BaseOccupancy(true, false, false));
             var r1 = new Runner(Base.First);
             LiveRunner runner = wall.RunnerOf(r1);
-            double decided = wall.Log.First(e => e.Kind == PlayLogKind.Decision && e.Runner == r1 && e.Text.Contains("rounds 3B")).Time;
-            double predictedHome = RunnerPlanner.ArrivalTime(P, runner.LegAt(decided), runner.DistanceAlongAt(decided), runner.PathVelocityAt(decided), decided, Base.Home, false, bananaAll: true);
-            Assert.AreEqual(predictedHome, TouchTime(wall, r1, Base.Home), 1e-6, "prediction at the decision = execution");
+            double decided = wall.Log.First(e => e.Kind == PlayLogKind.Decision && e.Runner == r1 && e.Text.Contains("rounds 2B")).Time;
+            double predictedThird = RunnerPlanner.ArrivalTime(P, runner.LegAt(decided), runner.DistanceAlongAt(decided), runner.PathVelocityAt(decided), decided, Base.Third, false, bananaAll: true);
+            Assert.AreEqual(predictedThird, TouchTime(wall, r1, Base.Third), 1e-6, "prediction at the decision = execution");
         }
 
         [Test]
@@ -162,11 +162,11 @@ namespace Pitchlab.Tests
             // baseman, who stands on it holding the ball — protected (OBR 5.09(b)(4) Exception).
             var quick = new RunnerProfile(1.4 * P.MaxSpeed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
             var play = new LivePlay(SsGrounder(), new Situation(0, BaseOccupancy.Empty), quick,
-                cs => cs.First(a => a.Kind == DefensiveActionKind.ThrowToBase && a.Target == Base.First));
+                cs => cs.First(a => a.Kind == LiveActionKind.Throw && a.Target == Base.First));
             play.RunToEnd();
             AssertEndedForAReason(play);
             LiveRunner batter = play.RunnerOf(Runner.Batter);
-            Assert.Less(TouchTime(play, Runner.Batter, Base.First), play.Defense.Throw.Catch.Time, "he beat the throw");
+            Assert.Less(TouchTime(play, Runner.Batter, Base.First), play.Defense.Throws[0].Catch.Time, "he beat the throw");
             double touch = TouchTime(play, Runner.Batter, Base.First);
             double past = 0.0, closest = double.PositiveInfinity;
             for (double t = touch; t < touch + 6.0; t += 0.01)
@@ -189,10 +189,13 @@ namespace Pitchlab.Tests
         [Test]
         public void ForcedRunnersAdvanceAndUnforcedRunnersHold()
         {
-            // Bases loaded: everybody is forced and runs.
+            // Bases loaded: everybody is forced and runs (the runner from third into the force at home).
             LivePlay loaded = Play(LeftSideGrounder(), 1, BaseOccupancy.Loaded);
-            foreach (Runner r in new[] { new Runner(Base.First), new Runner(Base.Third) })
+            foreach (Runner r in new[] { new Runner(Base.First), new Runner(Base.Second) })
                 Assert.IsTrue(loaded.Log.Any(e => e.Kind == PlayLogKind.BaseTouch && e.Runner == r && e.At == r.Next), $"{r} advanced");
+            var r3 = new Runner(Base.Third);
+            Assert.IsTrue(loaded.RulesEvents.Any(e => e.Kind == PlayEventKind.ForceOut && e.Runner == r3 && e.At == Base.Home), "forced out at home");
+            Assert.Greater(loaded.RunnerOf(r3).DistanceAlongAt(loaded.RulesEvents.First(e => e.Runner == r3).Time), 10.0, "running home");
             // Runner on second alone, grounder to the left side (3B): not forced, the ball is in front of him — he holds.
             LivePlay held = Play(LeftSideGrounder(), 0, new BaseOccupancy(false, true, false));
             LiveRunner second = held.RunnerOf(new Runner(Base.Second));
@@ -242,18 +245,17 @@ namespace Pitchlab.Tests
         [Test]
         public void ExtraBaseDecisionDependsOnTheMargin()
         {
-            // Runner on first, a ball off the left-field wall: the average runner keeps going and scores; the same play with a
-            // slow runner stops earlier — the decision is the margin, not a scripted outcome. Neither is put out.
+            // Runner on first, a ball off the left-field wall: the average runner goes first to third; the same play with a slow
+            // runner stops at second — the decision is the margin, not a scripted outcome. Neither is put out.
             FieldingPlay wall = Field(105.0, 14.0, -20.0, 1800.0);
             LivePlay normal = Play(wall, 0, new BaseOccupancy(true, false, false));
             var slow = new RunnerProfile(0.75 * P.MaxSpeed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
             LivePlay slowPlay = Play(wall, 0, new BaseOccupancy(true, false, false), slow);
             LiveRunner n = normal.RunnerOf(new Runner(Base.First)), sl = slowPlay.RunnerOf(new Runner(Base.First));
-            Assert.IsTrue(n.HasScored, "scores from first on a ball off the wall");
-            Assert.IsFalse(sl.HasScored, "a slow runner holds up");
-            Assert.IsFalse(sl.IsOut, "and is not thrown out");
-            Assert.That(sl.LastTouched, Is.EqualTo(Base.Third).Or.EqualTo(Base.Second));
-            Assert.IsTrue(normal.Log.Any(e => e.Kind == PlayLogKind.Decision && e.Runner == n.Id && e.Text.Contains("rounds 3B")), "he rounded third on his own decision");
+            Assert.AreEqual(Base.Third, n.LastTouched, "first to third on a ball off the wall");
+            Assert.AreEqual(Base.Second, sl.LastTouched, "a slow runner holds up at second");
+            Assert.IsFalse(n.IsOut || sl.IsOut, "nobody is thrown out");
+            Assert.IsTrue(normal.Log.Any(e => e.Kind == PlayLogKind.Decision && e.Runner == n.Id && e.Text.Contains("rounds 2B")), "he rounded second on his own decision");
             // On a hit every leg is the banana route from its start (he may round any base; the geometry of a leg cannot
             // change once he is on it): the leg he rounded second and third on curves out.
             foreach (Base b in new[] { Base.Second, Base.Third })
@@ -285,7 +287,7 @@ namespace Pitchlab.Tests
             FieldingPlay f = SsGrounder();
             var on1 = new BaseOccupancy(true, false, false);
             // The defense's choice is pinned to the throw to second (a faster runner would otherwise change it).
-            DefensiveAction AtSecond(IReadOnlyList<DefensiveAction> cs) => cs.First(a => a.Kind == DefensiveActionKind.ThrowToBase && a.Target == Base.Second);
+            LiveAction AtSecond(IReadOnlyList<LiveAction> cs) => cs.First(a => a.Kind == LiveActionKind.Throw && a.Target == Base.Second);
             LivePlay Run(double speed)
             {
                 var p = new RunnerProfile(speed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
@@ -307,8 +309,8 @@ namespace Pitchlab.Tests
             }
 
             LivePlay boundary = Run(hi);
-            Assert.AreEqual(Base.Second, boundary.Defense.Throw.Target);
-            double catchAt = boundary.Defense.Throw.Catch.Time;
+            Assert.AreEqual(Base.Second, boundary.Defense.Throws[0].Target);
+            double catchAt = boundary.Defense.Throws[0].Catch.Time;
             LiveRunner r1 = boundary.RunnerOf(new Runner(Base.First));
             // His foot reaches the bag (touch distance) within 1 ms after the receiver has the ball on it: simultaneous, safe.
             Assert.That(TouchTime(boundary, r1.Id, Base.Second) - catchAt, Is.InRange(TimingCall.Simultaneous - 2e-5, TimingCall.Simultaneous + 2e-5),
@@ -322,7 +324,7 @@ namespace Pitchlab.Tests
                 LivePlay p = Run(speed);
                 var profile = new RunnerProfile(speed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
                 double footOn = RunnerPlanner.ArrivalTime(profile, BaseLeg.Of(Base.First, false), LivePlay.Lead(Base.First), 0.0, p.ContactTime + profile.ReadDelay, Base.Second, false);
-                double gap = footOn - p.Defense.Throw.Catch.Time;
+                double gap = footOn - p.Defense.Throws[0].Catch.Time;
                 if (gap > 3e-3) break;
                 if (gap < 1.1e-3) continue;
                 Assert.IsTrue(p.RulesEvents.Any(e => e.Runner == new Runner(Base.First) && e.Kind == PlayEventKind.ForceOut), $"out by {gap * 1e3:0.00} ms");
@@ -375,14 +377,14 @@ namespace Pitchlab.Tests
         [Test]
         public void SendDecisionGetsBolderWithTwoOut()
         {
-            // The wall-ball single with a runner on first: find the runner speed at which he is no longer sent home with none
-            // out; just below it he is held with none out but sent with two out (margin 0.30 s → −0.10 s).
+            // The wall ball with a runner on first: find the runner speed at which he no longer goes first to third with none
+            // out; just below it he is held at second with none out but goes with two out (margin 0.30 s → −0.10 s).
             FieldingPlay wall = Field(105.0, 14.0, -20.0, 1800.0);
             bool Sent(double speed, int outs)
             {
                 var p = new RunnerProfile(speed, P.AccelerationTime, P.BrakeDeceleration, 0.8, P.BatterStartDelay, P.ReadDelay);
                 LivePlay play = Play(wall, outs, new BaseOccupancy(true, false, false), p);
-                return play.Log.Any(e => e.Kind == PlayLogKind.Decision && e.Runner == new Runner(Base.First) && e.Text.Contains("for home"));
+                return play.Log.Any(e => e.Kind == PlayLogKind.Decision && e.Runner == new Runner(Base.First) && e.Text.Contains("for 3B"));
             }
 
             double lo = 0.6 * P.MaxSpeed, hi = P.MaxSpeed;   // held at lo, sent at hi (none out)
@@ -462,7 +464,8 @@ namespace Pitchlab.Tests
         [Test]
         public void SameResultAtAnyFrameSchedule()
         {
-            foreach (var (f, bases, outs) in new[] { (CenterFieldSingle(), new BaseOccupancy(true, false, true), 1), (SsGrounder(), BaseOccupancy.Loaded, 0), (DeepCenterFly(), new BaseOccupancy(false, false, true), 1) })
+            foreach (var (f, bases, outs) in new[] { (CenterFieldSingle(), new BaseOccupancy(true, false, true), 1), (SsGrounder(), BaseOccupancy.Loaded, 0), (DeepCenterFly(), new BaseOccupancy(false, false, true), 1),
+                         (CenterFieldSingle(), new BaseOccupancy(false, true, false), 2), (Field(100.0, 20.0, -15.0, 1800.0), new BaseOccupancy(true, false, false), 2) })
             {
                 LivePlay reference = Play(f, outs, bases);
                 foreach (double step in new[] { 1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0, -1.0 })
@@ -488,6 +491,17 @@ namespace Pitchlab.Tests
                     foreach (LiveRunner r in reference.Runners)
                         for (double s = reference.ContactTime; s < reference.EndTime; s += 0.1)
                             Assert.Less((r.PositionAt(s) - play.RunnerOf(r.Id).PositionAt(s)).Length, 1e-9);
+                    // The whole defense too: the same throws at the same times, every fielder in the same place.
+                    Assert.AreEqual(reference.Defense.Throws.Count, play.Defense.Throws.Count, $"throws at {step}");
+                    for (int i = 0; i < reference.Defense.Throws.Count; i++)
+                    {
+                        Assert.AreEqual(reference.Defense.Throws[i].ReleaseTime, play.Defense.Throws[i].ReleaseTime, 1e-9);
+                        Assert.AreEqual(reference.Defense.Throws[i].Catch.Time, play.Defense.Throws[i].Catch.Time, 1e-9);
+                    }
+
+                    foreach (DefensivePosition p in Enum.GetValues(typeof(DefensivePosition)))
+                        for (double s = reference.ContactTime; s < reference.EndTime; s += 0.1)
+                            Assert.Less((reference.Defense.FielderPositionAt(p, s) - play.Defense.FielderPositionAt(p, s)).Length, 1e-9, $"{p}");
                 }
             }
         }

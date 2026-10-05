@@ -79,7 +79,7 @@ namespace Pitchlab.Tests
                 At(t + 1e-5);
                 Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, "no jump at the take");
                 // Held until the throwing arm action starts (TASK-006A), or for good without a throw.
-                ThrowPlay th = _lab.DefensivePlay.Throw;
+                LiveThrow th = _lab.Team.Throws.FirstOrDefault();
                 At(th == null ? t + 0.5 : th.ReleaseTime - DefensivePlay.ArmAction - f.Ball.First.Time - 1e-3);
                 Assert.Less(Vector3.Distance(_lab.Ball.position, _lab.Defense.Figure(p).GloveAnchor.position), 1e-4f, "held in the glove");
             }
@@ -88,27 +88,29 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator OnlyThePrimaryAndTheReceiverLeaveTheirPositions()
+        public IEnumerator FiguresFollowTheTeamDefense()
         {
+            // TASK-008: every fielder moves to his role (cover, backup, …) — the shown figures are exactly the gameplay
+            // defenders (the pitcher and catcher are taken over from the pitch presentation and are left out here).
             yield return null;
-            FieldingPlay f = Launch(FieldingLabController.IndexOf("SS routine grounder: out at 1B"));   // thrown to first: the first baseman covers the bag
-            DefensivePosition receiver = _lab.DefensivePlay.Throw.Receiver;
-            Assert.AreEqual(DefensivePosition.FirstBase, receiver);
-            At(f.Intercept.Time - f.Ball.First.Time);
-            Vector3 bag = Flat(SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.First)));
-            foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
+            FieldingPlay f = Launch(FieldingLabController.IndexOf("SS routine grounder: out at 1B"));
+            Assert.AreEqual(DefensivePosition.FirstBase, _lab.Team.Throws[0].Receiver);
+            double t0 = f.Ball.First.Time;
+            foreach (double t in new[] { 0.5, f.Intercept.Time - t0, _lab.Team.Throws[0].Catch.Time - t0 + 0.5 })
             {
-                Vector3 shown = Flat(_lab.Defense.Figure(p).transform.position), start = SimulationSpace.ToUnity(DefensiveAlignment.Standard[p]);
-                if (p == f.Primary) Assert.Greater(Vector3.Distance(shown, start), 2f, "the primary ran");
-                else if (p == receiver) Assert.Less(Vector3.Distance(shown, bag), Vector3.Distance(Flat(start), bag) - 2f, "the receiver covers the bag");
-                else Assert.Less(Vector3.Distance(shown, start), 1e-4f, $"{p} held");
+                At(t);
+                foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
+                {
+                    if (p == DefensivePosition.P || p == DefensivePosition.C) continue;
+                    Vector3 shown = Flat(_lab.Defense.Figure(p).transform.position), gameplay = Flat(SimulationSpace.ToUnity(_lab.Team.FielderPositionAt(p, t0 + t)));
+                    Assert.Less(Vector3.Distance(shown, gameplay), 1e-3f, $"{p} at +{t:0.00}");
+                }
             }
 
-            // After the catch, still only those two have moved.
-            At(_lab.DefensivePlay.Throw.Catch.Time - f.Ball.First.Time + 0.5);
-            foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
-                if (p != f.Primary && p != receiver)
-                    Assert.Less(Vector3.Distance(Flat(_lab.Defense.Figure(p).transform.position), SimulationSpace.ToUnity(DefensiveAlignment.Standard[p])), 1e-4f, $"{p} held after the catch");
+            // And they did move: the first baseman to the bag, the right fielder behind it.
+            Vector3 bag = Flat(SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.First)));
+            foreach (DefensivePosition p in new[] { DefensivePosition.FirstBase, DefensivePosition.RightField })
+                Assert.Less(Vector3.Distance(Flat(_lab.Defense.Figure(p).transform.position), bag), Vector3.Distance(Flat(SimulationSpace.ToUnity(DefensiveAlignment.Standard[p])), bag) - 2f, $"{p} went toward first");
         }
 
         [UnityTest]
@@ -131,8 +133,8 @@ namespace Pitchlab.Tests
             for (int k = 0; k < FieldingLabController.Presets.Length; k++)
             {
                 FieldingPlay f = Launch(k);
-                DefensivePlay d = _lab.DefensivePlay;
-                ThrowPlay th = d.Throw;
+                LiveDefense d = _lab.Team;
+                LiveThrow th = d.Throws.FirstOrDefault();
                 string name = FieldingLabController.Presets[k].Name;
                 if (th == null) continue;   // no throw chosen (fly out, unassisted put-out, hold)
                 throws++;
@@ -153,7 +155,11 @@ namespace Pitchlab.Tests
                 At(th.Catch.Time - t0 - 1e-4);
                 float glove = Vector3.Distance(receiver.GloveAnchor.position, SimulationSpace.ToUnity(th.Catch.Ball.Position));
                 Assert.Less(glove, 0.20f, $"{name}: receiver's glove at the catch");
-                At(th.Catch.Time - t0 + FieldingPlay.SecureTime + 0.1);
+                // Held once secured — until he winds up for a throw of his own (the catcher's 5-2-3 relay starts at once).
+                LiveThrow next = d.Throws.FirstOrDefault(x => x.Thrower == th.Receiver && x.ReleaseTime > th.Catch.Time);
+                double held = th.Catch.Time + FieldingPlay.SecureTime + 0.1;
+                if (next != null) held = System.Math.Min(held, System.Math.Max(next.ReleaseTime - DefensivePlay.ArmAction - 0.15, th.Catch.Time + FieldingPlay.SecureTime));
+                At(held - t0);
                 Assert.Less(Vector3.Distance(_lab.Ball.position, receiver.GloveAnchor.position), 1e-4f, $"{name}: held by the receiver");
                 log.AppendLine($"{name}: hand {hand:0.000} m, receiver glove {glove:0.000} m");
             }
@@ -171,8 +177,8 @@ namespace Pitchlab.Tests
             foreach (string preset in new[] { "Routine fly: fly out", "3B grounder", "1B grounder: unassisted" })   // a catch; a throw (3B → 1B)
             {                                                                                                 // while the receiver secures it; a carry to the bag
                 FieldingPlay f = Launch(FieldingLabController.IndexOf(preset));
-                ThrowPlay th = _lab.DefensivePlay.Throw;
-                ContinuationMotion carry = _lab.DefensivePlay.Carry;
+                LiveThrow th = _lab.Team.Throws.FirstOrDefault();
+                ContinuationMotion carry = _lab.Team.Decisions.FirstOrDefault()?.Chosen.Carry;
                 double target = (th != null ? th.Catch.Time : carry != null ? carry.ArrivalTime - 0.1 : f.Intercept.Time) - f.Ball.First.Time + 0.15;
                 if (step > 0.0)
                     for (double t = 0.0; t < target; t += step) At(t);
@@ -199,8 +205,8 @@ namespace Pitchlab.Tests
                 ("1B grounder: unassisted", "OUT AT 1B"),
                 ("1B ranges right: safe at 1B", "SAFE AT 1B"),
                 ("Runner on 1B, grounder to SS", "OUT AT 2B"),
-                ("Runner on 1B, grounder to 2B", "OUT AT 1B"),
-                ("Bases loaded, grounder to 3B", "OUT AT 3B"),
+                ("Runner on 1B, grounder to 2B", "OUT AT 2B"),     // the lead runner (TASK-008)
+                ("Bases loaded, grounder to 3B", "OUT AT HOME"),   // the lead runner: 5-2
                 ("Routine fly: fly out", "FLY OUT"),
                 ("Runner on 2B runs: tag at 3B", "OUT AT 3B (tag)"),
             };
@@ -224,8 +230,8 @@ namespace Pitchlab.Tests
         {
             yield return null;
             FieldingPlay f = Launch(FieldingLabController.IndexOf("1B grounder: unassisted"));
-            Assert.IsNull(_lab.DefensivePlay.Throw, "no throw");
-            Assert.IsNotNull(_lab.DefensivePlay.Carry, "he runs it to the bag");
+            Assert.IsEmpty(_lab.Team.Throws, "no throw");
+            Assert.AreEqual(LiveActionKind.Carry, _lab.Team.Decisions[0].Chosen.Kind, "he runs it to the bag");
             PlayLogEntry e = _lab.Live.Log.Single(x => x.Kind == PlayLogKind.Out);
             double t0 = f.Ball.First.Time;
             At(e.Time - t0);
@@ -238,7 +244,7 @@ namespace Pitchlab.Tests
             for (double t = f.PossessionTime - 0.2; t < e.Time + 0.5; t += 0.05)
             {
                 At(t - t0);
-                Vector3 gameplay = SimulationSpace.ToUnity(_lab.DefensivePlay.FielderPositionAt(DefensivePosition.FirstBase, t));
+                Vector3 gameplay = SimulationSpace.ToUnity(_lab.Team.FielderPositionAt(DefensivePosition.FirstBase, t));
                 Assert.Less(Vector3.Distance(Flat(first.transform.position), Flat(gameplay)), 1e-4f, $"+{t - t0:0.00}");
             }
         }
@@ -249,15 +255,15 @@ namespace Pitchlab.Tests
             yield return null;
             int sc = FieldingLabController.IndexOf("SS routine grounder: out at 1B");
             _lab.UseOverride = true;
-            _lab.TargetOverride = Base.Home;
+            _lab.TargetOverride = null;   // hold the ball
             Launch(sc);
-            Assert.AreEqual("override", _lab.Rules.Reason);
-            Assert.AreEqual(Base.Home, _lab.Rules.Chosen.Target);
+            Assert.AreEqual("override", _lab.Team.Decisions[0].Reason);
+            Assert.AreEqual(LiveActionKind.Hold, _lab.Team.Decisions[0].Chosen.Kind);
             _now += 100.0;
             _launch = _now;
             _lab.SelectScenario(sc);
-            Assert.AreEqual("earliest force out", _lab.Rules.Reason, "a new scenario is the defense's own decision");
-            Assert.AreEqual(Base.First, _lab.Rules.Chosen.Target);
+            Assert.AreEqual("force out on the lead runner", _lab.Team.Decisions[0].Reason, "a new scenario is the defense's own decision");
+            Assert.AreEqual(Base.First, _lab.Team.Decisions[0].Chosen.Target);
         }
 
         [UnityTest]
@@ -310,16 +316,16 @@ namespace Pitchlab.Tests
             yield return null;
             int sc = FieldingLabController.IndexOf("SS routine grounder: out at 1B");
             FieldingPlay first = Launch(sc);
-            At(_lab.DefensivePlay.Throw.Catch.Time - first.Ball.First.Time + 0.5);   // after the throw has been caught
+            At(_lab.Team.Throws[0].Catch.Time - first.Ball.First.Time + 0.5);   // after the throw has been caught
             Assert.AreEqual("OUT AT 1B", _lab.ResultText);
-            RulesPlay rules = _lab.Rules;
+            LivePlay rules = _lab.Live;
             FieldingPlay again = Launch(sc);
             Assert.AreNotSame(first, again);
-            Assert.AreNotSame(rules, _lab.Rules, "a new play has its own rules state");
+            Assert.AreNotSame(rules, _lab.Live, "a new play has its own state");
             At(0.0);
             Assert.AreEqual("", _lab.ResultText, "no call carried over");
             Assert.AreEqual(0, _lab.Live.Log.Count(x => x.Kind == PlayLogKind.Out && x.Time <= again.Ball.First.Time));
-            Assert.AreEqual(BallAuthority.FreeBall, _lab.DefensivePlay.AuthorityAt(again.Ball.First.Time));
+            Assert.AreEqual(BallAuthority.FreeBall, _lab.Team.AuthorityAt(again.Ball.First.Time));
             Vector3 contact = SimulationSpace.ToUnity(FieldingLabController.ContactPoint);
             Assert.Less(Vector3.Distance(_lab.Ball.position, contact), 1e-3f, "ball back at the plate");
             foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))

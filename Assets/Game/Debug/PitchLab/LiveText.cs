@@ -45,7 +45,6 @@ namespace Pitchlab.Sandbox
                 text.AppendLine($"  {r.Id}: {state}{(play.ForcedAt(r, time) ? " (forced)" : "")}");
             }
 
-            text.AppendLine(RulesText.Report(play.Rules, time).Split('\n').FirstOrDefault(l => l.StartsWith("chosen")) ?? "");
             foreach (PlayLogEntry e in play.Log.Where(e => e.Time <= time && e.Kind != PlayLogKind.Decision))
                 text.AppendLine($"  +{e.Time - t0:0.00} {e.Text}");
             return text.ToString();

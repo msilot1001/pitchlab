@@ -108,10 +108,8 @@ namespace Pitchlab.Sandbox
         public FieldingPlay Fielding { get; private set; }
         /// <summary>The live play (runners, defense, events, outs, runs).</summary>
         public LivePlay Live { get; private set; }
-        /// <summary>The defense's decision at contact: candidates and the chosen action.</summary>
-        public RulesPlay Rules => Live?.Rules;
-        /// <summary>The chosen action's defensive play: the ball's authority at every instant.</summary>
-        public DefensivePlay DefensivePlay => Live?.Defense;
+        /// <summary>The live defense: roles, motions, the ball's authority at every instant, throws, decisions.</summary>
+        public LiveDefense Team => Live?.Defense;
         public RunnerView Runners => _runners;
         private static readonly (Key, Base?)[] ThrowKeys = { (Key.Z, Base.First), (Key.X, Base.Second), (Key.C, Base.Third), (Key.V, Base.Home), (Key.N, null) };
         /// <summary>Action override (debug controls Z/X/C/V = throw to 1B/2B/3B/home, N = hold, B = the defense's decision).</summary>
@@ -164,9 +162,9 @@ namespace Pitchlab.Sandbox
             BallInPlay play = BallInPlaySimulation.Run(Presets[i].Launch.ToState(ContactPoint), EnvironmentState.Standard, FieldLayout.Standard);
             FieldingPlay fielding = FieldingSolver.Solve(play);
             Scenario sc = Presets[i];
-            Func<IReadOnlyList<DefensiveAction>, DefensiveAction> choose = null;
-            if (UseOverride) choose = cs => Override(cs, fielding, TargetOverride);
-            else if (sc.TagAt is Base tagAt) choose = cs => cs.First(a => a.Kind == DefensiveActionKind.TagRunner && a.Target == tagAt && a.Play.Throw != null);
+            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null;
+            if (UseOverride) choose = cs => Override(cs, TargetOverride);
+            else if (sc.TagAt is Base tagAt) choose = cs => cs.FirstOrDefault(a => a.Kind == LiveActionKind.Throw && a.Target == tagAt) ?? cs[0];
             // The live play (TASK-007) with real runners, resolved at once: every motion keeps its history, so it renders
             // exactly at any later time.
             var live = new LivePlay(fielding, new Situation(sc.Outs, sc.Bases), null, choose,
@@ -191,11 +189,10 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>Debug override: throw to <paramref name="target"/> (the play on a runner there if there is one), or hold.</summary>
-        private static DefensiveAction Override(IReadOnlyList<DefensiveAction> candidates, FieldingPlay fielding, Base? target)
+        private static LiveAction Override(IReadOnlyList<LiveAction> candidates, Base? target)
         {
-            if (target == null) return candidates.First(a => a.Kind == DefensiveActionKind.HoldBall);
-            return candidates.FirstOrDefault(a => a.Target == target && a.Play.Throw != null)
-                   ?? DefensiveDecision.ThrowTo(fielding, ThrowPlanner.Plan(fielding, target), target.Value);
+            if (target == null) return candidates[0];   // hold
+            return candidates.FirstOrDefault(a => a.Kind == LiveActionKind.Throw && a.Target == target && a.Throw != null) ?? candidates[0];
         }
 
         /// <summary>Playback speed; the play continues from where it is (no jump in play time).</summary>
@@ -241,9 +238,9 @@ namespace Pitchlab.Sandbox
         {
             if (Play == null) return;
             double t = PlayTime;
-            _ball.position = SimulationSpace.ToUnity(DefensivePlay.BallPositionAt(t));
-            _trail.emitting = DefensivePlay.AuthorityAt(t) != BallAuthority.Possessed;
-            _defense.Show(DefensivePlay, t, _ball, _debug);
+            _ball.position = SimulationSpace.ToUnity(Team.BallPositionAt(t));
+            _trail.emitting = Team.AuthorityAt(t) != BallAuthority.Possessed;
+            _defense.Show(Team, t, _ball, _debug);
             _runners.Show(Live, t);
             _camera.FollowAlso(_defense.Focus);
         }
@@ -263,8 +260,8 @@ namespace Pitchlab.Sandbox
                 BattedBallLaunch l = Presets[PresetIndex].Launch;
                 text.AppendLine($"\n{l.ExitSpeedMph:0} mph · {l.LaunchAngleDegrees:+0;-0}° · spray {l.SprayAngleDegrees:+0;-0}° · spin {l.BackspinRpm:0} rpm · {_speed:0.0}×");
                 text.AppendLine(Report(Fielding));
-                text.Append(RulesText.Report(Rules, PlayTime).Split(new[] { "chosen:" }, StringSplitOptions.None)[0]);
                 text.Append(LiveText.Report(Live, PlayTime));
+                text.Append(LiveDefenseText.Decisions(Team, PlayTime, Live.ContactTime));
             }
 
             GUI.Label(new Rect(10f, 10f, 420f, 640f), text.ToString(), _style);
