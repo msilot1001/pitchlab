@@ -257,6 +257,34 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void EveryBaseHasOneCovererThroughoutThePlay()
+        {
+            // Home, second and third always have exactly one coverer; first too, except on a relayed deep ball when the first
+            // baseman has gone (the batter-runner is past it). A deep ball with a play at home sends the far outfielder to second.
+            bool deepHome = false;
+            foreach (LivePlay play in AllPlays().Concat(new[] { GapBall(OnSecond, 2), WallBall(new BaseOccupancy(true, true, false)) }))
+                for (double t = play.ContactTime + 0.01; t < play.EndTime; t += 0.05)
+                {
+                    RoleAssignment[] roles = play.Defense.RolesAt(t);
+                    bool relay = roles.Any(r => r.Role == DefensiveRole.Relay) || play.Defense.Throws.Any(x => x.Target == null && x.ReleaseTime <= t && roles[(int)x.Receiver].Role == DefensiveRole.Primary);
+                    foreach (Base b in new[] { Base.First, Base.Second, Base.Third, Base.Home })
+                    {
+                        int n = roles.Count(r => r.Role == DefensiveRole.CoverBase && r.At == b);
+                        if (b == Base.First && relay) Assert.LessOrEqual(n, 1, $"{b} at +{t - play.ContactTime:0.00}");
+                        else Assert.AreEqual(1, n, $"{play.Fielding.Primary} play: {b} at +{t - play.ContactTime:0.00}");
+                    }
+
+                    if (roles.Any(r => r.Role == DefensiveRole.Relay && r.At == Base.Home))
+                    {
+                        deepHome = true;
+                        Assert.IsTrue(DefensiveDecision.IsOutfielder(roles.First(r => r.Role == DefensiveRole.CoverBase && r.At == Base.Second).Position), "an outfielder covers second");
+                    }
+                }
+
+            Assert.IsTrue(deepHome, "a relay home was exercised");
+        }
+
+        [Test]
         public void ThrowsAreTakenOnCoveredBases()
         {
             // Every throw to a base is caught by a fielder on the bag, or he carries it onto the bag at once.

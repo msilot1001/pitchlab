@@ -124,10 +124,12 @@ namespace Pitchlab.Gameplay.Play
             void Set(DefensivePosition p, DefensiveRole role, Base? at, Vector3d point)
             {
                 if (taken[(int)p]) return;
+                if (role == DefensiveRole.CoverBase && Covered(at.Value)) return;   // one per base
                 roles[(int)p] = new RoleAssignment(p, role, at, point);
                 taken[(int)p] = true;
             }
 
+            bool Covered(Base b) => Array.Exists(roles, r => r.Role == DefensiveRole.CoverBase && r.At == b);
             Set(player, DefensiveRole.Primary, null, s.BallPoint);
             Vector3d ball = s.BallPoint;
             bool leftSide = ball.X < 0.0;
@@ -194,7 +196,7 @@ namespace Pitchlab.Gameplay.Play
             void CoverSecond()
             {
                 foreach (DefensivePosition p in secondOrder)
-                    if (!taken[(int)p])
+                    if (!taken[(int)p] && !Covered(Base.Second))
                     {
                         Set(p, DefensiveRole.CoverBase, Base.Second, Bag(Base.Second));
                         break;
@@ -208,7 +210,7 @@ namespace Pitchlab.Gameplay.Play
                 foreach (DefensivePosition p in infieldBall && player == DefensivePosition.FirstBase
                              ? new[] { DefensivePosition.P }
                              : new[] { DefensivePosition.FirstBase, DefensivePosition.SecondBase })
-                    if (!taken[(int)p])
+                    if (!taken[(int)p] && !Covered(Base.First))
                     {
                         Set(p, DefensiveRole.CoverBase, Base.First, Bag(Base.First));
                         break;
@@ -226,9 +228,19 @@ namespace Pitchlab.Gameplay.Play
                 CoverFirst();
             }
 
+            // Second still open (a deep ball with a play at home: SS relay, 2B trail, 1B home cut-off): the outfielder farthest
+            // from the ball goes to second [S]. First stays open on such a ball (the batter-runner is past it) [S].
+            if (!Covered(Base.Second))
+            {
+                DefensivePosition? far = null;
+                foreach (DefensivePosition of in new[] { DefensivePosition.LeftField, DefensivePosition.CenterField, DefensivePosition.RightField })
+                    if (!taken[(int)of] && (far == null || (alignment[of] - ball).Length > (alignment[far.Value] - ball).Length)) far = of;
+                if (far is DefensivePosition f) Set(f, DefensiveRole.CoverBase, Base.Second, Bag(Base.Second));
+            }
+
             // Third: the third baseman, else the shortstop, else the pitcher.
             foreach (DefensivePosition p in new[] { DefensivePosition.ThirdBase, DefensivePosition.Shortstop, DefensivePosition.P })
-                if (!taken[(int)p])
+                if (!taken[(int)p] && !Covered(Base.Third))
                 {
                     Set(p, DefensiveRole.CoverBase, Base.Third, Bag(Base.Third));
                     break;

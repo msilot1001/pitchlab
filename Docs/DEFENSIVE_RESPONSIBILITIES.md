@@ -49,6 +49,7 @@ There is no single universal coverage chart. This is a defensible generic system
 - **[S] Trail:** the other middle infielder, about 9 m (30 ft) behind the relay, in the same line.
 - **Covers:**
   - **[S]** 1B trails the batter-runner to cover second (bases empty / no play at home); with a play at home he is the cut-off for home in line from the relay (**[S]**), and the 2B — if he is not the relay or trail — covers first;
+  - **[S]** with SS relay, 2B trail and 1B the home cut-off, the outfielder farthest from the ball covers second; first is left open (the batter-runner is past it);
   - **[S]** 3B covers third;
   - **[S]** C covers home;
   - **[S]** P backs up third or home, whichever is the play.
@@ -75,6 +76,7 @@ There is no single universal coverage chart. This is a defensible generic system
   - The cut-off man, holding the ball, then makes his own decision: relay to the base, or a better base, or hold.
 - **Relay:** a deep ball (fielded beyond 92 m ≈ 300 ft from home, past the outfielders' normal depth) is relayed. The relay man goes out on the line, and his throw is a second, real throw.
 - **A throw on its way:** its receiver keeps his job (the base he covers, or the cut-off spot) when the roles are recomputed; nobody else is sent to that base.
+- **One coverer per base, always** (checked at every reassignment by the tests); only first may be open, on a relayed deep ball.
 - **Not modelled [I]:** throwing errors. Every planned throw is catchable, so an off-the-bag catch (the receiver then carries the ball to the bag) and a missed throw (the nearest fielder retrieves it) are handled but do not occur in practice.
 
 ## Sources

@@ -587,13 +587,22 @@ namespace Pitchlab.Gameplay.Fielding
             DefensivePosition receiver, FielderTrack receiverTrack, double onPoint, Vector3d point, Base? target,
             EnvironmentState environment, FieldLayout field)
         {
+            // The throw is followed for twice its straight-line time plus 2 s (a catch, or a hop, is well inside); a throw that
+            // is not caught is planned again on its whole flight, so its retrieval sees the real ball.
+            Vector3d from = throwerTrack.PositionAt(ready);
+            double horizon = 2.0 * new Vector3d(point.X - from.X, point.Y - from.Y, 0.0).Length / arm.Speed + 2.0;
+            LiveThrow th = PlanLive(thrower, throwerTrack, ready, arm, receiver, receiverTrack, onPoint, point, target, environment, field, horizon);
+            return th.Caught ? th : PlanLive(thrower, throwerTrack, ready, arm, receiver, receiverTrack, onPoint, point, target, environment, field, BallInPlaySimulation.MaxPlayTime);
+        }
+
+        private static LiveThrow PlanLive(DefensivePosition thrower, FielderTrack throwerTrack, double ready, ThrowProfile arm,
+            DefensivePosition receiver, FielderTrack receiverTrack, double onPoint, Vector3d point, Base? target,
+            EnvironmentState environment, FieldLayout field, double horizon)
+        {
             var aim = new Vector3d(point.X, point.Y, TargetHeight);
             double release = ready;
             Vector3d releasePoint = ReleaseFrom(throwerTrack.PositionAt(release), point, arm);
             BallState launch = ThrowSolver.Launch(releasePoint, aim, arm.Speed, release, environment, out bool reaches);
-            // ponytail: the throw is followed for twice its straight-line time plus 2 s (a catch, or a hop, is well inside); a
-            // missed throw's retrieval past that sees the ball stop there. Lengthen if throwing errors are modelled.
-            double horizon = 2.0 * new Vector3d(aim.X - releasePoint.X, aim.Y - releasePoint.Y, 0.0).Length / arm.Speed + 2.0;
             BallInPlay flight = BallInPlaySimulation.Run(launch, environment, field, ThrowSolver.Aerodynamics, horizon);
             for (int i = 0; i < 4; i++)
             {

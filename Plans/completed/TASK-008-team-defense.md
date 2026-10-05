@@ -34,7 +34,8 @@ All nine defenders act during a live ball. One primary fielder plays the ball, a
 - [x] DefenseView on the timeline; role overlay; labs.
 - [x] Tests (roles for the listed scenarios, no swarm, coverage before a throw, reassignment, cut-off, relay).
 - [x] Reviews (rules, Unity, tests) and fixes.
-- [ ] check.sh; Codex; merge.
+- [x] check.sh; Codex review (B: deep ball with a play at home left second uncovered → far outfielder covers it, one coverer per base enforced and tested at every reassignment; missed throws replanned on their whole flight).
+- [x] merge (--no-ff).
 
 ## Verification
 - EditMode 504/510 (6 skipped, pre-existing); TeamDefenseTests 16/16; BaserunningTests 18/18 (frame-schedule test now also
