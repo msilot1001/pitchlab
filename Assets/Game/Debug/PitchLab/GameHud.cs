@@ -9,13 +9,36 @@ namespace Pitchlab.Sandbox
 {
     /// <summary>
     /// The GameLab's game HUD (TASK-015): a generic scorebug (innings, score, outs, count, bases), the batter, a brief
-    /// result call, the plate appearance's pitches with a strike-zone plot, and an optional game log (L). Presentation only:
+    /// result call, the plate appearance's pitches with a strike-zone plot, and an optional game log (V). Presentation only:
     /// everything is read from <see cref="GameState"/> and the batting loop — nothing here decides a ball, a strike, a run
     /// or an out. The view model is rebuilt only when what it shows changes (no per-frame strings).
     /// </summary>
     public sealed class GameHud : MonoBehaviour
     {
         private HittingLabController _lab;
+
+        /// <summary>The batting loop it reads (set by the GameLab panel; found in the scene otherwise).</summary>
+        public HittingLabController Lab { get => _lab; set => _lab = value; }
+
+        /// <summary>A pitch's crossing in the zone plot: where the flight crossed (recorded), never the aim.</summary>
+        public readonly struct PlotPoint
+        {
+            public PlotPoint(int number, double x, double z, PitchOutcome outcome)
+            {
+                Number = number;
+                X = x;
+                Z = z;
+                Outcome = outcome;
+            }
+
+            public int Number { get; }
+            public double X { get; }
+            public double Z { get; }
+            public PitchOutcome Outcome { get; }
+        }
+
+        public IReadOnlyList<PlotPoint> Plot => _plot;
+        private readonly List<PlotPoint> _plot = new List<PlotPoint>();
 
         // ------------------------------------------------------------------ view model (read by tests)
 
@@ -45,11 +68,21 @@ namespace Pitchlab.Sandbox
         private readonly List<string> _events = new List<string>();
         private (GameState Game, int Version, PlateAppearance Shown, string Flash) _built;
 
-        private void Awake() => _lab = FindFirstObjectByType<HittingLabController>();
+        private void Awake()
+        {
+            if (_lab == null) _lab = FindFirstObjectByType<HittingLabController>();
+            useGUILayout = false;   // no GUILayout here: skip the layout pass
+        }
 
         private void Update()
         {
-            if (Keyboard.current != null && Keyboard.current.lKey.wasPressedThisFrame) ShowLog = !ShowLog;
+            if (Keyboard.current != null && Keyboard.current.vKey.wasPressedThisFrame) ShowLog = !ShowLog;   // (L aims the pitch)
+        }
+
+        /// <summary>Once per frame, after the loop has rendered it.</summary>
+        private void LateUpdate()
+        {
+            if (_lab != null) Refresh(_lab.RenderedRealtime);
         }
 
         /// <summary>Brings the view model up to date with the game at real time <paramref name="realtime"/>.</summary>
@@ -88,7 +121,19 @@ namespace Pitchlab.Sandbox
             Strikes = g.Count.Strikes;
             Bases = g.Bases;
             PlateAppearance at = g.Current;
+            // Until the loop is ready the shown plate appearance's batter is still at the plate (the one the call is about),
+            // with his last count; then the next batter at 0–0.
+            if (!ReferenceEquals(shown, g.Current)) at = shown;
             BatterText = $"#{at.Slot}  {at.Batter.Name}  ({(at.Batter.Bats == BatterSide.Left ? "L" : "R")})";
+            if (shown.IsComplete && shown.Pitches.Count > 0)
+            {
+                Count final = shown.Pitches[shown.Pitches.Count - 1].Before;
+                (Balls, Strikes) = (final.Balls, final.Strikes);
+            }
+
+            _plot.Clear();
+            foreach (PitchEvent p in shown.Pitches)
+                if (!double.IsNaN(p.Info.PlateX)) _plot.Add(new PlotPoint(p.Number, p.Info.PlateX, p.Info.PlateZ, p.Outcome));
             HistoryTitle = $"PA {shown.Number}  ·  #{shown.Slot} {shown.Batter.Name}";
             _history.Clear();
             foreach (PitchEvent p in shown.Pitches)
@@ -112,13 +157,16 @@ namespace Pitchlab.Sandbox
         {
             PlateAppearanceEnd.Walk => "WALK",
             PlateAppearanceEnd.Strikeout => "STRIKEOUT",
-            PlateAppearanceEnd.InPlay => pa.PlayResult is PlayResultKind k ? PlayResults.Describe(k).ToUpperInvariant() : "IN PLAY",
+            PlateAppearanceEnd.InPlay => pa.PlayResult is PlayResultKind k ? PlayResults.DescribeUpper(k) : "IN PLAY",
             _ => string.Empty,
         };
 
         private static string Short(string label) => label.EndsWith("-like") ? label.Substring(0, label.Length - 5) : label;
 
         // ------------------------------------------------------------------ drawing
+
+        /// <summary>The HUD's bottom panels end this far (px) above the screen's bottom: above the play banner and result line.</summary>
+        public const float Band = 78f;
 
         private GUIStyle _small, _big, _score, _flash;
         private static readonly string[] Numbers = { "", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20" };
@@ -128,7 +176,6 @@ namespace Pitchlab.Sandbox
         private void OnGUI()
         {
             if (_lab == null || _lab.Game == null) return;
-            Refresh(_lab.RenderedRealtime);
             if (_small == null)
             {
                 _small = new GUIStyle(GUI.skin.label) { fontSize = 12, normal = { textColor = Color.white } };
@@ -137,12 +184,12 @@ namespace Pitchlab.Sandbox
                 _flash = new GUIStyle(GUI.skin.label) { fontSize = 30, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
             }
 
-            DrawScorebug(new Rect(12f, Screen.height - 146f, 300f, 134f));
+            DrawScorebug(new Rect(12f, Screen.height - Band - 134f, 300f, 134f));
             if (Flash.Length > 0) GUI.Label(new Rect(Screen.width * 0.5f - 250f, 54f, 500f, 44f), Flash, _flash);
             float right = Screen.width - 12f;
             if (History.Count > 0)
             {
-                var box = new Rect(right - 240f, Screen.height - 40f - (24f + 17f * History.Count), 240f, 24f + 17f * History.Count);
+                var box = new Rect(right - 240f, Screen.height - Band - (24f + 17f * History.Count), 240f, 24f + 17f * History.Count);
                 Fill(box, Panel);
                 GUI.Label(new Rect(box.x + 8f, box.y + 3f, 230f, 18f), HistoryTitle, _small);
                 for (int i = 0; i < History.Count; i++) GUI.Label(new Rect(box.x + 8f, box.y + 21f + 17f * i, 230f, 18f), History[i], _small);
@@ -151,7 +198,7 @@ namespace Pitchlab.Sandbox
 
             if (ShowLog && EventLog.Count > 0)
             {
-                var log = new Rect(12f, Screen.height - 150f - (10f + 17f * EventLog.Count), 300f, 10f + 17f * EventLog.Count);
+                var log = new Rect(12f, Screen.height - Band - 140f - (10f + 17f * EventLog.Count), 300f, 10f + 17f * EventLog.Count);
                 Fill(log, Panel);
                 for (int i = 0; i < EventLog.Count; i++) GUI.Label(new Rect(log.x + 8f, log.y + 4f + 17f * i, 290f, 18f), EventLog[i], _small);
             }
@@ -199,11 +246,11 @@ namespace Pitchlab.Sandbox
             Vector2 P(double x, double z) => new Vector2(r.x + (float)((x - x0) / (x1 - x0)) * r.width, r.yMax - (float)((z - z0) / (z1 - z0)) * r.height);
             Vector2 a = P(-StrikeZone.HalfWidth, batter.ZoneTop), b = P(StrikeZone.HalfWidth, batter.ZoneBottom);
             Outline(Rect.MinMaxRect(a.x, a.y, b.x, b.y), new Color(1f, 1f, 1f, 0.6f));
-            for (int i = 0; i < Shown.Pitches.Count; i++)
+            for (int i = 0; i < _plot.Count; i++)
             {
-                PitchEvent p = Shown.Pitches[i];
-                if (double.IsNaN(p.Info.PlateX)) continue;
-                Vector2 at = P(p.Info.PlateX, p.Info.PlateZ);
+                PlotPoint p = _plot[i];
+                Vector2 at = P(p.X, p.Z);
+                if (!r.Contains(at)) continue;   // a wild pitch: off the chart
                 Color c = p.Outcome == PitchOutcome.Ball ? BallColor : p.Outcome == PitchOutcome.Foul ? FoulColor : p.Outcome == PitchOutcome.InPlay ? PlayColor : StrikeColor;
                 Fill(new Rect(at.x - 5f, at.y - 5f, 10f, 10f), c);
                 if (p.Number < Numbers.Length) GUI.Label(new Rect(at.x + 5f, at.y - 9f, 20f, 16f), Numbers[p.Number], _small);

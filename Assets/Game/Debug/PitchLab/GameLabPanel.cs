@@ -14,11 +14,13 @@ namespace Pitchlab.Sandbox
     public sealed class GameLabPanel : MonoBehaviour
     {
         [SerializeField] private HittingLabController _lab;
-        [SerializeField] private bool _showEditor = true;
+        [SerializeField] private bool _showEditor;
 
         private void Awake()
         {
-            if (GetComponent<GameHud>() == null) gameObject.AddComponent<GameHud>();
+            GameHud hud = GetComponent<GameHud>();
+            if (hud == null) hud = gameObject.AddComponent<GameHud>();
+            if (_lab != null) hud.Lab = _lab;
         }
 
         private void OnEnable()
@@ -99,8 +101,5 @@ namespace Pitchlab.Sandbox
             for (int i = Mathf.Max(0, game.Log.Count - 3); i < game.Log.Count; i++) GUILayout.Label(game.Log[i]);
             GUILayout.EndArea();
         }
-
-        private static string Bases(BaseOccupancy b) =>
-            b.First || b.Second || b.Third ? $"{(b.Third ? "3" : "-")}{(b.Second ? "2" : "-")}{(b.First ? "1" : "-")}" : "empty";
     }
 }

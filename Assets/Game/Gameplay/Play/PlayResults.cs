@@ -1,4 +1,5 @@
 using System;
+using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Running;
 using Pitchlab.Simulation.Core;
@@ -28,7 +29,9 @@ namespace Pitchlab.Gameplay.Play
     /// <summary>
     /// A plain description of a finished fair-ball play from its authoritative record — the award, the rules events (outs,
     /// on whom), the batter-runner's last base, the runs and the ball's launch angle. Descriptive, not official scoring: no
-    /// errors or scorer's judgement (OBR 9.x), and a hit is credited by where the batter ended up.
+    /// errors or scorer's judgement (OBR 9.x): a hit is credited by where the batter ended up (an advance on a throw counts
+    /// as part of it), a double or triple play is labelled as such even when the batter also hit or a run scored on a fly,
+    /// and a failed attempt on another runner is not a fielder's choice.
     /// </summary>
     public static class PlayResults
     {
@@ -48,31 +51,47 @@ namespace Pitchlab.Gameplay.Play
             if (outs >= 3) return PlayResultKind.TriplePlay;
             if (outs == 2) return PlayResultKind.DoublePlay;
 
-            PlayEvent? batterOut = null;
+            LiveRunner batter = play.RunnerOf(Runner.Batter) ?? throw new InvalidOperationException("A fair ball has a batter-runner.");
+            PlayEvent? batterOut = null, otherOut = null;
             foreach (PlayEvent e in play.RulesEvents)
-                if (e.IsOut && e.Runner.IsBatter) batterOut = e;
+                if (e.IsOut)
+                {
+                    if (e.Runner.IsBatter) batterOut = e;
+                    else otherOut = e;
+                }
 
             if (batterOut is PlayEvent o)
             {
-                if (o.Kind != PlayEventKind.FlyOut) return PlayResultKind.Groundout;
-                // A fly caught with fewer than two out on which a runner scores (OBR 9.08(d)).
-                if (play.Situation.Outs < 2 && play.Runs > 0) return PlayResultKind.SacrificeFly;
-                double angle = LaunchAngle(play);
-                return angle < LineDriveAngle ? PlayResultKind.LineOut : angle > PopUpAngle ? PlayResultKind.PopOut : PlayResultKind.FlyOut;
+                if (o.Kind == PlayEventKind.FlyOut)
+                {
+                    // A fly an outfielder caught with fewer than two out, on which a runner scores (OBR 9.08(d)).
+                    if (play.Situation.Outs < 2 && play.Runs > 0 && DefensiveDecision.IsOutfielder(play.Fielding.Primary.Value)) return PlayResultKind.SacrificeFly;
+                    double angle = LaunchAngle(play);
+                    return angle < LineDriveAngle ? PlayResultKind.LineOut : angle > PopUpAngle ? PlayResultKind.PopOut : PlayResultKind.FlyOut;
+                }
+
+                // Put out after reaching a base (stretching a hit): credited with the bases he reached (OBR 9.06(d)).
+                return batter.LastTouched == Base.Home ? PlayResultKind.Groundout : Hit(batter.LastTouched);
             }
 
-            // The batter reached: a fielder's choice if the defense retired another runner on a ground ball instead.
-            if (outs == 1 && play.Kind == LivePlay.BallKind.Grounder) return PlayResultKind.FieldersChoice;
-            LiveRunner batter = play.RunnerOf(Runner.Batter);
-            if (batter == null) return PlayResultKind.Single;
-            if (batter.HasScored) return PlayResultKind.InsideTheParkHomeRun;
-            return batter.LastTouched switch
-            {
-                Base.Third => PlayResultKind.Triple,
-                Base.Second => PlayResultKind.Double,
-                _ => PlayResultKind.Single,
-            };
+            // The batter reached first while the defense retired another runner on a grounder or by a force: a fielder's
+            // choice, not a hit (OBR 9.05(b)(1), Definitions "Fielder's Choice").
+            if (otherOut is PlayEvent other && batter.LastTouched == Base.First && (play.Kind == LivePlay.BallKind.Grounder || other.Kind == PlayEventKind.ForceOut))
+                return PlayResultKind.FieldersChoice;
+            return batter.HasScored ? PlayResultKind.InsideTheParkHomeRun : Hit(batter.LastTouched);
         }
+
+        private static PlayResultKind Hit(Base reached) => reached switch
+        {
+            Base.Third => PlayResultKind.Triple,
+            Base.Second => PlayResultKind.Double,
+            _ => PlayResultKind.Single,
+        };
+
+        private static readonly string[] Upper = Array.ConvertAll((PlayResultKind[])Enum.GetValues(typeof(PlayResultKind)), k => Describe(k).ToUpperInvariant());
+
+        /// <summary><see cref="Describe"/> in capitals (cached: no allocation).</summary>
+        public static string DescribeUpper(PlayResultKind kind) => Upper[(int)kind];
 
         public static string Describe(PlayResultKind kind) => kind switch
         {

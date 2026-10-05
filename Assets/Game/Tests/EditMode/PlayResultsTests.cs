@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
@@ -36,9 +37,14 @@ namespace Pitchlab.Tests
         [TestCase(0, "1", 60.0, -20.0, -40.0, -1000.0, PlayResultKind.FieldersChoice)]
         [TestCase(0, "1", 60.0, -8.0, 15.0, -1000.0, PlayResultKind.DoublePlay)]
         [TestCase(1, "3", 90.0, 18.0, -15.0, 1800.0, PlayResultKind.SacrificeFly)]
+        [TestCase(1, "3", 85.0, 20.0, -30.0, 1800.0, PlayResultKind.SacrificeFly)]
+        [TestCase(2, "3", 55.0, 28.0, -30.0, 1800.0, PlayResultKind.FlyOut)]           // two out: no sacrifice fly
+        [TestCase(2, "", 95.0, 12.0, -42.0, 1800.0, PlayResultKind.Single)]           // thrown out stretching: still a single
+        [TestCase(1, "2", 70.0, 12.0, -30.0, 1800.0, PlayResultKind.Single)]          // runner thrown out, not forced: a hit
+        [TestCase(1, "123", 85.0, 20.0, -30.0, 1800.0, PlayResultKind.DoublePlay)]    // caught, a run scores, a runner doubled off
         public void ThePlayIsDescribedFromItsRecord(int outs, string on, double mph, double launch, double spray, double spin, PlayResultKind expected)
         {
-            BaseOccupancy bases = on == "1" ? R1 : on == "3" ? R3 : Empty;
+            var bases = new BaseOccupancy(on.Contains("1"), on.Contains("2"), on.Contains("3"));
             LivePlay play = Play(outs, bases, mph, launch, spray, spin);
             PlayResultKind kind = PlayResults.Classify(play);
             Assert.AreEqual(expected, kind);
@@ -47,7 +53,11 @@ namespace Pitchlab.Tests
             {
                 case PlayResultKind.HomeRun: Assert.AreEqual(4, play.AwardedBases); break;
                 case PlayResultKind.DoublePlay: Assert.AreEqual(2, play.OutsMade); break;
-                case PlayResultKind.Single: Assert.AreEqual(Base.First, play.RunnerOf(Runner.Batter).LastTouched); break;
+                case PlayResultKind.Single:
+                    Assert.AreEqual(Base.First, play.RunnerOf(Runner.Batter).LastTouched);
+                    if (play.OutsMade == 1 && !play.RunnerOf(Runner.Batter).IsOut)
+                        Assert.IsTrue(play.RulesEvents.Any(e => e.IsOut && e.Kind != PlayEventKind.ForceOut), "the other runner's out is not a force");
+                    break;
                 case PlayResultKind.Double: Assert.AreEqual(Base.Second, play.RunnerOf(Runner.Batter).LastTouched); break;
                 case PlayResultKind.SacrificeFly: Assert.AreEqual((1, 1), (play.Runs, play.OutsMade)); break;
                 case PlayResultKind.FieldersChoice:
@@ -57,6 +67,29 @@ namespace Pitchlab.Tests
                 case PlayResultKind.LineOut: Assert.Less(PlayResults.LaunchAngle(play), PlayResults.LineDriveAngle); break;
                 case PlayResultKind.PopOut: Assert.Greater(PlayResults.LaunchAngle(play), PlayResults.PopUpAngle); break;
             }
+        }
+
+        [Test]
+        public void ADoublePlayOffACaughtFlyEvenWhenARunScores()
+        {
+            LivePlay play = Play(1, BaseOccupancy.Loaded, 85.0, 20.0, -30.0, 1800.0);
+            Assert.AreEqual(LivePlay.BallKind.Caught, play.Kind);
+            Assert.IsTrue(play.RunnerOf(Runner.Batter).IsOut, "the batter is out on the catch");
+            Assert.AreEqual((2, PlayResultKind.DoublePlay), (play.OutsMade, PlayResults.Classify(play)));
+        }
+
+        [Test]
+        public void PopUpsKeepRunnersAtTheBagButOutfieldFliesStillSendThemHalfway()
+        {
+            // A runner on third with one out does not leave on an infield pop-up …
+            LivePlay pop = Play(1, R3, 55.0, 60.0, -42.0, 3000.0);
+            Assert.IsFalse(DefensiveDecision.IsOutfielder(pop.Fielding.Primary.Value));
+            Assert.AreEqual((0, R3, 1), (pop.Runs, pop.ResultingBases(), pop.OutsMade));
+            Assert.IsFalse(pop.Log.Any(e => e.Text.Contains("halfway")));
+            // … while on a fly to an outfielder a runner on first still goes halfway (TASK-007 convention).
+            LivePlay fly = Play(0, R1, 70.0, 30.0, -20.0, 1800.0);
+            Assert.IsTrue(DefensiveDecision.IsOutfielder(fly.Fielding.Primary.Value));
+            Assert.IsTrue(fly.Log.Any(e => e.Text.Contains("runner on 1B: halfway")));
         }
 
         [Test]
