@@ -32,11 +32,19 @@ Claude Code (sole writer); test-reviewer / rules reviewer and Codex read-only.
   away, and four out-of-zone spots) as a small release-angle aim offset so balls are possible. Not pitcher AI (TASK-014).
 
 ## Milestones
-- [ ] Rules: Count, PitchResult, StrikeZone, Walk + EditMode tests.
-- [ ] GameState count + plate-appearance ends + tests.
-- [ ] GameLab integration (result → game, HUD, location) + PlayMode test.
-- [ ] check.sh, reviews, Codex, merge.
+- [x] Rules: Count, PitchOutcome (renamed: Simulation already has a PitchResult), StrikeZone, Walk + EditMode tests.
+- [x] GameState count + plate-appearance ends + tests.
+- [x] GameLab integration (result → game, HUD, location) + PlayMode tests.
+- [x] check.sh (EditMode 567/573, 6 skipped; PlayMode 69/69); test + rules reviews (late swing after a counted take
+  ignored, RESET after an edit returns to 0–0, LivePlay.IsFoul shared, citations, added tests); Codex B (its one finding,
+  a "Color Color" compile error, does not occur — the project compiles and the walk tests run; call qualified for
+  clarity); merge.
+
+## Verification
+- Every preset at every location is called as aimed (CountTests); GameLab runtime: Ball low / Middle / Ball away / Ball in /
+  Ball high taken → 1–0, 1–1, 2–1, 3–1, walk to first.
 
 ## Not in scope / limitations
+- A swing-and-miss is counted when both the pitch and the swing are over (an early miss shows its banner slightly before).
 - No hit-by-pitch (no batter body), no check swing, no bunts, no catcher's catch (a foul tip is a foul; no dropped third
   strike), no intentional walk, no balk / wild pitch / stolen base.

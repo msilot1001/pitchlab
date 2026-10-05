@@ -133,7 +133,7 @@ namespace Pitchlab.Gameplay.Play
             switch (end)
             {
                 case PlateAppearanceEnd.Walk:
-                    BaseOccupancy walked = Count.Walk(Bases, out int runs);
+                    BaseOccupancy walked = Rules.Count.Walk(Bases, out int runs);
                     End("walk", runs, Outs, walked);
                     break;
                 case PlateAppearanceEnd.Strikeout:
