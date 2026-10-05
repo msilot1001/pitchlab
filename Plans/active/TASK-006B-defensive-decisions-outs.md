@@ -38,16 +38,52 @@ There is no continuous baserunning: TASK-007 replaces the runner timing placehol
 - **Labs:** FieldingLab gets rules scenarios, an occupancy, force and decision overlay, and OUT/SAFE text. HittingLab gets the result banner.
 
 ## Milestones
-- [ ] Continuation motion, the receiver continuity fix and its regression test; the thrower-settling regression test.
-- [ ] Rules model (runners, occupancy, forces, timing, events, actions, decision, resolver) with EditMode tests.
-- [ ] Unassisted touch in DefensivePlay; integration with FieldingLab and HittingLab; presentation; PlayMode tests.
+- [x] Continuation motion, the receiver continuity fix and its regression test; the thrower-settling regression test.
+- [x] Rules model (runners, occupancy, forces, timing, events, actions, decision, resolver) with EditMode tests.
+- [x] Unassisted touch in DefensivePlay; integration with FieldingLab and HittingLab; presentation; PlayMode tests.
 - [ ] Research and rules review, Unity and test reviewers, check.sh, runtime checks, Codex review, merge.
 
 ## Verification
-(filled in as it runs)
+- **check.sh:** EditMode 469 passed / 475 (6 skipped, unchanged), PlayMode 45/45.
+- **Console:** clean.
+- **Mutations:** each one is caught by the tests:
+  - ties go to the defense;
+  - no force removal;
+  - the receiver restarts from rest;
+  - no touch candidates;
+  - tag ranked before force;
+  - close window narrowed to 0.35 s;
+  - double-play flag without the lead out.
+- **Scenario table** (FieldingLab, Game View plus eval; times from contact):
+
+| Scenario | Bases | Chosen | Defense | Runner | Result |
+|---|---|---|---|---|---|
+| SS routine grounder | empty | Throw 1B | +3.48 | +4.28 | OUT AT 1B |
+| 1B ranges right | empty | Touch 1B (close play) | +4.39 | +4.28 | SAFE AT 1B |
+| 1B grounder | empty | Touch 1B, no throw | +2.08 | +4.28 | OUT AT 1B |
+| Runner on 1B, SS grounder | 1B | Throw 2B | +2.89 | +3.75 | OUT AT 2B |
+| Runner on 1B, 2B grounder | 1B | Throw 1B | +3.08 | +4.28 | OUT AT 1B |
+| Bases loaded, 3B grounder | loaded | Touch 3B | +2.64 | +3.75 | OUT AT 3B |
+| Routine fly | empty | Hold | +5.22 | — | FLY OUT |
+| Runner on 2B runs (scripted) | 2B | Tag at 3B (throw) | +2.99 | +3.75 | OUT AT 3B (tag) |
 
 ## Decisions / discoveries
-(filled in as it runs)
+- **Runner timing:** 4.28 s home to first (MEASURED); 3.75 s for one base with a lead (DERIVED).
+- **Ties:** a simultaneous arrival (within 1 ms) is SAFE. This is our reading of OBR "before"; MLB has no official ruling.
+- **Base touch:** the body centre within 0.6 m of the bag centre (ASSUMED).
+- **Tag reach:** 1.0 m (ASSUMED).
+- **Close-play window:** 0.5 s (ASSUMED).
+- **No natural infield hit:** across ~1,700 grid infield balls the idealized fielding never loses a race to first by itself. The SAFE scenario is the 1B ranging right, 0.11 s late.
+- **Receiver adjustment:** before, it restarted from rest (up to ~3.9 m/s lost instantly). It is now continuous (`ContinuationMotion`, which the intercept solver also uses).
+- **Carried tags:** they stop on the bag (Unity review). Force touches still cross it at speed.
+- **Third out:** it ends the play's events (rules review, OBR 5.09(d)).
+- **Batting-lab test premise:** the HittingLab test's "topped grounder" was a CF single. It now uses an on-time swing (an SS grounder) and keeps the single as a separate no-play test.
 
 ## Remaining risks
-(filled in at the end)
+- **Solve cost:** in the Editor, `PlayResolver.Resolve` takes ~90 ms with the bases empty (as in TASK-006A) and ~330 ms with them loaded, on the contact frame. One throw is planned per base.
+- **Not modelled:**
+  - running motion (TASK-007);
+  - tag-ups, double-play execution, run scoring, home-run awards, infield fly;
+  - a receiver returning to the bag after an off-bag catch;
+  - force reinstatement on retreat.
+- **Debug route:** `DefenseView` still draws the original fielding route during a carry.

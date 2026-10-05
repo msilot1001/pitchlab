@@ -467,9 +467,31 @@ namespace Pitchlab.Tests
             PlayerMannequin actor = _view.Defense.Figure(chosen.Actor);
             Assert.Less(Vector3.Distance(_lab.BallTransform.position, actor.GloveAnchor.position), 1e-4f, "ball in the glove of the defender who made the out");
             StringAssert.Contains($"by {HittingLabPresentation.Abbreviation(f.Primary.Value)}", _view.Banner);
-            if (chosen.Play.Throw is ThrowPlay th) StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target)} ✓", _view.Banner);
+            ThrowPlay th = chosen.Play.Throw;
+            Assert.IsNotNull(th, "the shortstop throws");
+            StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target)} ✓", _view.Banner);
             StringAssert.Contains("OUT AT 1B", _view.Banner);
             Assert.IsTrue(_camera.IsFollowing);
+        }
+
+        [UnityTest]
+        public IEnumerator AnOutfieldSingleIsNoPlayAndNoCall()
+        {
+            // The same topped ball 4 ms late goes through to centre field: no play is possible, the ball comes back to second,
+            // the batter-runner reaches first with no OUT/SAFE call, and the loop ends with the play.
+            yield return null;
+            HittingPitch pitch = _lab.CurrentPitch;
+            _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z + 0.02);
+            Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration + 0.004).IsContact);
+            RulesPlay rules = _lab.LastRules;
+            Assert.IsTrue(DefensiveDecision.IsOutfielder(rules.Fielding.Primary.Value));
+            Assert.IsNull(rules.Chosen.Runner, "no play on a runner");
+            Assert.AreEqual(0, rules.Resolution.Outs);
+            Assert.AreEqual(rules.Resolution.EndTime, _lab.PlayEnd, 0.0);
+            At(_lab.PlayEnd + 0.5);
+            Assert.AreEqual(BattingState.Result, _lab.StateAt(_now));
+            StringAssert.DoesNotContain("OUT", _view.Banner);
+            StringAssert.DoesNotContain("SAFE", _view.Banner);
         }
     }
 }

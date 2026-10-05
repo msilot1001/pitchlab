@@ -241,6 +241,23 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator SwitchingScenarioDropsADebugOverride()
+        {
+            yield return null;
+            int sc = FieldingLabController.IndexOf("SS routine grounder: out at 1B");
+            _lab.UseOverride = true;
+            _lab.TargetOverride = Base.Home;
+            Launch(sc);
+            Assert.AreEqual("override", _lab.Rules.Reason);
+            Assert.AreEqual(Base.Home, _lab.Rules.Chosen.Target);
+            _now += 100.0;
+            _launch = _now;
+            _lab.SelectScenario(sc);
+            Assert.AreEqual("earliest force out", _lab.Rules.Reason, "a new scenario is the defense's own decision");
+            Assert.AreEqual(Base.First, _lab.Rules.Chosen.Target);
+        }
+
+        [UnityTest]
         public IEnumerator ReplayStartsClean()
         {
             yield return null;

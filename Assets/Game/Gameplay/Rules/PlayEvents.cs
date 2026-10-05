@@ -66,15 +66,26 @@ namespace Pitchlab.Gameplay.Rules
     /// <summary>
     /// The authoritative result of one play: a chronological list of events (several outs possible later — double plays,
     /// tag plays), each runner at most once, and the out count before and after. Outs are counted once, from the events
-    /// themselves, so the catch, the possession and later state changes of the same out can never count it again.
+    /// themselves, so the catch, the possession and later state changes of the same out can never count it again. The
+    /// third out ends the play: nothing after it is recorded (OBR 5.09(d)). Whether a run touched home before it counts
+    /// (OBR 5.08(a) exception) is scoring, not modelled yet.
     /// </summary>
     public sealed class PlayResolution
     {
         public PlayResolution(IEnumerable<PlayEvent> events, int outsBefore, double defenseEnd, bool ballDead)
         {
-            if (outsBefore < 0) throw new ArgumentOutOfRangeException(nameof(outsBefore));
-            // Stable chronological order (equal times keep their given order).
-            Events = events.Select((e, i) => (e, i)).OrderBy(x => x.e.Time).ThenBy(x => x.i).Select(x => x.e).ToArray();
+            if (outsBefore < 0 || outsBefore >= OutsPerInning) throw new ArgumentOutOfRangeException(nameof(outsBefore));
+            // Stable chronological order (equal times keep their given order), up to and including the third out.
+            var ordered = new List<PlayEvent>();
+            int outs = outsBefore;
+            foreach (PlayEvent e in events.Select((e, i) => (e, i)).OrderBy(x => x.e.Time).ThenBy(x => x.i).Select(x => x.e))
+            {
+                if (outs == OutsPerInning) break;
+                ordered.Add(e);
+                if (e.IsOut) outs++;
+            }
+
+            Events = ordered;
             var seen = new HashSet<Runner>();
             foreach (PlayEvent e in Events)
                 if (!seen.Add(e.Runner)) throw new ArgumentException($"{e.Runner} has two results in one play.", nameof(events));
@@ -84,6 +95,8 @@ namespace Pitchlab.Gameplay.Rules
             BallDead = ballDead;
             EndTime = Math.Max(defenseEnd, Events.Count > 0 ? Events[Events.Count - 1].Time : double.NegativeInfinity);
         }
+
+        public const int OutsPerInning = 3;
 
         public IReadOnlyList<PlayEvent> Events { get; }
         public int OutsBefore { get; }

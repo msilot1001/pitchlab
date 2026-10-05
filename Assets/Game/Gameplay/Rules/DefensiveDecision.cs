@@ -63,8 +63,9 @@ namespace Pitchlab.Gameplay.Rules
         /// <summary>A runner forced to the target base (else a tag is needed).</summary>
         public bool IsForce => Runner != null && (Kind == DefensiveActionKind.TouchBase || Kind == DefensiveActionKind.ThrowToBase);
         public bool Retires => Runner != null && TimingCall.DefenseFirst(OutTime, RunnerArrival);
-        /// <summary>Runner's arrival − the defense's completion (s; > 0: the defense is first).</summary>
-        public double Margin => RunnerArrival - CompletionTime;
+        /// <summary>Runner's arrival − the defense's out moment (completion for a force, the tag for a tag play; s; > 0: the
+        /// defense is first; −∞ for a tag that never comes).</summary>
+        public double Margin => RunnerArrival - (IsForce ? CompletionTime : OutTime);
 
         public override string ToString()
         {
@@ -117,7 +118,7 @@ namespace Pitchlab.Gameplay.Rules
                 list.Add(touch);
                 if (thrown != null) list.Add(thrown);
                 if (forced && thrown != null && target == Base.Second && advancing.Contains(Rules.Runner.Batter))
-                    thrown.DoublePlayPossible = RelayBeatsBatter(thrown, contact + timing.TimeToNextBase(Rules.Runner.Batter));
+                    thrown.DoublePlayPossible = thrown.Retires && RelayBeatsBatter(thrown, contact + timing.TimeToNextBase(Rules.Runner.Batter));
             }
 
             if (IsOutfielder(holder) && throwTo != null)
@@ -170,8 +171,17 @@ namespace Pitchlab.Gameplay.Rules
             double t = ContinuationMotion.EarliestWithin(profile, at, velocity, bag, BaseTouch.Radius);
             DefensivePlay play;
             if (t == 0.0) play = new DefensivePlay(fielding, null);   // already on it
+            else if (!forced)
+            {
+                // A tag: he goes to the bag and stops on it to wait for the runner (running through it he could not tag).
+                ContinuationMotion toRest = ContinuationMotion.ToRest(profile, at, velocity, take, bag);
+                if (toRest == null) return Tag(DefensiveActionKind.TagRunner, target, holder, double.PositiveInfinity, runner, arrival, new DefensivePlay(fielding, null), timing);
+                play = new DefensivePlay(fielding, null, toRest);
+                t = FirstWithin(toRest, bag, take) - take;
+            }
             else
             {
+                // A force: the earliest touch, at speed — he runs across the bag.
                 // To the nearest point of the touch envelope toward where his momentum takes him, exactly then.
                 Vector3d carried = ContinuationMotion.Carried(profile, at, velocity, t), off = carried - bag;
                 double d = new Vector3d(off.X, off.Y, 0.0).Length, r = BaseTouch.Radius * (1.0 - 1e-6);
@@ -198,6 +208,40 @@ namespace Pitchlab.Gameplay.Rules
             if (runner == null || forced)
                 return new DefensiveAction(DefensiveActionKind.ThrowToBase, target, th.Receiver, done, runner, arrival, done, play, note);
             return Tag(DefensiveActionKind.TagRunner, target, th.Receiver, done, runner.Value, arrival, play, timing);
+        }
+
+        /// <summary>The first moment (≥ <paramref name="from"/>) the motion is within the touch envelope of <paramref name="bag"/>
+        /// (5 ms scan then bisection; it ends on the bag, so there is one).</summary>
+        private static double FirstWithin(ContinuationMotion m, Vector3d bag, double from)
+        {
+            bool In(double t)
+            {
+                Vector3d d = m.PositionAt(t) - bag;
+                return Math.Sqrt(d.X * d.X + d.Y * d.Y) <= BaseTouch.Radius;
+            }
+
+            double previous = from;
+            for (double t = from; t <= m.RestTime + 0.005; t += 0.005)
+            {
+                if (!In(t))
+                {
+                    previous = t;
+                    continue;
+                }
+
+                if (t == from) return t;
+                double lo = previous, hi = t;
+                for (int i = 0; i < 40; i++)
+                {
+                    double mid = 0.5 * (lo + hi);
+                    if (In(mid)) hi = mid;
+                    else lo = mid;
+                }
+
+                return hi;
+            }
+
+            return m.RestTime;
         }
 
         /// <summary>A tag play: from <paramref name="ready"/> (the defender holds the ball at the base) the first moment the
@@ -278,6 +322,7 @@ namespace Pitchlab.Gameplay.Rules
             Chosen = chosen;
             Reason = reason;
             Resolution = resolution;
+            Defense = chosen?.Play ?? new DefensivePlay(fielding, null);
         }
 
         public FieldingPlay Fielding { get; }
@@ -290,7 +335,7 @@ namespace Pitchlab.Gameplay.Rules
         public DefensiveAction Chosen { get; }
         public string Reason { get; }
         public PlayResolution Resolution { get; }
-        public DefensivePlay Defense => Chosen?.Play ?? new DefensivePlay(Fielding, null);
+        public DefensivePlay Defense { get; }
         public double ContactTime => Fielding.Ball.First.Time;
         /// <summary>A batter-runner exists: the ball was fielded in play (a caught fly retires him at the catch).</summary>
         public bool HasBatterRunner => Fielding.Outcome == FieldingOutcome.Fielded;
@@ -339,12 +384,13 @@ namespace Pitchlab.Gameplay.Rules
             DefensivePosition holder = fielding.Primary.Value;
             if (fielding.Intercept.Kind == InterceptKind.FlyCatch)
             {
-                // A catch on the fly retires the batter; runners are not forced and hold (tagging up: TASK-007/008).
+                // A catch on the fly retires the batter-runner (running until then); runners are not forced and hold
+                // (tagging up: TASK-007/008).
                 DefensiveAction hold = DefensiveDecision.Candidates(fielding, before, Array.Empty<Runner>(), timing, FielderProfile.For, null)
                     .First(a => a.Kind == DefensiveActionKind.HoldBall);
                 var flyOut = new PlayEvent(fielding.PossessionTime, PlayEventKind.FlyOut, Runner.Batter, null, holder);
                 var resolution = new PlayResolution(new[] { flyOut }, outsBefore, hold.Play.EndTime, false);
-                return new RulesPlay(fielding, before, timing, Array.Empty<Runner>(), new[] { hold }, hold, "fly out", resolution);
+                return new RulesPlay(fielding, before, timing, new[] { Runner.Batter }, new[] { hold }, hold, "fly out", resolution);
             }
 
             if (fielding.Call != BallInPlayCall.Fair)

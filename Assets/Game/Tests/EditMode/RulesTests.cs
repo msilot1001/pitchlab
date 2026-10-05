@@ -64,7 +64,7 @@ namespace Pitchlab.Tests
             RulesPlay play = PlayResolver.Resolve(SsGrounder(), BaseOccupancy.Loaded, 0);
             // Every base has a force candidate the defense can see.
             foreach (Base b in new[] { Base.First, Base.Second, Base.Third, Base.Home })
-                Assert.IsTrue(play.Candidates.Any(a => a.IsForce && a.Target == b), $"force at {b}");
+                Assert.IsTrue(play.Candidates.Any(a => a.IsForce && a.Kind == DefensiveActionKind.ThrowToBase && a.Feasible && a.Target == b), $"force throw at {b}");
         }
 
         [Test]
@@ -79,6 +79,13 @@ namespace Pitchlab.Tests
             var reached = new PlayEvent(3.75, PlayEventKind.Safe, OnFirst, Base.Second, null);
             Assert.IsFalse(Forces.IsForcedAt(OnFirst, on1, new[] { reached }, 3.75), "on the base he was forced to");
             Assert.IsFalse(Forces.IsForcedAt(OnSecond, on1, Array.Empty<PlayEvent>(), 1.0), "no runner on second");
+            // Bases loaded, the runner from first forced out at second: the runners ahead of him lose their force, the
+            // batter-runner behind him keeps his.
+            var outAtSecond = new[] { new PlayEvent(3.0, PlayEventKind.ForceOut, OnFirst, Base.Second, DefensivePosition.SecondBase) };
+            Assert.IsFalse(Forces.IsForcedAt(OnSecond, BaseOccupancy.Loaded, outAtSecond, 3.0));
+            Assert.IsFalse(Forces.IsForcedAt(OnThird, BaseOccupancy.Loaded, outAtSecond, 3.0));
+            Assert.IsTrue(Forces.IsForcedAt(Batter, BaseOccupancy.Loaded, outAtSecond, 3.0));
+            Assert.IsTrue(Forces.IsForcedAt(OnThird, BaseOccupancy.Loaded, outAtSecond, 2.9), "until then");
         }
 
         // ---------------------------------------------------------------- outs and safe calls
@@ -205,7 +212,11 @@ namespace Pitchlab.Tests
             Assert.IsTrue(BaseTouch.IsTouching(f.Motion(DefensivePosition.FirstBase).PositionAt(f.PossessionTime), Base.First), "taken on the bag");
             RulesPlay play = PlayResolver.Resolve(f, BaseOccupancy.Empty, 0);
             Assert.AreEqual("immediate out", play.Reason);
-            Assert.AreEqual(f.PossessionTime, play.Resolution.Events.Single().Time, 0.0);
+            PlayEvent e = play.Resolution.Events.Single();
+            Assert.AreEqual(f.PossessionTime, e.Time, 0.0);
+            Assert.AreEqual(PlayEventKind.ForceOut, e.Kind);
+            Assert.AreEqual(DefensivePosition.FirstBase, e.Fielder);
+            Assert.AreEqual(1, play.Resolution.OutsAfter);
             Assert.IsNull(play.Defense.Carry);
         }
 
@@ -227,6 +238,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(DefensivePosition.SecondBase, second.Fielding.Primary);
             DefensiveAction quickest = second.Candidates.Where(a => a.IsForce && a.Retires).OrderBy(a => a.CompletionTime).First();
             Assert.AreSame(quickest, second.Chosen);
+            Assert.AreEqual(Base.First, second.Chosen.Target, "earliest force, not the lead runner: the batter-runner at first");
         }
 
         [Test]
@@ -326,6 +338,22 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void TheThirdOutEndsThePlay()
+        {
+            // Two out, bases loaded, grounder to short: the force at second is the third out (+2.89 s); the runners who touch
+            // their bases afterwards (+3.75 s, +4.28 s) are not recorded, and the count stops at three.
+            RulesPlay play = PlayResolver.Resolve(SsGrounder(), BaseOccupancy.Loaded, 2);
+            PlayEvent third = play.Resolution.Events.Single();
+            Assert.AreEqual(PlayEventKind.ForceOut, third.Kind);
+            Assert.AreEqual(OnFirst, third.Runner);
+            Assert.AreEqual(3, play.Resolution.OutsAfter);
+            Assert.AreEqual(third.Time, play.Resolution.EndTime, play.Defense.EndTime - third.Time + 1e-9, "over with the third out (and the throw)");
+            Assert.Throws<ArgumentOutOfRangeException>(() => new PlayResolution(Array.Empty<PlayEvent>(), 3, 0.0, false), "a play never starts with three out");
+            // One out before: the same play records every runner.
+            Assert.AreEqual(4, PlayResolver.Resolve(SsGrounder(), BaseOccupancy.Loaded, 1).Resolution.Events.Count);
+        }
+
+        [Test]
         public void DeadBallsHaveNoRunnersOrOuts()
         {
             FieldingPlay homer = Field(110.0, 28.0, 0.0, 2200.0);
@@ -349,6 +377,154 @@ namespace Pitchlab.Tests
                 Assert.AreEqual(a.Resolution.Events[i].Kind, b.Resolution.Events[i].Kind);
                 Assert.AreEqual(a.Resolution.Events[i].Runner, b.Resolution.Events[i].Runner);
             }
+        }
+
+        [Test]
+        public void TagOutIsChosenWhenNoForceOutIsPossibleAndForceWinsWhenBothAre()
+        {
+            // Runner on second (not forced) runs on contact; grounder to short.
+            var on2 = new BaseOccupancy(false, true, false);
+            Func<Runner, bool> runs = r => r == OnSecond;
+            // A batter-runner who beats any play at first (2.5 s, far outside the close window): the tag at third is the out.
+            RulesPlay tag = PlayResolver.Resolve(SsGrounder(), on2, 0, new FixedTiming(2.5), runs);
+            Assert.AreEqual("tag out", tag.Reason);
+            Assert.AreEqual(DefensiveActionKind.TagRunner, tag.Chosen.Kind);
+            Assert.AreEqual(Base.Third, tag.Chosen.Target);
+            Assert.AreEqual(PlayEventKind.TagOut, tag.Resolution.Events.Single(e => e.IsOut).Kind);
+            DefensiveAction quickestTag = tag.Candidates.Where(a => a.Kind == DefensiveActionKind.TagRunner && a.Retires).OrderBy(a => a.OutTime).First();
+            Assert.AreSame(quickestTag, tag.Chosen, "the earliest tag");
+            // The average batter-runner: the force at first and the tag at third both retire a runner — the force is taken.
+            RulesPlay both = PlayResolver.Resolve(SsGrounder(), on2, 0, runsOnContact: runs);
+            Assert.IsTrue(both.Candidates.Any(a => a.Kind == DefensiveActionKind.TagRunner && a.Retires), "a tag out is available");
+            Assert.IsTrue(both.Chosen.IsForce);
+            Assert.AreEqual(PlayEventKind.ForceOut, both.Resolution.Events.Single(e => e.IsOut).Kind);
+        }
+
+        [Test]
+        public void CarriedTagStopsOnTheBagAndTagsTheRunner()
+        {
+            // Bases: runner on second runs; the third baseman fields near third and carries the ball to the bag himself.
+            var on2 = new BaseOccupancy(false, true, false);
+            FieldingPlay f = Field(80.0, -7.0, -30.0, -900.0);
+            Assert.AreEqual(DefensivePosition.ThirdBase, f.Primary);
+            RulesPlay play = PlayResolver.Resolve(f, on2, 0, runsOnContact: r => r == OnSecond,
+                choose: cs => cs.Single(a => a.Kind == DefensiveActionKind.TagRunner && a.Target == Base.Third && a.Play.Throw == null));
+            ContinuationMotion carry = play.Defense.Carry;
+            Assert.IsNotNull(carry);
+            Vector3d bag = FieldLayout.BasePosition(Base.Third), rest = carry.PositionAt(carry.RestTime + 1.0);
+            Assert.Less(new Vector3d(rest.X - bag.X, rest.Y - bag.Y, 0.0).Length, 1e-3, "he stops on the bag (does not run through it)");
+            Assert.LessOrEqual(carry.RouteSpeed, FielderProfile.For(DefensivePosition.ThirdBase).MaxSpeed + 1e-9);
+            PlayEvent tag = play.Resolution.Events.Single(e => e.Runner == OnSecond);
+            Assert.AreEqual(PlayEventKind.TagOut, tag.Kind);
+            Assert.AreEqual(DefensivePosition.ThirdBase, tag.Fielder);
+            Assert.Less(tag.Time, play.ArrivalTime(OnSecond));
+            Assert.IsTrue(TagRules.CanTag(play.Defense.FielderPositionAt(DefensivePosition.ThirdBase, tag.Time),
+                ReferenceRunnerTiming.Instance.PositionAt(OnSecond, tag.Time - play.ContactTime), play.Defense.HolderAt(tag.Time) == DefensivePosition.ThirdBase));
+            AssertContinuous(t => play.Defense.FielderPositionAt(DefensivePosition.ThirdBase, t), f.PossessionTime, "carry starts where he took the ball");
+        }
+
+        [Test]
+        public void ClosePlayWindowBoundaryAndClosestPlay()
+        {
+            // The SS's throw to first completes at `done`: a runner beating it by just under 0.5 s still draws the throw; by
+            // just over, the shortstop holds the ball.
+            FieldingPlay f = SsGrounder();
+            double done = PlayResolver.Resolve(f, BaseOccupancy.Empty, 0).Chosen.CompletionTime - f.Ball.First.Time;
+            RulesPlay close = PlayResolver.Resolve(f, BaseOccupancy.Empty, 0, new FixedTiming(done - 0.5 + 1e-3));
+            Assert.AreEqual("close play", close.Reason);
+            Assert.AreEqual(DefensiveActionKind.ThrowToBase, close.Chosen.Kind);
+            RulesPlay beaten = PlayResolver.Resolve(f, BaseOccupancy.Empty, 0, new FixedTiming(done - 0.5 - 1e-3));
+            Assert.AreEqual(DefensiveActionKind.HoldBall, beaten.Chosen.Kind);
+            Assert.AreEqual("no play", beaten.Reason);
+            // Bases loaded, every runner faster than every play: the closest one is made.
+            RulesPlay loaded = PlayResolver.Resolve(f, BaseOccupancy.Loaded, 0, new FixedTiming(2.0, 2.5));
+            Assert.AreEqual("close play", loaded.Reason);
+            Assert.AreEqual(0, loaded.Resolution.Outs);
+            foreach (DefensiveAction a in loaded.Candidates.Where(a => a.Runner != null && a.Feasible && a.Margin > -DefensiveDecision.CloseWindow))
+                Assert.GreaterOrEqual(loaded.Chosen.Margin, a.Margin, $"{a} is closer than the chosen play");
+        }
+
+        [Test]
+        public void ThrowsThatDoNotEndOnTheBagCannotForce()
+        {
+            FieldingPlay f = Field(80.0, -7.0, -30.0, -900.0);   // 3B grounder
+            ThrowProfile Weak(DefensivePosition p) => new ThrowProfile(15.0, 0.7, 1.8);   // the 1B has to come off the bag for it
+            ThrowProfile Feeble(DefensivePosition p) => new ThrowProfile(12.0, 0.7, 1.8); // nobody catches it
+            foreach (var (arm, note) in new (Func<DefensivePosition, ThrowProfile>, string)[] { (Weak, "caught off the bag"), (Feeble, "not caught") })
+            {
+                var candidates = DefensiveDecision.Candidates(f, BaseOccupancy.Empty, new[] { Batter }, ReferenceRunnerTiming.Instance, FielderProfile.For,
+                    b => ThrowPlanner.Plan(f, b, FielderProfile.For, arm, EnvironmentState.Standard, FieldLayout.Standard));
+                DefensiveAction thrown = candidates.Single(a => a.Kind == DefensiveActionKind.ThrowToBase && a.Target == Base.First);
+                Assert.AreEqual(note, thrown.Note);
+                Assert.IsFalse(thrown.Feasible, note);
+                Assert.IsFalse(thrown.Retires, note);
+                Assert.AreNotSame(thrown, DefensiveDecision.Choose(candidates).Action, note);
+            }
+        }
+
+        [Test]
+        public void DoublePlayFlagNeedsTheLeadOutAndARelayInTime()
+        {
+            var on1 = new BaseOccupancy(true, false, false);
+            DefensiveAction AtSecond(IRunnerTiming timing) => PlayResolver.Resolve(SsGrounder(), on1, 0, timing).Candidates
+                .Single(a => a.Kind == DefensiveActionKind.ThrowToBase && a.Target == Base.Second);
+            Assert.IsTrue(AtSecond(new FixedTiming(5.0)).DoublePlayPossible, "a slow batter-runner: the relay beats him");
+            Assert.IsFalse(AtSecond(new FixedTiming(3.5)).DoublePlayPossible, "a quick one beats the relay");
+            Assert.IsFalse(AtSecond(new FixedTiming(5.0, 2.5)).DoublePlayPossible, "no double play if the lead runner beats the throw to second");
+            Assert.AreEqual(0, PlayResolver.Resolve(SsGrounder(), on1, 0, new FixedTiming(5.0)).Resolution.Events.Count(e => e.IsOut) - 1, "flagged, not executed: one out");
+        }
+
+        [Test]
+        public void StatusAndRunnerStatesFollowTheEvents()
+        {
+            var on1 = new BaseOccupancy(true, false, false);
+            RulesPlay play = PlayResolver.Resolve(SsGrounder(), on1, 0);   // force at 2B +2.89 s, batter-runner safe +4.28 s
+            double outAt = play.Resolution.Events[0].Time, safeAt = play.Resolution.Events[1].Time;
+            Assert.AreEqual(PlayStatus.Live, play.Resolution.StatusAt(outAt - 1e-3));
+            Assert.AreEqual(PlayStatus.OutRecorded, play.Resolution.StatusAt(0.5 * (outAt + safeAt)));
+            Assert.AreEqual(PlayStatus.PlayComplete, play.Resolution.StatusAt(safeAt));
+            Assert.AreEqual(safeAt, play.Resolution.EndTime, 0.0);
+            Assert.AreEqual(RunnerStatus.OnBase, play.RunnerStateAt(OnFirst, play.ContactTime - 1e-3).Status, "before contact");
+            Assert.AreEqual(RunnerStatus.Advancing, play.RunnerStateAt(OnFirst, play.ContactTime + 1.0).Status);
+            Assert.IsTrue(play.RunnerStateAt(Batter, 0.5 * (outAt + safeAt)).Forced, "the lead runner's out leaves the batter forced");
+            Assert.AreEqual(RunnerStatus.Out, play.RunnerStateAt(OnFirst, outAt).Status);
+            Assert.AreEqual(RunnerStatus.Safe, play.RunnerStateAt(Batter, safeAt).Status);
+            Assert.AreEqual(Base.First, play.RunnerStateAt(Batter, safeAt).At);
+
+            // A runner the defense beats is shown safe between his arrival and the late catch.
+            RulesPlay late = PlayResolver.Resolve(SsGrounder(), BaseOccupancy.Empty, 0, new FixedTiming(3.3));
+            Assert.AreEqual(PlayStatus.RunnerSafe, late.Resolution.StatusAt(late.ContactTime + 3.35));
+            Assert.AreEqual(late.Chosen.CompletionTime, late.Resolution.EndTime, 1e-12, "complete when the throw is caught");
+
+            // Runner on second, not forced and not running: on his base, not forced, throughout.
+            RulesPlay holding = PlayResolver.Resolve(SsGrounder(), new BaseOccupancy(false, true, false), 0);
+            RunnerState r2 = holding.RunnerStateAt(OnSecond, holding.ContactTime + 2.0);
+            Assert.AreEqual(RunnerStatus.OnBase, r2.Status);
+            Assert.AreEqual(Base.Second, r2.At);
+            Assert.IsFalse(r2.Forced);
+
+            // A fly: the batter-runner runs until the catch retires him.
+            RulesPlay fly = PlayResolver.Resolve(CenterFieldFly(), BaseOccupancy.Empty, 0);
+            Assert.AreEqual(RunnerStatus.Advancing, fly.RunnerStateAt(Batter, fly.Fielding.PossessionTime - 0.5).Status);
+            Assert.AreEqual(RunnerStatus.Out, fly.RunnerStateAt(Batter, fly.Fielding.PossessionTime).Status);
+            Assert.AreEqual(PlayStatus.PlayComplete, fly.Resolution.StatusAt(fly.Fielding.PossessionTime));
+            Assert.AreEqual(fly.Fielding.PossessionTime, fly.Resolution.EndTime, 0.0);
+        }
+
+        [Test]
+        public void SingleWithARunnerOnThirdRunningHomeIsNoPlay()
+        {
+            // CF single, runner on third (not forced) runs on contact: the throw home is seconds late, so it is not made; the
+            // ball goes back to second and the run is not a "play".
+            FieldingPlay f = Field(95.0, 6.0, 0.0, 700.0);
+            RulesPlay play = PlayResolver.Resolve(f, new BaseOccupancy(false, false, true), 0, runsOnContact: r => r == OnThird);
+            DefensiveAction home = play.Candidates.Single(a => a.Kind == DefensiveActionKind.TagRunner && a.Target == Base.Home && a.Play.Throw != null);
+            Assert.IsFalse(home.Retires);
+            Assert.Less(home.Margin, -DefensiveDecision.CloseWindow);
+            Assert.AreEqual("no play: ball back to the infield", play.Reason);
+            Assert.AreEqual(Base.Second, play.Chosen.Target);
+            Assert.AreEqual(0, play.Resolution.Outs);
+            Assert.AreEqual(2, play.Resolution.Events.Count(e => e.Kind == PlayEventKind.Safe), "the runner scores, the batter-runner reaches first");
         }
 
         // ---------------------------------------------------------------- motion continuity (TASK-006A limitations)
@@ -393,7 +569,9 @@ namespace Pitchlab.Tests
             Assert.Greater(th.ReleaseTime, transferEnd + 0.2, "he waits for the cover");
             Assert.IsTrue(th.Caught, "caught");
             Assert.LessOrEqual(th.Path.ToBase.ArrivalTime, th.Catch.Time + 1e-3, "the cover is there when the throw arrives");
-            Assert.Less(th.Catch.Time - th.Path.ToBase.ArrivalTime, 0.15, "and the wait was no longer than needed");
+            Assert.Less(th.Catch.Time - th.Path.ToBase.ArrivalTime, 0.02, "and the wait was no longer than needed");
+            Vector3d slid = f.Motion(DefensivePosition.Shortstop).PositionAt(th.ReleaseTime);
+            Assert.Less(new Vector3d(th.ReleasePoint.X - slid.X, th.ReleasePoint.Y - slid.Y, 0.0).Length, 0.5, "released from where his slide took him");
             // Exactly one possessed → thrown transition, at the release; possession valid throughout the wait.
             int releases = 0;
             BallAuthority previous = play.AuthorityAt(f.PossessionTime);

@@ -255,7 +255,7 @@ namespace Pitchlab.Sandbox
             return line;
         }
 
-        public static string Abbreviation(Base b) => b switch { Base.First => "1B", Base.Second => "2B", Base.Third => "3B", _ => "home" };
+        public static string Abbreviation(Base b) => Bases.Name(b);
 
         public static string Abbreviation(DefensivePosition p) => p switch
         {

@@ -10,7 +10,7 @@ Colliders, meshes, animation and the camera never decide anything. Every result 
 ## State
 - **`Runner`:** identified by where he started the play, either the batter (`Base.Home`) or the base he occupied. In this foundation a runner advances at most one base.
 - **`BaseOccupancy`:** first, second and third. There is one runner per base by construction, so two runners on one base cannot be represented.
-- **Batter-runner:** exists when the ball is fielded in play. A caught fly retires him at the catch. A foul ball or a ball out of the park is a dead ball: no runners and no events. The home-run trot is not modelled.
+- **Batter-runner:** exists when the ball is fielded in play. A caught fly retires him at the catch. A foul ball (no foul catches yet: TASK-005 lets foul flies drop) or a ball out of the park is a dead ball with no events. For a home run the batter and runners are actually awarded home; that award, and scoring, are not modelled yet.
 - **`RulesPlay.RunnerStateAt(runner, t)`:** OnBase, Advancing, Safe or Out, plus whether he is still forced.
 
 ## Forces (`Forces`)
@@ -24,7 +24,9 @@ Colliders, meshes, animation and the camera never decide anything. Every result 
 | loaded | + runner on 3B | 1B, 2B, 3B, home |
 | 2B only, or 1B and 3B | the runner on 2B (or 3B) is **not** forced | — |
 
-- **Removal (OBR 5.09(b)(6)):** the force is removed when a following runner is put out (the runner must then be tagged), and as soon as the runner touches the base he is forced to. `Forces.IsForcedAt(runner, before, events, t)` applies this to the chronological events.
+- **Removal (OBR 5.09(b)(6)):** the force is removed when a following runner is put out on a force play (the runner must then be tagged), and as soon as the runner touches the base he is forced to.
+  - The code removes it on any out of a following runner. While each runner advances at most one base, every such out is a force out.
+  - Not modelled: the force being reinstated when a runner retreats. `Forces.IsForcedAt(runner, before, events, t)` applies this to the chronological events.
 
 ## Runner timing: a temporary placeholder (`IRunnerTiming`, `ReferenceRunnerTiming`)
 The rules ask only two questions: "when does he touch his next base" and "where is he". TASK-007 replaces the answers with running motion and the rules stay unchanged.
@@ -40,7 +42,9 @@ The rules ask only two questions: "when does he touch his next base" and "where 
 
 ## Simultaneous arrival
 - **The rule:** OBR 5.09(a)(10) and 5.09(b)(6) make the runner out only when he or the base is tagged *before* he touches the base. There is no tie clause.
-- **The simulation's interpretation:** **the defense must be first by more than 1 ms** (`TimingCall.Simultaneous`, the simulation's timing resolution). A simultaneous arrival is SAFE. This follows the literal "before" and Jim Evans' reading; Tim McClelland's "no ties" view needs no rule.
+- **The simulation's interpretation:** **the defense must be first by more than 1 ms** (`TimingCall.Simultaneous`, the simulation's timing resolution). A simultaneous arrival is SAFE.
+  - This is our interpretation for a deterministic simulation, following the literal "before" and Jim Evans' reading.
+  - MLB has published no official interpretation. Many umpires hold that "there are no ties" (Tim McClelland), which in practice means the runner must beat the throw.
 - **The tolerance is deliberately tiny.** It removes floating-point accidents, not a margin.
 
 ## Events and outs (`PlayEvent`, `PlayResolution`)
@@ -50,6 +54,8 @@ The rules ask only two questions: "when does he touch his next base" and "where 
   - **TagOut.**
   - **Safe:** the runner touches the base he was going to.
 - **Chronological list:** events are in time order, and each runner appears at most once (enforced). Several outs per play can be represented.
+- **Third out:** it ends the play, and nothing after it is recorded (OBR 5.09(d)). Whether a run that touched home before the third out counts (OBR 5.08(a) exception) is scoring, which is not modelled yet.
+- **Not modelled:** the infield fly rule and runners' retouch after a caught fly.
 - **Outs:** they are counted from the events: `Outs`, `OutsAfter` and `OutsAt(t)`. The catch, the possession and later states never count an out again. There are no innings yet.
 - **`StatusAt(t)`:**
   - Live, OutRecorded and RunnerSafe, according to the latest event;
@@ -61,13 +67,18 @@ The rules ask only two questions: "when does he touch his next base" and "where 
 ## Defensive actions and the decision (`DefensiveDecision`)
 - **Candidates:** after possession, the holder's candidates are:
   - **HoldBall:** valid, no out.
-  - **TouchBase:** carry the ball to a forced runner's base himself. A `ContinuationMotion` from his position and velocity at the take, so no snap or stop. Completion is the earliest moment he is within the touch envelope.
+  - **TouchBase:** carry the ball to a forced runner's base himself. A `ContinuationMotion` from his position and velocity at the take, so no snap or stop. Completion is the earliest moment he is within the touch envelope. He crosses the bag at speed, as a fielder stepping on it does.
   - **ThrowToBase:** the TASK-006A throw to the covering receiver. Completion is the catch on the bag.
-  - **TagRunner:** a runner who is not forced but runs (scripted), either by throw or by carry.
+  - **TagRunner:** a runner who is not forced but runs (scripted), either by throw or by carry. A carry for a tag ends at rest on the bag (`ContinuationMotion.ToRest`); running through it, he could not tag.
   - **Returning the ball:** an outfielder's throw to second when there is no play.
 
   Each candidate carries its target, completion time, the runner it can retire with his arrival time, feasibility, whether it retires him, and the resulting `DefensivePlay`.
-- **Double plays:** a force at second with the batter-runner forced too is flagged `DoublePlayPossible` when a relay estimate beats him. Double plays are not executed.
+- **Double plays:** a force at second with the batter-runner forced too is flagged `DoublePlayPossible` when two things hold:
+  - the force at second retires the lead runner;
+  - a relay estimate (the receiver's transfer plus his throw) beats the batter-runner to first.
+
+  Double plays are not executed.
+- **Margin:** for a force, the runner's arrival minus the defense's completion. For a tag, his arrival minus the tag (−∞ for a tag that never comes).
 - **Choice (`Choose`), deterministic and explainable:**
   1. an immediate out (the holder already stands on the forced runner's base);
   2. the earliest force out (a touch before a throw when equally early);

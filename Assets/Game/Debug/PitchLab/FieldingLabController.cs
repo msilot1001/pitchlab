@@ -143,15 +143,20 @@ namespace Pitchlab.Sandbox
         /// <summary>Launches preset <paramref name="index"/> now (contact at the plate) and solves the defense.</summary>
         public void Launch(int index)
         {
-            PresetIndex = ((index % Presets.Length) + Presets.Length) % Presets.Length;
-            Play = BallInPlaySimulation.Run(Presets[PresetIndex].Launch.ToState(ContactPoint), EnvironmentState.Standard, FieldLayout.Standard);
-            Fielding = FieldingSolver.Solve(Play);
-            Scenario sc = Presets[PresetIndex];
+            int i = ((index % Presets.Length) + Presets.Length) % Presets.Length;
+            // Computed first, assigned together: a failure leaves the previous play whole.
+            BallInPlay play = BallInPlaySimulation.Run(Presets[i].Launch.ToState(ContactPoint), EnvironmentState.Standard, FieldLayout.Standard);
+            FieldingPlay fielding = FieldingSolver.Solve(play);
+            Scenario sc = Presets[i];
             Func<IReadOnlyList<DefensiveAction>, DefensiveAction> choose = null;
-            if (UseOverride) choose = cs => Override(cs, TargetOverride);
+            if (UseOverride) choose = cs => Override(cs, fielding, TargetOverride);
             else if (sc.TagAt is Base tagAt) choose = cs => cs.First(a => a.Kind == DefensiveActionKind.TagRunner && a.Target == tagAt && a.Play.Throw != null);
-            Rules = PlayResolver.Resolve(Fielding, sc.Bases, 0, ReferenceRunnerTiming.Instance,
+            RulesPlay rules = PlayResolver.Resolve(fielding, sc.Bases, 0, ReferenceRunnerTiming.Instance,
                 sc.RunsOnContact is Base runs ? r => r.From == runs : (Func<Runner, bool>)null, choose);
+            PresetIndex = i;
+            Play = play;
+            Fielding = fielding;
+            Rules = rules;
             _launchRealtime = Clock();
             _ball.position = SimulationSpace.ToUnity(ContactPoint);   // move first, then clear: no streak from the last play
             _trail.Clear();
@@ -159,12 +164,19 @@ namespace Pitchlab.Sandbox
             _camera.Follow(_ball);
         }
 
+        /// <summary>Switches scenario: the defense's own decision again (a debug override applies to the play it was set on).</summary>
+        public void SelectScenario(int index)
+        {
+            UseOverride = false;
+            Launch(index);
+        }
+
         /// <summary>Debug override: throw to <paramref name="target"/> (the play on a runner there if there is one), or hold.</summary>
-        private DefensiveAction Override(IReadOnlyList<DefensiveAction> candidates, Base? target)
+        private static DefensiveAction Override(IReadOnlyList<DefensiveAction> candidates, FieldingPlay fielding, Base? target)
         {
             if (target == null) return candidates.First(a => a.Kind == DefensiveActionKind.HoldBall);
-            return candidates.FirstOrDefault(a => a.Target == target && a.Play.Throw != null && a.Runner != null)
-                   ?? DefensiveDecision.ThrowTo(Fielding, ThrowPlanner.Plan(Fielding, target), target.Value);
+            return candidates.FirstOrDefault(a => a.Target == target && a.Play.Throw != null)
+                   ?? DefensiveDecision.ThrowTo(fielding, ThrowPlanner.Plan(fielding, target), target.Value);
         }
 
         /// <summary>Playback speed; the play continues from where it is (no jump in play time).</summary>
@@ -181,9 +193,9 @@ namespace Pitchlab.Sandbox
             if (k != null)
             {
                 for (int i = 0; i < 8; i++)
-                    if (k[Key.Digit1 + i].wasPressedThisFrame) Launch(i);
-                if (k.rightArrowKey.wasPressedThisFrame) Launch(PresetIndex + 1);
-                if (k.leftArrowKey.wasPressedThisFrame) Launch(PresetIndex - 1);
+                    if (k[Key.Digit1 + i].wasPressedThisFrame) SelectScenario(i);
+                if (k.rightArrowKey.wasPressedThisFrame) SelectScenario(PresetIndex + 1);
+                if (k.leftArrowKey.wasPressedThisFrame) SelectScenario(PresetIndex - 1);
                 foreach (var (key, target) in ThrowKeys)
                     if (k[key].wasPressedThisFrame)
                     {

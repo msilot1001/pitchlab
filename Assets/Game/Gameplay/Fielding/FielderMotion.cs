@@ -252,6 +252,56 @@ namespace Pitchlab.Gameplay.Fielding
             return double.PositiveInfinity;
         }
 
+        /// <summary>
+        /// The earliest route that ends at rest exactly on <paramref name="target"/> (a tag at a base needs him there, not
+        /// running through it): the law to a brake point B by T₁, then braking along his velocity, with B placed so the braking
+        /// ends on the target (damped fixed-point iteration). T₁ is the smallest brake start for which such a B is reachable
+        /// (bisection on T₁; ponytail: assumes feasibility is monotone in T₁, true away from tight reversals). Null if none
+        /// within <paramref name="horizon"/> s.
+        /// </summary>
+        public static ContinuationMotion ToRest(FielderProfile p, Vector3d start, Vector3d velocity, double startTime, Vector3d target, double horizon = 20.0)
+        {
+            Vector3d flatTarget = new Vector3d(target.X, target.Y, start.Z);
+            if ((Flat(velocity)).Length < 1e-9 && (flatTarget - start).Length < 1e-9) return new ContinuationMotion(p, start, velocity, startTime);
+
+            ContinuationMotion Plan(double brakeStart)
+            {
+                Vector3d brakePoint = flatTarget;
+                for (int i = 0; i < 200; i++)
+                {
+                    var m = new ContinuationMotion(p, start, velocity, startTime, brakePoint, startTime + brakeStart);
+                    if (m.RouteSpeed > p.MaxSpeed + 1e-9) return null;
+                    Vector3d v = m.VelocityAt(startTime + brakeStart);
+                    Vector3d next = flatTarget - v * (v.Length / (2.0 * p.BrakeDeceleration));
+                    if ((next - brakePoint).Length < 1e-7) return m;
+                    brakePoint += 0.5 * (next - brakePoint);
+                }
+
+                return null;
+            }
+
+            double lo = 0.0, hi = 0.25;
+            while (Plan(hi) == null)
+            {
+                lo = hi;
+                hi *= 2.0;
+                if (hi > horizon) return null;
+            }
+
+            for (int i = 0; i < 40; i++)
+            {
+                double mid = 0.5 * (lo + hi);
+                if (Plan(mid) == null) lo = mid;
+                else hi = mid;
+            }
+
+            return Plan(hi);
+        }
+
+        /// <summary>When he comes to rest (+∞ with no target and momentum).</summary>
+        public double RestTime => double.IsPositiveInfinity(ArrivalTime) ? double.PositiveInfinity
+            : ArrivalTime + _arrivalVelocity.Length / Profile.BrakeDeceleration;
+
         public Vector3d PositionAt(double time)
         {
             double t = time - StartTime;
