@@ -139,16 +139,13 @@ After a defender's possession he throws to a base and the receiver catches it; t
   - He breaks for the bag at contact plus his reaction, using the TASK-005 running law.
   - On the bag, a throw passing within his reach (where it passes closest to the bag) is taken without leaving the bag. In every test scenario the receiver catches on the bag.
   - Otherwise he steps from the bag with the TASK-005 intercept solver, or adjusts from where he is 0.1 s after the release (ASSUMED).
-    - Limitation: this leg starts from rest, so a receiver still running after a late cover stops instantly.
+    - TASK-006B: this leg continues from his current velocity (`ContinuationMotion`, Docs/RULES.md). Before, it started from rest, an instant stop.
   - If the throw cannot be reached, he carries on to the bag.
   - A throw is caught only on the fly, before its first contact.
 - **Holding for the cover:** if the receiver would not be on the bag when the throw passes it, the thrower releases later by the difference. This is repeated up to 4 times, to 1 ms, because a thrower still sliding changes the throw's length. Example: a pitcher's chopper to first holds ~0.5 s.
 - **Missed throws:** a throw nobody reaches stays a free ball on its own trajectory. It is never snapped into a glove.
 - **Play end:** the receiver's catch, or a missed throw at rest. `DefensivePlay.EndTime` ends the batting loop.
-- **Default target (sandbox, no runners):**
-  - none after a catch on the fly;
-  - infielders, P and C throw to first; the 1B throws to second (no unassisted put-outs yet);
-  - outfielders throw to second.
+- **Which throw:** TASK-006B replaced the fixed default targets with the defensive decision (Docs/RULES.md). For example, the 1B now steps on first himself.
 - **Presentation:**
   - The ball is held in the glove until the arm action (the last 0.35 s before release).
   - The throwing hand carries the authoritative ball to the release point, then follows through. The thrower faces the target base.
