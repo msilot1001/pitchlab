@@ -81,6 +81,11 @@ namespace Pitchlab.Sandbox
             new Scenario("Runner on 1B, ball off the wall", new BattedBallLaunch(105.0, 14.0, -20.0, 1800.0), OnFirst),
             new Scenario("Runners 1B & 3B, 1 out, CF single", new BattedBallLaunch(95.0, 6.0, 0.0, 700.0), new BaseOccupancy(true, false, true), outs: 1),
             new Scenario("Runner on 1B, 2 out, deep fly", new BattedBallLaunch(95.0, 30.0, -10.0, 2200.0), OnFirst, outs: 2),
+            // The half-inning slice's runtime scenarios (A, B, D, E, G are presets above).
+            new Scenario("C: R1, 0 out, grounder to 2B (4-6-3)", new BattedBallLaunch(88.0, -8.0, 16.0, -900.0), OnFirst),
+            new Scenario("F: R1, 2 out, gap ball", new BattedBallLaunch(100.0, 20.0, -15.0, 1800.0), OnFirst, outs: 2),
+            new Scenario("H: loaded, 1 out, grounder to 3B", new BattedBallLaunch(80.0, -7.0, -30.0, -900.0), BaseOccupancy.Loaded, outs: 1),
+            new Scenario("I: R2, 2 out, single to CF", new BattedBallLaunch(95.0, 6.0, 0.0, 700.0), OnSecond, outs: 2),
         };
 
         public static int IndexOf(string name) => Array.FindIndex(Presets, p => p.Name == name);
