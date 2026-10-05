@@ -276,7 +276,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &361487368
 Transform:
   m_ObjectHideFlags: 0
@@ -430,6 +430,9 @@ MonoBehaviour:
     TangentialRecoil: 0.3
     Friction: 0.2
   _playbackSpeed: 1
+  _deliveryLead: 1.1
+  _showDebugPaths: 0
+  _showPanel: 0
   _ball: {fileID: 671174561}
   _rubber: {fileID: 1671547960}
   _plate: {fileID: 1231535125}
@@ -460,6 +463,8 @@ Transform:
   - {fileID: 1833609048}
   - {fileID: 1903777415}
   - {fileID: 1096826432}
+  - {fileID: 1038310889}
+  - {fileID: 1094027879}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &671174560
@@ -922,6 +927,98 @@ Transform:
   m_Children: []
   m_Father: {fileID: 445068155}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1038310888
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1038310889}
+  - component: {fileID: 1038310890}
+  m_Layer: 0
+  m_Name: FieldDressing
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1038310889
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1038310888}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 445068155}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1038310890
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1038310888}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bcacf7f0fabdb44d59ea658c1a036a62, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Pitchlab.Presentation::Pitchlab.Presentation.FieldDressing
+  _foulLineLength: 100.584
+--- !u!1 &1094027878
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1094027879}
+  - component: {fileID: 1094027880}
+  m_Layer: 0
+  m_Name: Presentation
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1094027879
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1094027878}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 445068155}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1094027880
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1094027878}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a8061265b75994644976dcf1ccbba382, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Pitchlab.Sandbox::Pitchlab.Sandbox.HittingLabPresentation
+  _lab: {fileID: 445068154}
+  _mannequinPrefab: {fileID: 4046079824134292012, guid: ff7a3a25e47f8405aabeb60b75b1fbbc, type: 3}
+  _baseballCamera: {fileID: 1903777417}
 --- !u!1 &1096826429
 GameObject:
   m_ObjectHideFlags: 0
@@ -1381,6 +1478,7 @@ GameObject:
   - component: {fileID: 1903777414}
   - component: {fileID: 1903777413}
   - component: {fileID: 1903777416}
+  - component: {fileID: 1903777417}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -1506,6 +1604,25 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &1903777417
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1903777412}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: afadf3a934e2042b9b6d61a4502fa84a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Pitchlab.Presentation::Pitchlab.Presentation.BaseballCamera
+  _battingPosition: {x: 0, y: 2.3, z: -5.6}
+  _battingLookAt: {x: 0, y: 0.9, z: 12}
+  _battingFov: 30
+  _followPosition: {x: 0, y: 12, z: -16}
+  _holdSeconds: 0.3
+  _blendSeconds: 0.8
+  _followWindow: 45
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

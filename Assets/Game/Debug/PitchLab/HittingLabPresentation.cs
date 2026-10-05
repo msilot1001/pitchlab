@@ -1,0 +1,546 @@
+using System;
+using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Presentation;
+using Pitchlab.Simulation.Batting;
+using Pitchlab.Simulation.BallFlight;
+using Pitchlab.Simulation.Core;
+using Pitchlab.Simulation.Field;
+using Pitchlab.Simulation.Pitching;
+using UnityEngine;
+
+namespace Pitchlab.Sandbox
+{
+    /// <summary>
+    /// Presentation for the Hitting Sandbox: pitcher and batter mannequins, the ball in the pitcher's hand before
+    /// release, contact cue, ball-follow camera and landing marker. It only reads <see cref="HittingLabController"/>
+    /// state (pitch, swing, contact result, batted-ball flight) on the controller's clock and never changes it: poses
+    /// are timed to the authoritative release and contact times, not the other way round.
+    /// </summary>
+    // LateUpdate already runs after the controller's Update (which places the ball). Order 100 only puts this Start after
+    // the controller's and this LateUpdate after BaseballCamera's (camera changes apply next frame).
+    [DefaultExecutionOrder(100)]
+    public sealed class HittingLabPresentation : MonoBehaviour
+    {
+        private const float BallVisualScale = 1.6f;   // larger than real for readability; centre stays on the trajectory
+
+        [SerializeField] private HittingLabController _lab;
+        [SerializeField] private PlayerMannequin _mannequinPrefab;
+        [SerializeField] private BaseballCamera _baseballCamera;
+
+        private PlayerMannequin _pitcher, _batter;
+        private Transform _sweetSpot;
+        private ContactCue _cue;
+        private LandingMarker _landing;
+        private TrailRenderer _trail;
+        private Transform _shadow;
+        private float _ballDiameter;
+        // Reference motions (Docs/MOTION_REFERENCE.md): normalized clips whose markers are pinned to authoritative times.
+        private MotionClip _swingClip, _deliveryClip;
+        private readonly MotionTimeline _deliveryTime = new MotionTimeline();
+        private float _uStance, _uLaunch, _uContact, _uSwingEnd;
+        private SwingAdjustment _adjust;    // procedural deformation that puts the sweet spot on the contact point (or PCI)
+        private float _finishTilt, _targetResidual;
+        private Vector3 _target;            // world point the sweet spot aims at, at the contact time
+        private TrailRenderer _sweetTrail;  // debug: sweet-spot path
+        private readonly System.Collections.Generic.List<MeshRenderer> _eventMarkers = new System.Collections.Generic.List<MeshRenderer>();
+        private readonly System.Collections.Generic.List<Mesh> _builtMeshes = new System.Collections.Generic.List<Mesh>();
+        private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
+        // Last shown poses: a new pitch thrown before a figure has returned to its start blends from here (no snapping).
+        private readonly MannequinPose _pitcherShown = new MannequinPose(), _batterShown = new MannequinPose();
+        private readonly MannequinPose _pitcherFrom = new MannequinPose(), _batterFrom = new MannequinPose();
+        private bool _pitcherTransition, _batterTransition;
+
+        private HittingPitch _pitch;          // the pitch the presentation is currently showing
+        private SwingInput? _swing;
+        private Vector3 _pitcherRoot, _batterRoot;
+        private bool _contactShown, _landingShown;
+        private string _banner = string.Empty;
+        private GUIStyle _bannerStyle;
+
+        public PlayerMannequin Pitcher => _pitcher;
+        public PlayerMannequin Batter => _batter;
+        public bool LandingShown => _landingShown;
+        public bool ContactShown => _contactShown;
+        /// <summary>Deformation of the reference swing for the current swing, and the sweet spot's miss of its target at contact (m).</summary>
+        public SwingAdjustment SwingAdjustment => _adjust;
+        public float TargetResidual => _targetResidual;
+        /// <summary>The result line currently shown (set every frame from <see cref="Feedback"/>).</summary>
+        public string Banner => _banner;
+        public TrailRenderer BallTrail => _trail;
+
+        private void Awake()
+        {
+            if (_lab == null || _mannequinPrefab == null || _baseballCamera == null)
+            {
+                UnityEngine.Debug.LogError("HittingLabPresentation is missing a reference; disabling.", this);
+                enabled = false;
+                return;
+            }
+
+            _swingClip = ReferenceMotions.ReferenceRightHandedSwing();
+            _uStance = _swingClip.Marker("stance");
+            _uLaunch = _swingClip.Marker("launch");
+            _uContact = _swingClip.Marker("contact");
+            _uSwingEnd = _swingClip.Marker("finish");
+
+            _pitcher = Instantiate(_mannequinPrefab, transform);
+            _pitcher.name = "Pitcher";
+            _pitcher.Build();
+            Equipment.AttachGlove(_pitcher.GloveAnchor);
+            _batter = Instantiate(_mannequinPrefab, transform);
+            _batter.name = "Batter";
+            _batter.Build();
+            _sweetSpot = Equipment.AttachBat(_batter.BatAnchor);
+            _sweetTrail = _sweetSpot.gameObject.AddComponent<TrailRenderer>();
+            _sweetTrail.time = 0.4f;
+            _sweetTrail.widthMultiplier = 0.015f;
+            _sweetTrail.minVertexDistance = 0.01f;
+            _sweetTrail.sharedMaterial = PresentationMaterials.Get(new Color(1f, 0.85f, 0.2f), unlit: true);
+            _sweetTrail.emitting = false;
+
+            var cues = new GameObject("ContactCue");
+            cues.transform.SetParent(transform, false);
+            _cue = cues.AddComponent<ContactCue>();
+            var landing = new GameObject("LandingMarker");
+            landing.transform.SetParent(transform, false);
+            _landing = landing.AddComponent<LandingMarker>();
+        }
+
+        private void Start()
+        {
+            if (!_lab.enabled || _lab.BallTransform == null)
+            {
+                UnityEngine.Debug.LogError("HittingLabPresentation: the HittingLabController is disabled; disabling.", this);
+                enabled = false;
+                return;
+            }
+
+            _view = _baseballCamera.GetComponent<Camera>();
+            Transform ball = _lab.BallTransform;
+            float diameter = (float)(2.0 * BallProperties.Baseball.Radius) * BallVisualScale;
+            _ballDiameter = diameter;
+            ball.localScale = new Vector3(diameter, diameter, diameter);
+            // Ground marker under a batted ball (where it is over the field), like broadcast/game ball shadows.
+            GameObject shadow = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            shadow.name = "BallShadow";
+            PlayerMannequin.DestroyCollider(shadow);
+            shadow.transform.SetParent(transform, false);
+            shadow.GetComponent<MeshRenderer>().sharedMaterial = PresentationMaterials.Get(new Color(0.08f, 0.1f, 0.06f), unlit: true);
+            shadow.SetActive(false);
+            _shadow = shadow.transform;
+            if (!ball.TryGetComponent(out _trail)) _trail = ball.gameObject.AddComponent<TrailRenderer>();
+            _trail.time = 0.18f;
+            _trail.widthMultiplier = diameter * 0.8f;
+            _trail.widthCurve = AnimationCurve.Linear(0f, 1f, 1f, 0f);
+            _trail.sharedMaterial = PresentationMaterials.Get(new Color(1f, 1f, 1f), unlit: true);
+            _trail.emitting = false;
+
+            PlacePitcher(PitchPresets.All[0].ToInitialState().Position);   // idle: the pitcher waits in the set position
+            PlaceBatter();
+            BuildOutfield(HittingLabController.Field);
+            ResetForPitch(null);
+        }
+
+        private Camera _view;
+
+        private void LateUpdate() => FrameUpdate();
+
+        /// <summary>Shows the controller's current state (after it has rendered this frame). Tests call it directly.</summary>
+        public void FrameUpdate()
+        {
+            double t = _lab.CurrentPitch == null ? double.NegativeInfinity : _lab.RenderedSimTime;
+            if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
+            if (_lab.LastSwing.HasValue && !_swing.HasValue) OnSwing(_lab.LastSwing.Value, _lab.LastResult.Value);
+
+            AnimatePitcher(t);
+            AnimateBatter(t);
+            bool swinging = _swing.HasValue && t >= _swing.Value.StartTime && t <= _swing.Value.StartTime + _lab.Swing.SwingDuration + 0.3;
+            _sweetTrail.emitting = _lab.DebugView && swinging;
+            if (!_lab.DebugView) _sweetTrail.Clear();
+
+            // Before release the ball is in the pitcher's hand; from release on the controller renders the authoritative
+            // trajectory (pitch, then batted ball).
+            bool held = _pitch == null || t < 0.0;
+            Transform ball = _lab.BallTransform;
+            if (held) ball.position = _pitcher.BallAnchor.position;
+            BallInPlay inPlay = _lab.LastPlay;
+            bool moving = inPlay == null || t < inPlay.EndTime;
+            _trail.emitting = !held && moving;
+            // Keep the ball a few pixels wide however far it flies (centre stays on the authoritative trajectory).
+            float distance = Vector3.Distance(_view.transform.position, ball.position);
+            float d = Mathf.Max(_ballDiameter, 0.005f * distance * _view.fieldOfView / 30f);
+            ball.localScale = new Vector3(d, d, d);
+            _trail.widthMultiplier = 0.8f * d;
+            _trail.time = _contactShown ? 0.6f : 0.18f;
+            bool shadow = _contactShown && ball.position.y > 0.15f && new Vector2(ball.position.x, ball.position.z).magnitude > 8f;   // airborne only
+            _shadow.gameObject.SetActive(shadow);
+            if (shadow)
+            {
+                _shadow.position = new Vector3(ball.position.x, 0.02f, ball.position.z);
+                _shadow.localScale = new Vector3(2.5f * d, 0.005f, 2.5f * d);
+            }
+
+            if (_lab.LastResult is ContactResult r && r.IsContact)
+            {
+                if (!_contactShown && t >= r.BattedBall.Time) ShowContact(r);
+                BallInPlay play = _lab.LastPlay;
+                if (!_landingShown && play?.FirstGroundContact is BallEvent landing && t >= landing.Time) ShowLanding(play, landing);
+            }
+
+            _banner = Feedback(t);
+            BattingState state = _pitch == null ? BattingState.Ready : BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.LastPlay, _lab.Swing.SwingDuration);
+            // Back to the batting view once the result pause is over (the next throw resets the rest).
+            if (state == BattingState.Ready && _pitch != null && _baseballCamera.IsFollowing)
+            {
+                _baseballCamera.ShowBatting();
+                _landing.Hide();
+            }
+
+            UpdateEventMarkers(t);
+        }
+
+        /// <summary>
+        /// The compact result line, a pure function of the simulation time (identical at any frame rate). It builds with the
+        /// play: timing and contact quality at contact; the fair/foul call at its decisive moment; the carry at the first
+        /// bounce; the final distance at rest. Misses and takes read after the pitch.
+        /// </summary>
+        public string Feedback(double t)
+        {
+            if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
+            BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.LastPlay, _lab.Swing.SwingDuration);
+            if (state == BattingState.Ready) return "Click to pitch";
+            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? "Take" : string.Empty;
+            string timing = ContactFeedback.Timing(r);
+            if (!r.IsContact)
+                return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;
+            if (t < r.BattedBall.Time) return string.Empty;
+
+            string line = $"{Units.MetersPerSecondToMph(r.ExitSpeed):0} mph · {r.LaunchAngleDegrees:0}° · {timing}";
+            if (ContactFeedback.Quality(r, _lab.Swing) is ContactQuality q) line += $" · {ContactFeedback.Describe(q)}";
+            BallInPlay play = _lab.LastPlay;
+            if (_lab.LastCall is FairFoulResult call && t >= call.At.Time)
+                line = (call.Call == BallInPlayCall.HomeRun ? "HOME RUN" : call.Call == BallInPlayCall.Fair ? "FAIR" : "FOUL") + "  " + line;
+            if (play.FirstGroundContact is BallEvent landing && t >= landing.Time) line += $" · {Units.MetersToFeet(_lab.ShownCarry):0} ft";
+            if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
+            if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime) line += " · ground-rule double";
+            return line;
+        }
+
+        private void ResetForPitch(HittingPitch pitch)
+        {
+            _pitch = pitch;
+            _swing = null;
+            _contactShown = false;
+            _landingShown = false;
+            _adjust = default;
+            _finishTilt = _targetResidual = 0f;
+            _sweetTrail.Clear();
+            _banner = string.Empty;
+            _landing.Hide();
+            _cue.Hide();
+            _trail.Clear();
+            _baseballCamera.ShowBatting();
+            MannequinPose.Blend(_pitcherShown, _pitcherShown, 0f, _pitcherFrom);
+            MannequinPose.Blend(_batterShown, _batterShown, 0f, _batterFrom);
+            if (pitch != null) PlacePitcher(pitch.Flight.First.Position);
+            _deliveryClip.Sample(_deliveryClip.Marker("set"), _from);
+            _pitcherTransition = pitch != null && Away(_pitcherFrom, _from);
+            _swingClip.Sample(_uStance, _from);
+            _batterTransition = pitch != null && Away(_batterFrom, _from);
+        }
+
+        /// <summary>
+        /// Fits the reference delivery to this pitch's authoritative release: the figure stands on the rubber (mound top),
+        /// the release key's hand target is the simulated release point, and any remaining reach shortfall becomes one small,
+        /// constant root offset applied before the wind-up starts (no sliding during the motion).
+        /// </summary>
+        private void PlacePitcher(Vector3d releaseSim)
+        {
+            Vector3 release = SimulationSpace.ToUnity(releaseSim);
+            var rubber = new Vector3(0f, FieldDressing.MoundTop, (float)PitchingGeometry.RubberFrontY);
+            Vector3 plant = ReferenceMotions.FootPlant(0f);
+            Vector3 Figure(Vector3 world) => new Vector3(rubber.x - world.x, world.y - rubber.y, rubber.z - world.z);   // root faces home (yaw 180)
+            float drop = FieldDressing.MoundTop - FieldDressing.MoundHeight(rubber.x - plant.x, rubber.z - plant.z);
+            // The figure stands on the rubber; only the release wrist target is corrected (a few passes) until the ball in
+            // the hand meets the simulated release point — the feet never move for the fit.
+            Vector3 correction = Vector3.zero;
+            _pitcher.transform.SetPositionAndRotation(rubber, Quaternion.Euler(0f, 180f, 0f));
+            for (int pass = 0; pass < 4; pass++)
+            {
+                _deliveryClip = ReferenceMotions.ReferenceRightHandedPitchDelivery(Figure(release), drop, correction);
+                _deliveryClip.Sample(_deliveryClip.Marker("release"), _pose);
+                _pitcher.ApplyPose(_pose);
+                Vector3 miss = release - _pitcher.BallAnchor.position;
+                correction = Vector3.ClampMagnitude(correction + new Vector3(-miss.x, miss.y, -miss.z), 0.2f);
+            }
+
+            _deliveryClip = ReferenceMotions.ReferenceRightHandedPitchDelivery(Figure(release), drop, correction);
+            ReleaseFitOffset = correction;
+            _pitcherRoot = rubber;
+
+            // Wind-up: the throw press (−DeliveryLead) shows "set", release is the authoritative release, then real seconds.
+            _deliveryTime.Clear();
+            _deliveryTime.Add(-_lab.DeliveryLead, _deliveryClip.Marker("set"));
+            _deliveryTime.Add(0.0, _deliveryClip.Marker("release"));
+            _deliveryTime.Add(ReferenceMotions.DeliveryEnd, _deliveryClip.Marker("recovery"));
+        }
+
+        /// <summary>Release fit (presentation only): figure-frame correction of the release wrist target.</summary>
+        public Vector3 ReleaseFitOffset { get; private set; }
+
+        /// <summary>
+        /// Warning track and outfield wall drawn from the simulation's field layout (Docs/SURFACE_PHYSICS.md), so what the
+        /// ball bounces off is what the player sees. Visual only: no colliders.
+        /// </summary>
+        private void BuildOutfield(FieldLayout field)
+        {
+            var track = new Mesh { name = "WarningTrack" };
+            var wall = new Mesh { name = "OutfieldWall" };
+            var trackVertices = new System.Collections.Generic.List<Vector3>();
+            var wallVertices = new System.Collections.Generic.List<Vector3>();
+            var trackTriangles = new System.Collections.Generic.List<int>();
+            var wallTriangles = new System.Collections.Generic.List<int>();
+            float height = (float)field.WallHeight, width = (float)FieldLayout.WarningTrackWidth;
+            for (int i = 0; i + 1 < FieldLayout.FencePointCount; i++)
+            {
+                Vector3 a = SimulationSpace.ToUnity(field.FencePoint(i)), b = SimulationSpace.ToUnity(field.FencePoint(i + 1));
+                Vector3 inward = Vector3.Cross(Vector3.up, (b - a).normalized);
+                if (Vector3.Dot(inward, -a) < 0f) inward = -inward;
+                AddQuad(trackVertices, trackTriangles, a + 0.006f * Vector3.up, b + 0.006f * Vector3.up, b + inward * width + 0.006f * Vector3.up, a + inward * width + 0.006f * Vector3.up);
+                AddQuad(wallVertices, wallTriangles, a, b, b + height * Vector3.up, a + height * Vector3.up);
+            }
+
+            Finish(track, trackVertices, trackTriangles, "WarningTrack", new Color(0.47f, 0.32f, 0.22f));
+            Finish(wall, wallVertices, wallTriangles, "OutfieldWall", new Color(0.12f, 0.25f, 0.18f));
+
+            void AddQuad(System.Collections.Generic.List<Vector3> v, System.Collections.Generic.List<int> t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
+            {
+                int k = v.Count;
+                v.Add(p0); v.Add(p1); v.Add(p2); v.Add(p3);
+                // Both faces (the wall is seen from the field, the track from above).
+                t.AddRange(new[] { k, k + 2, k + 1, k, k + 3, k + 2, k, k + 1, k + 2, k, k + 2, k + 3 });
+            }
+
+            void Finish(Mesh mesh, System.Collections.Generic.List<Vector3> v, System.Collections.Generic.List<int> t, string name, Color color)
+            {
+                mesh.SetVertices(v);
+                mesh.SetTriangles(t, 0);
+                mesh.RecalculateNormals();
+                _builtMeshes.Add(mesh);
+                var go = new GameObject(name);
+                go.transform.SetParent(transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                go.AddComponent<MeshRenderer>().sharedMaterial = PresentationMaterials.Get(color, unlit: true);   // flat: double-sided faces have no useful normals
+            }
+        }
+
+        private void OnDestroy()
+        {
+            foreach (Mesh mesh in _builtMeshes) if (mesh != null) Destroy(mesh);   // runtime meshes are not owned by their GameObjects
+        }
+
+        private void PlaceBatter()
+        {
+            bool left = _lab.Swing.Side == BatterSide.Left;
+            _batter.LeftHanded = left;
+            // Stance position (Baseball Savant batter positioning, reference hitter 2024): hips 24.7 in behind the front of
+            // the plate and 27.7 in off its inside edge; the figure faces the pitcher, plate on its right (mirrored for lefties).
+            float off = (float)(PitchingGeometry.PlateHalfWidth + Units.InchesToMeters(ReferenceMotions.StanceOffPlateEdgeInches));
+            _batterRoot = new Vector3(left ? off : -off, 0f, (float)(PitchingGeometry.PlateFrontY - Units.InchesToMeters(ReferenceMotions.StanceBehindPlateFrontInches)));
+            _batter.transform.SetPositionAndRotation(_batterRoot, Quaternion.identity);
+        }
+
+        private void AnimatePitcher(double t)
+        {
+            _deliveryClip.Sample(double.IsNegativeInfinity(t) ? _deliveryClip.Marker("set") : _deliveryTime.U(t), _pose);
+            // After the recovery the pitcher walks back to the rubber (two steps) and waits in the set position.
+            double back = t - ReferenceMotions.DeliveryEnd - 0.8;
+            if (back > 0.0)
+            {
+                _deliveryClip.Sample(_deliveryClip.Marker("set"), _from);
+                MannequinPose.StepBlend(_pose, _from, Ease(back / 1.2), _pose);
+            }
+
+            if (_pitcherTransition) Transition(_pitcherFrom, t, 0.6);   // e.g. still in the recovery 1.4 m off the rubber
+            _pitcher.ApplyPose(_pose);
+            MannequinPose.Blend(_pose, _pose, 0f, _pitcherShown);
+        }
+
+        /// <summary>Right after a new pitch is thrown, step from the previously shown pose into the new motion.</summary>
+        private void Transition(MannequinPose from, double t, double seconds)
+        {
+            double since = t + _lab.DeliveryLead;
+            if (_pitch != null && since < seconds) MannequinPose.StepBlend(from, _pose, Ease(since / seconds), _pose);
+        }
+
+        /// <summary>A transition is needed only if the figure was shown away from the motion's start (feet or hips moved).</summary>
+        private static bool Away(MannequinPose shown, MannequinPose start) =>
+            (shown.LeftFoot - start.LeftFoot).magnitude + (shown.RightFoot - start.RightFoot).magnitude + (shown.PelvisOffset - start.PelvisOffset).magnitude > 0.05f
+            || Mathf.Abs(Mathf.DeltaAngle(shown.Pelvis.y, start.Pelvis.y)) > 5f;
+
+        private void OnSwing(SwingInput swing, ContactResult result)
+        {
+            _swing = swing;
+            // Presentation reflects the authoritative swing: timing turns the body (early = more open, pulled), the vertical
+            // offset tilts the finish (undercut = higher, topped = lower).
+            double timing = double.IsNaN(result.TimingError) ? 0.0 : result.TimingError;
+            float swingYaw = Mathf.Clamp((float)(timing * _lab.Swing.SprayRate * Mathf.Rad2Deg), -30f, 30f);   // early (−) opens the hips further
+            double vertical = double.IsNaN(result.VerticalOffset) ? 0.0 : result.VerticalOffset;
+            _finishTilt = Mathf.Clamp((float)(vertical * 600.0), -20f, 20f);
+
+            // Where the sweet spot should be at contact time: where gameplay says it was — on the swing plane through the
+            // PCI, at the ball's depth then (ContactResolver.SweetSpotAtContact). A flush hit puts it on the ball, an
+            // off-barrel or under/over hit shows the offset, a miss passes where the player aimed; never snapped to the ball.
+            // Reached by a bounded deformation of the reference contact pose (feet stay planted; see SwingTargeting).
+            // Outside the timing window (MissTiming) the ball can be metres away; the bat then swings through the PCI at the
+            // contact plane.
+            Vector3 target = SimulationSpace.ToUnity(result.Outcome == ContactOutcome.MissTiming
+                ? new Vector3d(swing.PciX, _pitch.ContactPlaneY, swing.PciZ)
+                : ContactResolver.SweetSpotAtContact(_pitch, swing, _lab.Swing));
+            _batter.transform.position = _batterRoot;
+            _target = target;
+            _adjust = SwingTargeting.Solve(_batter, _sweetSpot, _swingClip, _uContact, target, swingYaw, _pose, out _targetResidual);
+        }
+
+        private void AnimateBatter(double t)
+        {
+            if (_pitch == null || double.IsNegativeInfinity(t))
+            {
+                _swingClip.Sample(_uStance, _pose);
+            }
+            else if (!_swing.HasValue)
+            {
+                PreSwing(t, _pose);
+            }
+            else
+            {
+                double s = _swing.Value.StartTime, c = s + _lab.Swing.SwingDuration;
+                if (t < s) PreSwing(t, _pose);
+                else
+                {
+                    // Launch → contact is pinned to the authoritative swing: start wherever the pre-swing motion was at the
+                    // press, reach the contact marker exactly at the contact time, then play the finish in real seconds.
+                    float u = t < c
+                        ? Mathf.Lerp(PreSwingU(s), _uContact, (float)((t - s) / (c - s)))
+                        : Mathf.Min(_uSwingEnd, _uContact + (float)(t - c) / (ReferenceMotions.SwingEnd - ReferenceMotions.SwingStart));
+                    _swingClip.Sample(u, _pose);
+                    // Timing turn and finish tilt fade in with the swing and out with the return to stance.
+                    float back = t > c + 2.5 ? Ease((t - c - 2.5) / 1.0) : 0f;
+                    float weight = (float)(t < c ? (t - s) / (c - s) : Math.Max(0.0, 1.0 - (t - c) / 0.5));
+                    float turn = (t < c ? weight : 1f) * (1f - back);
+                    SwingTargeting.Apply(_adjust, Mathf.SmoothStep(0f, 1f, weight), turn, _pose);
+                    if (t > c) _pose.GripDirection = Quaternion.AngleAxis(-_finishTilt * Mathf.Clamp01((float)(t - c) / 0.3f) * (1f - back), Vector3.right) * _pose.GripDirection;
+                    if (back > 0f)
+                    {
+                        _swingClip.Sample(_uStance, _from);
+                        MannequinPose.StepBlend(_pose, _from, back, _pose);
+                    }
+                }
+            }
+
+            if (_batterTransition && !double.IsNegativeInfinity(t)) Transition(_batterFrom, t, 0.35);
+            _batter.transform.position = _batterRoot;
+            _batter.ApplyPose(_pose);
+            MannequinPose.Blend(_pose, _pose, 0f, _batterShown);
+        }
+
+        /// <summary>Clip position before any swing: the reference timing relative to the expected contact, holding at launch-ready.</summary>
+        private float PreSwingU(double t) =>
+            Mathf.Min(_uLaunch, ReferenceMotions.SwingU((float)(t - _pitch.IdealContactTime)));
+
+        /// <summary>Stance → load → stride → plant toward the expected contact; after a take, back to the stance.</summary>
+        private void PreSwing(double t, MannequinPose into)
+        {
+            _swingClip.Sample(PreSwingU(t), into);
+            double passed = t - _pitch.Flight.Duration - 0.3;
+            if (passed > 0.0)
+            {
+                _swingClip.Sample(_uStance, _from);
+                MannequinPose.StepBlend(into, _from, Ease(passed / 1.0), into);
+            }
+        }
+
+        private void ShowContact(ContactResult r)
+        {
+            _contactShown = true;
+            Vector3 point = SimulationSpace.ToUnity(r.BattedBall.Position);
+            _cue.Play(point, (float)Math.Min(1.0, r.ExitSpeed / 45.0));
+            _baseballCamera.Impulse(0.012f, 0.15f);
+            _baseballCamera.Follow(_lab.BallTransform);
+            _trail.Clear();
+        }
+
+        private void ShowLanding(BallInPlay play, BallEvent landing)
+        {
+            _landingShown = true;
+            Vector3d p = landing.Before.Position;
+            Vector3 point = SimulationSpace.ToUnity(new Vector3d(p.X, p.Y, 0.0));
+            _landing.Show(point, $"{Units.MetersToFeet(_lab.ShownCarry):0} ft", _view);
+        }
+
+        /// <summary>
+        /// Debug (T): a small marker at every event of the play reached so far — ground impacts (white), wall impacts (red),
+        /// slide → roll (blue), rest / out of play (yellow), clearing the fence (red). Visual only, pooled, no colliders.
+        /// </summary>
+        private void UpdateEventMarkers(double t)
+        {
+            BallInPlay play = _lab.DebugView ? _lab.LastPlay : null;
+            int shown = 0;
+            if (play != null)
+                foreach (BallEvent e in play.Events)
+                {
+                    if (e.Time > t) break;
+                    if (shown == _eventMarkers.Count)
+                    {
+                        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                        go.name = "EventMarker";
+                        PlayerMannequin.DestroyCollider(go);
+                        go.transform.SetParent(transform, false);
+                        go.transform.localScale = Vector3.one * 0.35f;
+                        _eventMarkers.Add(go.GetComponent<MeshRenderer>());
+                    }
+
+                    MeshRenderer marker = _eventMarkers[shown++];
+                    marker.gameObject.SetActive(true);
+                    marker.transform.position = SimulationSpace.ToUnity(e.Before.Position);
+                    Color color = e.Kind == BallEventKind.GroundImpact ? Color.white
+                        : e.Kind == BallEventKind.SlideToRoll ? new Color(0.3f, 0.6f, 1f)
+                        : e.Kind == BallEventKind.Rest || e.Kind == BallEventKind.LeftPlay ? new Color(1f, 0.85f, 0.2f)
+                        : new Color(1f, 0.25f, 0.2f);
+                    Material material = PresentationMaterials.Get(color, unlit: true);
+                    if (marker.sharedMaterial != material) marker.sharedMaterial = material;
+                }
+
+            for (int i = shown; i < _eventMarkers.Count; i++) _eventMarkers[i].gameObject.SetActive(false);
+        }
+
+        /// <summary>Debug event markers currently shown (tests).</summary>
+        public int EventMarkersShown
+        {
+            get
+            {
+                int n = 0;
+                foreach (MeshRenderer m in _eventMarkers) if (m.gameObject.activeSelf) n++;
+                return n;
+            }
+        }
+
+        private static float Ease(double u) => Mathf.SmoothStep(0f, 1f, (float)Math.Max(0.0, Math.Min(1.0, u)));
+
+        private void OnGUI()
+        {
+            if (_lab.DebugView && _swing.HasValue)
+            {
+                // Debug (T): where the visual bat aims (contact point on a hit, the PCI on a miss) and how close it gets.
+                GUI.Label(new Rect(Screen.width - 430f, 10f, 420f, 60f),
+                    $"Visual target ({_target.x:+0.000;-0.000}, {_target.y:0.000}, {_target.z:0.000}) world m\n" +
+                    $"Sweet spot at contact: {_targetResidual * 100f:0.0} cm off   turn {_adjust.BodyYaw:+0;-0}°  barrel {_adjust.BatYaw:+0;-0}°/{_adjust.BatPitch:+0;-0}°  hands {_adjust.HandShift.magnitude * 100f:0} cm",
+                    GUI.skin.box);
+            }
+
+            if (string.IsNullOrEmpty(_banner)) return;
+            _bannerStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+            GUI.Label(new Rect(0f, Screen.height - 70f, Screen.width, 40f), _banner, _bannerStyle);
+        }
+    }
+}

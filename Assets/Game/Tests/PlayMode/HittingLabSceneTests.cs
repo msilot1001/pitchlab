@@ -31,7 +31,7 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator WellTimedCentredSwingMakesHardContactAndFreezesBallAtContact()
+        public IEnumerator WellTimedCentredSwingMakesHardContactAndBallFollowsTheBattedTrajectory()
         {
             _lab.ThrowPitch(0);
             HittingPitch pitch = _lab.CurrentPitch;
@@ -45,25 +45,64 @@ namespace Pitchlab.Tests
             while (_lab.SimTime < result.BattedBall.Time + 0.05 && Time.realtimeSinceStartup < timeout) yield return null;
             Assert.GreaterOrEqual(_lab.SimTime, result.BattedBall.Time, "playback reached the contact time");
             yield return null;
-            Assert.Less(Vector3.Distance(SimulationSpace.ToUnity(result.BattedBall.Position), _lab.BallTransform.position), 1e-4f, "ball shown at the contact point");
+            // After contact the rendered ball is the authoritative batted-ball sample for the rendered time (TASK-004.6; it
+            // used to freeze at the contact point).
+            Vector3 expected = SimulationSpace.ToUnity(_lab.LastBattedBall.Flight.StateAt(_lab.RenderedSimTime).Position);
+            Assert.Less(Vector3.Distance(expected, _lab.BallTransform.position), 1e-4f, "ball on the batted-ball trajectory");
         }
 
         [UnityTest]
         public IEnumerator SwingButtonThrowsWhenIdleSwingsDuringFlightAndRethrowsAfter()
         {
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
             int before = _lab.PitchesThrown;
-            _lab.PressSwingButton(Time.realtimeSinceStartupAsDouble);
-            Assert.AreEqual(before + 1, _lab.PitchesThrown, "idle → throw");
+            _lab.PressSwingButton(now);
+            Assert.AreEqual(before + 1, _lab.PitchesThrown, "idle → throw (the delivery starts)");
             Assert.IsFalse(_lab.LastResult.HasValue);
+            Assert.AreEqual(-_lab.DeliveryLead, _lab.ToSimTime(now), 1e-9, "released DeliveryLead after the press");
             yield return null;
 
-            _lab.PressSwingButton(Time.realtimeSinceStartupAsDouble);
+            now += _lab.DeliveryLead + 0.2;
+            _lab.PressSwingButton(now);
             Assert.AreEqual(before + 1, _lab.PitchesThrown, "in flight → swing, not a new pitch");
             Assert.IsTrue(_lab.LastResult.HasValue);
             yield return null;
 
-            _lab.PressSwingButton(Time.realtimeSinceStartupAsDouble);
-            Assert.AreEqual(before + 2, _lab.PitchesThrown, "after the swing → next pitch");
+            _lab.PressSwingButton(now);
+            Assert.AreEqual(before + 1, _lab.PitchesThrown, "during the swing (a double click) → ignored");
+            Assert.AreEqual(BattingState.Swinging, _lab.StateAt(now));
+            yield return null;
+
+            now += 1.0;                                    // the outcome is on screen (result, or the ball still in play)
+            BattingState state = _lab.StateAt(now);
+            Assert.IsTrue(state == BattingState.Result || state == BattingState.BallInPlay, state.ToString());
+            _lab.PressSwingButton(now);
+            Assert.AreEqual(before + 2, _lab.PitchesThrown, "after the swing's outcome → next pitch (skipping the rest of a play)");
+            Assert.AreEqual(BattingState.Windup, _lab.StateAt(now));
+        }
+
+        [UnityTest]
+        public IEnumerator PressDuringTheWindupIsIgnored()
+        {
+            // Wind-up policy B: a press before release can never connect (contact is ~0.4 s after release), so it is
+            // ignored instead of spending the pitch on a whiff; a later press still swings at this pitch.
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            _lab.PressSwingButton(now);                 // throw
+            now += 0.5 * _lab.DeliveryLead;
+            HittingPitch pitch = _lab.CurrentPitch;
+            int thrown = _lab.PitchesThrown;
+            _lab.PressSwingButton(now);                 // before release
+            Assert.IsFalse(_lab.LastSwing.HasValue);
+            Assert.IsFalse(_lab.LastResult.HasValue);
+            Assert.AreSame(pitch, _lab.CurrentPitch, "no re-throw");
+            Assert.AreEqual(thrown, _lab.PitchesThrown);
+            now += 0.5 * _lab.DeliveryLead + 0.2;
+            _lab.PressSwingButton(now);                 // after release
+            Assert.IsTrue(_lab.LastSwing.HasValue);
+            Assert.AreEqual(_lab.ToSimTime(now), _lab.LastSwing.Value.StartTime, 1e-12);
+            yield return null;
         }
 
         [UnityTest]
@@ -99,6 +138,25 @@ namespace Pitchlab.Tests
             _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z);
             ContactResult result = _lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration + 0.1);
             Assert.AreEqual(ContactOutcome.MissTiming, result.Outcome);
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator OneSwingPerPitchEvenForAnEarlierStampedSecondPress()
+        {
+            // Space and a click a few ms apart from two devices can be handled out of timestamp order: the second press,
+            // stamped earlier than the first swing, must not swing again (unity-reviewer, TASK-004.6B-2).
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            _lab.PressSwingButton(now);                    // throw
+            double first = now + _lab.DeliveryLead + 0.25;
+            now = first + 0.01;
+            _lab.PressSwingButton(first);
+            SwingInput swing = _lab.LastSwing.Value;
+            ContactResult result = _lab.LastResult.Value;
+            _lab.PressSwingButton(first - 0.004);
+            Assert.AreEqual(swing.StartTime, _lab.LastSwing.Value.StartTime, 0.0, "still the first swing");
+            Assert.AreEqual(result.Outcome, _lab.LastResult.Value.Outcome);
             yield return null;
         }
     }

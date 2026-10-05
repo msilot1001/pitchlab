@@ -4,10 +4,11 @@ using System.Collections.Generic;
 namespace Pitchlab.Gameplay.Hitting
 {
     /// <summary>
-    /// The PCI as an exact function of time. Aim input is a piecewise-constant velocity that changes only at
-    /// timestamped input events, so the position at any moment — in particular at a swing event's timestamp — is
-    /// determined by the input trace alone, never by when frames happened to sample it. Positions are clamped per axis
-    /// to the PCI area (exact, because the velocity is constant between events).
+    /// The PCI as an exact function of time. Aim input is a piecewise-constant velocity (stick, keys) that changes only
+    /// at timestamped input events, plus instantaneous timestamped displacements (mouse deltas), so the position at any
+    /// moment — in particular at a swing event's timestamp — is determined by the input trace alone, never by when
+    /// frames happened to sample it. Positions are clamped per axis to the PCI area (exact, because the velocity is
+    /// constant between events). Units are the caller's (the hitting sandbox uses normalized <see cref="PciFrame"/> units).
     /// </summary>
     public sealed class PciTrack
     {
@@ -51,7 +52,17 @@ namespace Pitchlab.Gameplay.Hitting
             Append(new Segment(Math.Max(time, last.Time), ClampX(x), ClampZ(z), last.VelocityX, last.VelocityZ));
         }
 
-        /// <summary>From <paramref name="time"/> on, the PCI moves at (vx, vz) m/s. Events are expected in time order;
+        /// <summary>Displaces the PCI by (dx, dz) at <paramref name="time"/> (a mouse movement event), keeping the velocity.
+        /// Events are expected in time order; an older event is applied at the latest one's time.</summary>
+        public void Move(double time, double dx, double dz)
+        {
+            Segment last = Last;
+            double t = Math.Max(time, last.Time);
+            (double x, double z) = Evaluate(last, t);
+            Append(new Segment(t, ClampX(x + dx), ClampZ(z + dz), last.VelocityX, last.VelocityZ));
+        }
+
+        /// <summary>From <paramref name="time"/> on, the PCI moves at (vx, vz) units per second. Events are expected in time order;
         /// an event older than the latest one is applied at the latest one's time.</summary>
         public void SetVelocity(double time, double vx, double vz)
         {
@@ -83,7 +94,7 @@ namespace Pitchlab.Gameplay.Hitting
             // Keep the segment that covers (newest − HistorySeconds) and everything after it.
             int drop = 0;
             while (drop + 1 < _segments.Count - 1 && _segments[drop + 1].Time <= segment.Time - HistorySeconds) drop++;
-            if (drop > 0) _segments.RemoveRange(0, drop);
+            if (drop >= 64) _segments.RemoveRange(0, drop);   // batched: a high-rate mouse appends every millisecond or faster
         }
 
         private double ClampX(double x) => Math.Max(_minX, Math.Min(_maxX, x));
