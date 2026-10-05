@@ -164,13 +164,15 @@ namespace Pitchlab.Simulation.Field
         public static BallInPlay Run(BallState contact, EnvironmentState environment, FieldLayout field) =>
             Run(contact, environment, field, AerodynamicModel.BattedBall);
 
-        public static BallInPlay Run(BallState contact, EnvironmentState environment, FieldLayout field, AerodynamicModel aerodynamics)
+        /// <param name="duration">How long to follow the ball (s; at most <see cref="MaxPlayTime"/>). A shorter horizon gives the
+        /// same ball up to its end — callers that only need the start of the play (a throw) save the long roll.</param>
+        public static BallInPlay Run(BallState contact, EnvironmentState environment, FieldLayout field, AerodynamicModel aerodynamics, double duration = MaxPlayTime)
         {
             BallProperties ball = BallProperties.Baseball;
             var sim = new BallFlightSimulator(ball, environment, aerodynamics);
             var segments = new List<BallSegment>();
             var events = new List<BallEvent>();
-            double endTime = contact.Time + MaxPlayTime;
+            double endTime = contact.Time + Math.Min(duration, MaxPlayTime);
             BallState state = contact;
             bool airborne = true, beyondFence = false;
             int impacts = 0;

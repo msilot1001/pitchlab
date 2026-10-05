@@ -5,6 +5,7 @@ using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Running;
+using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Field;
 
@@ -94,7 +95,7 @@ namespace Pitchlab.Gameplay.Play
 
         /// <param name="runsOnContact">Scripted runners who run on contact whatever their read (lab/test scenarios).</param>
         public LivePlay(FieldingPlay fielding, Situation situation, RunnerProfile? profile = null,
-            Func<IReadOnlyList<DefensiveAction>, DefensiveAction> choose = null, Func<Runner, bool> runsOnContact = null)
+            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null)
         {
             Fielding = fielding;
             Situation = situation;
@@ -116,12 +117,8 @@ namespace Pitchlab.Gameplay.Play
                 intents[r.Id] = Kind != BallKind.Dead && Kind != BallKind.Caught && !r.Id.IsBatter && runsOnContact != null && runsOnContact(r.Id)
                     ? new Intent(IntentKind.Go, r.Id.Next)
                     : RunnerBrain.Initial(this, r);
-            var timing = new PredictedTiming(this, intents);
-            if (Kind == BallKind.Dead) Rules = PlayResolver.Resolve(fielding, situation.Bases, situation.Outs, timing);
-            else
-                Rules = PlayResolver.Resolve(fielding, situation.Bases, situation.Outs, timing,
-                    r => intents.TryGetValue(r, out Intent i) && i.Go, choose);
-            Defense = Rules.Defense;
+            // The live defense (TASK-008): every defender's role and movement, the ball, the decisions with it.
+            Defense = new LiveDefense(this, choose);
 
             foreach (LiveRunner r in _runners)
             {
@@ -131,16 +128,7 @@ namespace Pitchlab.Gameplay.Play
                 Schedule(start, () => Apply(runner, intent, _now), $"{runner.Id} starts");
             }
 
-            if (Fielding.Outcome == FieldingOutcome.Fielded)
-            {
-                Schedule(Fielding.PossessionTime, OnPossession, "possession");
-                if (Defense.Throw is ThrowPlay th)
-                {
-                    Schedule(th.ReleaseTime, () => OnRelease(th), "release");
-                    if (th.Caught) Schedule(th.Catch.Time, () => Note(th.Catch.Time, PlayLogKind.Catch, null, th.Target, th.Receiver, $"{Abbrev(th.Receiver)} catches at {Bases.Name(th.Target)}"), "catch");
-                    else Schedule(th.FirstContactTime, OnMissedThrow, "missed throw");
-                }
-            }
+            Defense.Start();
         }
 
         public FieldingPlay Fielding { get; }
@@ -148,10 +136,10 @@ namespace Pitchlab.Gameplay.Play
         public RunnerProfile Profile { get; }
         public double ContactTime { get; }
         public BallKind Kind { get; }
-        /// <summary>The defense's decision at contact (TASK-006B), its candidates and the chosen action.</summary>
-        public RulesPlay Rules { get; }
-        /// <summary>The defense's action: every defender's motion and the ball's authority at every instant.</summary>
-        public DefensivePlay Defense { get; }
+        /// <summary>The live defense: every defender's role and motion, the ball and who has it, the throws, the decisions.</summary>
+        public LiveDefense Defense { get; }
+        public FieldLayout Field => FieldLayout.Standard;
+        public EnvironmentState Environment => EnvironmentState.Standard;
         public IReadOnlyList<LiveRunner> Runners => _runners;
         public IReadOnlyList<PlayLogEntry> Log => _log;
         /// <summary>The rules events so far (outs; force bookkeeping).</summary>
@@ -324,18 +312,7 @@ namespace Pitchlab.Gameplay.Play
                 if (t > from && t < to) _probes.Add(t);
             }
 
-            Add(Fielding.PossessionTime);
-            if (Defense.Throw is ThrowPlay th)
-            {
-                Add(th.ReleaseTime);
-                if (th.Caught) Add(th.Catch.Time);
-            }
-
-            if (Rules.Chosen != null)
-            {
-                Add(Rules.Chosen.CompletionTime);
-                Add(Rules.Chosen.OutTime);
-            }
+            foreach (double k in Defense.KeyTimes()) Add(k);
 
             foreach (LiveRunner r in _runners)
             {
@@ -460,6 +437,7 @@ namespace Pitchlab.Gameplay.Play
                 _ => $"OUT AT {Bases.Name(at).ToUpperInvariant()} (tag)",
             };
             Note(time, PlayLogKind.Out, r.Id, at, holder, $"{what} — {r.Id}");
+            if (Outs < PlayResolution.OutsPerInning) Defense.OnOut(time);
             if (Outs >= PlayResolution.OutsPerInning)
             {
                 // OBR 5.08(a) Exception: no run scores on a play whose third out is made by the batter-runner before he
@@ -494,7 +472,7 @@ namespace Pitchlab.Gameplay.Play
             r.LastTouched = b;
             if (Forces.IsForced(r.Id, Situation.Bases) && b == r.Id.Next && !_forcedTouch.ContainsKey(r.Id)) _forcedTouch[r.Id] = t;
             Note(t, PlayLogKind.BaseTouch, r.Id, b, null, $"{r.Id} touches {Bases.Name(b)}");
-            if (PlayOnBase(b, t)) Note(t, PlayLogKind.Safe, r.Id, b, null, $"SAFE AT {Bases.Name(b).ToUpperInvariant()} — {r.Id}");
+            if (Defense.PlayOn(b, t)) Note(t, PlayLogKind.Safe, r.Id, b, null, $"SAFE AT {Bases.Name(b).ToUpperInvariant()} — {r.Id}");
             if (b != Base.Home) return;
             r.ScoreTime = t;
             r.Phase = RunnerPhase.Scored;
@@ -574,49 +552,48 @@ namespace Pitchlab.Gameplay.Play
             r.Add(leg, new PathMotion(Profile, _now, 0.0, 0.0, 0.0, 0.0));
         }
 
-        /// <summary>Is the defense making a play at <paramref name="b"/> as the runner arrives (a throw on its way or a fielder
-        /// carrying the ball there) — so his arrival is a "safe" call?</summary>
-        private bool PlayOnBase(Base b, double t)
-        {
-            // Only an action on a runner (not a ball returned to the infield) makes a call.
-            if (Rules.Chosen?.Runner == null || Rules.Chosen.Target != b) return false;
-            if (Defense.Throw is ThrowPlay th) return t >= th.ReleaseTime - 0.5 && (!th.Caught || t < th.Catch.Time + 0.5);
-            return Defense.Carry != null && t <= Defense.Carry.RestTime + 0.5;
-        }
+        // ------------------------------------------------------------------ ball events (from the live defense)
 
-        // ------------------------------------------------------------------ ball events
+        internal void ScheduleDefense(double time, Action act, string name) => Schedule(time, act, name);
 
-        private void OnPossession()
+        /// <summary>A defender took the ball: the batted ball fielded or caught, a throw caught, a loose ball retrieved.</summary>
+        internal void OnDefenseTook(DefensivePosition p, double t, bool batted)
         {
-            DefensivePosition p = Fielding.Primary.Value;
-            Note(_now, PlayLogKind.Fielded, null, null, p, $"{(Fielding.Intercept.Kind == InterceptKind.FlyCatch ? "CAUGHT" : "FIELDED")} by {Abbrev(p)}");
-            if (Kind == BallKind.Caught)
+            if (batted)
             {
-                LiveRunner batter = RunnerOf(Runner.Batter);
-                if (batter != null) MakeOut(batter, PlayEventKind.FlyOut, _now);
-                if (IsOver) return;
-                foreach (LiveRunner r in _runners)
-                    if (!r.IsDone) Apply(r, RunnerBrain.AfterCatch(this, r, _now), _now);
-                return;
+                Note(t, PlayLogKind.Fielded, null, null, p, $"{(Fielding.Intercept.Kind == InterceptKind.FlyCatch ? "CAUGHT" : "FIELDED")} by {Abbrev(p)}");
+                if (Kind == BallKind.Caught)
+                {
+                    LiveRunner batter = RunnerOf(Runner.Batter);
+                    if (batter != null) MakeOut(batter, PlayEventKind.FlyOut, t);
+                    if (IsOver) return;
+                    foreach (LiveRunner r in _runners)
+                        if (!r.IsDone) Apply(r, RunnerBrain.AfterCatch(this, r, t), t);
+                    return;
+                }
             }
+            else Note(t, PlayLogKind.Catch, null, null, p, $"{Abbrev(p)} has the ball");
 
             foreach (LiveRunner r in _runners)
-                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, _now), _now);
+                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
         }
 
-        private void OnRelease(ThrowPlay th)
+        internal void OnThrowReleased(LiveThrow th)
         {
-            Note(_now, PlayLogKind.Throw, null, th.Target, th.Thrower, $"THROW TO {Bases.Name(th.Target).ToUpperInvariant()} ({Abbrev(th.Thrower)} → {Abbrev(th.Receiver)})");
+            string to = th.Target is Base b ? Bases.Name(b).ToUpperInvariant() : "THE CUT-OFF";
+            Note(_now, PlayLogKind.Throw, null, th.Target, th.Thrower, $"THROW TO {to} ({Abbrev(th.Thrower)} → {Abbrev(th.Receiver)})");
             foreach (LiveRunner r in _runners)
                 if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, _now), _now);
         }
 
-        private void OnMissedThrow()
+        internal void OnLooseBall(double t)
         {
-            Note(_now, PlayLogKind.Throw, null, null, null, "throw not caught");
+            Note(t, PlayLogKind.Throw, null, null, null, "throw not caught: loose ball");
             foreach (LiveRunner r in _runners)
-                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, _now), _now);
+                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
         }
+
+        internal void NoteDecision(double t, DefensivePosition holder, string text) => Note(t, PlayLogKind.Decision, null, null, holder, text);
 
         // ------------------------------------------------------------------ intentions → motion
 
@@ -744,7 +721,7 @@ namespace Pitchlab.Gameplay.Play
             }
 
             if (_scheduled.Any(s => !s.Settle)) return;
-            if (Defense.AuthorityAt(t) != BallAuthority.Possessed || t < Defense.EndTime) return;
+            if (!Defense.IdleAt(t)) return;
             foreach (LiveRunner r in _runners)
             {
                 if (r.IsDone) continue;
@@ -818,41 +795,7 @@ namespace Pitchlab.Gameplay.Play
         /// distance at 0.9 of it on average (TASK-006A throws: 0.72–0.96, DERIVED). An estimate — the runners' read — not the
         /// defense's actual plan.
         /// </summary>
-        public double DefenseEta(Base b, double now)
-        {
-            Vector3d bag = FieldLayout.BasePosition(b);
-            double Flight(Vector3d from, DefensivePosition thrower) =>
-                new Vector3d(bag.X - from.X, bag.Y - from.Y, 0.0).Length / (0.9 * ThrowProfile.For(thrower).Speed);
-            if (Fielding.Outcome != FieldingOutcome.Fielded) return double.PositiveInfinity;
-            DefensivePosition primary = Fielding.Primary.Value;
-            switch (Defense.AuthorityAt(now))
-            {
-                case BallAuthority.FreeBall when now < Fielding.PossessionTime:
-                {
-                    Vector3d at = Fielding.Motion(primary).PositionAt(Fielding.PossessionTime);
-                    return Fielding.PossessionTime + ThrowProfile.For(primary).TransferTime + Flight(at, primary);
-                }
-                case BallAuthority.FreeBall:
-                    return now + 3.0;   // a missed throw rolling free: nobody has it (ASSUMED)
-                case BallAuthority.Thrown:
-                {
-                    ThrowPlay th = Defense.Throw;
-                    if (th.Target == b) return th.Caught ? th.Catch.Time : th.FirstContactTime + 2.0;
-                    Vector3d at = FieldLayout.BasePosition(th.Target);
-                    return (th.Caught ? th.Catch.Time : th.FirstContactTime + 2.0) + ThrowProfile.For(th.Receiver).TransferTime + Flight(at, th.Receiver);
-                }
-                default:
-                {
-                    DefensivePosition holder = Defense.HolderAt(now).Value;
-                    Vector3d at = Defense.FielderPositionAt(holder, now);
-                    if (BaseTouch.IsTouching(at, b)) return now;
-                    double ready = holder == primary && (Defense.Throw == null || now < Defense.Throw.ReleaseTime)
-                        ? Fielding.PossessionTime + ThrowProfile.For(holder).TransferTime
-                        : now + ThrowProfile.For(holder).TransferTime;
-                    return Math.Max(now, ready) + Flight(at, holder);
-                }
-            }
-        }
+        public double DefenseEta(Base b, double now) => Defense.Eta(b, now);
 
         /// <summary>When the runner would touch <paramref name="b"/> going there now (+∞ if behind him).</summary>
         public double RunnerEta(LiveRunner r, Base b, double now)
@@ -865,41 +808,5 @@ namespace Pitchlab.Gameplay.Play
 
         /// <summary>Order of a base for this runner (home counts as 4 once he has left it).</summary>
         internal static int Progress(LiveRunner r, Base b) => b == Base.Home && !(r.Id.IsBatter && r.LastTouched == Base.Home && r.Current.Leg.From == Base.Home) ? 4 : (int)b;
-
-        // ------------------------------------------------------------------ the defense's view of the runners (TASK-006B interface)
-
-        /// <summary>The runners' predicted arrivals under their first intentions, for the defense's decision at contact
-        /// (<see cref="IRunnerTiming"/>: the same running law as the motion).</summary>
-        private sealed class PredictedTiming : IRunnerTiming
-        {
-            private readonly Dictionary<Runner, List<RunnerPlanner.PlannedLeg>> _plans = new Dictionary<Runner, List<RunnerPlanner.PlannedLeg>>();
-            private readonly double _contact;
-
-            public PredictedTiming(LivePlay play, Dictionary<Runner, Intent> intents)
-            {
-                _contact = play.ContactTime;
-                foreach (LiveRunner r in play._runners)
-                {
-                    if (!intents[r.Id].Go) continue;
-                    double start = r.Id.IsBatter ? _contact + play.Profile.BatterStartDelay : _contact + (intents[r.Id].Immediate ? 0.0 : play.Profile.ReadDelay);
-                    Base next = r.Id.Next;
-                    bool through = next == Base.First && RunnerBrain.RunsThroughFirst(play, r);
-                    _plans[r.Id] = RunnerPlanner.Plan(play.Profile, r.Current.Leg, r.Current.Motion.D0, 0.0, start, next, through, play.Kind == BallKind.Hit);
-                }
-            }
-
-            public double TimeToNextBase(Runner runner) =>
-                _plans.TryGetValue(runner, out var plan) ? RunnerPlanner.TouchTime(plan) - _contact : double.PositiveInfinity;
-
-            public Vector3d PositionAt(Runner runner, double sinceContact)
-            {
-                if (!_plans.TryGetValue(runner, out var plan)) return FieldLayout.BasePosition(runner.From);
-                double t = _contact + sinceContact;
-                foreach (var leg in plan)
-                    if (t <= leg.Motion.ArrivalTime || ReferenceEquals(leg.Motion, plan[plan.Count - 1].Motion))
-                        return leg.Leg.PositionAt(Math.Min(leg.Motion.DistanceAt(t), leg.Leg.Length));
-                return plan[plan.Count - 1].Leg.End;
-            }
-        }
     }
 }

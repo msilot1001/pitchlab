@@ -180,8 +180,8 @@ namespace Pitchlab.Sandbox
             if (held) ball.position = _pitcher.BallAnchor.position;
             BallInPlay inPlay = _lab.LastPlay;
             double possession = _lab.LastFielding?.PossessionTime ?? double.PositiveInfinity;
-            DefensivePlay defense = _lab.LastDefense;
-            bool moving = defense != null ? defense.AuthorityAt(t) != BallAuthority.Possessed && t < defense.EndTime
+            LiveDefense defense = _lab.LastDefense;
+            bool moving = defense != null ? defense.AuthorityAt(t) != BallAuthority.Possessed && !(_lab.LastLive.IsOver && t >= _lab.LastLive.EndTime)
                 : inPlay == null || t < inPlay.EndTime;
             _trail.emitting = !held && moving;
             // Keep the ball a few pixels wide however far it flies (centre stays on the authoritative trajectory).
@@ -264,8 +264,12 @@ namespace Pitchlab.Sandbox
             if (t >= possession && fielding.Primary is DefensivePosition by)
                 line += $" · {(fielding.Intercept.Kind == InterceptKind.FlyCatch ? "caught" : "fielded")} by {Abbreviation(by)}";
             else if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
-            if (_lab.LastDefense?.Throw is ThrowPlay th && t >= th.ReleaseTime)
-                line += $" · throw to {Abbreviation(th.Target)}{(th.Caught ? t >= th.Catch.Time ? " ✓" : "" : t >= th.FirstContactTime ? " — not caught" : "")}";
+            LiveThrow th = null;
+            if (_lab.LastDefense != null)
+                foreach (LiveThrow x in _lab.LastDefense.Throws)
+                    if (t >= x.ReleaseTime && x.Target != null) th = x;
+            if (th != null)
+                line += $" · throw to {Abbreviation(th.Target.Value)}{(th.Caught ? t >= th.Catch.Time ? " ✓" : "" : t >= th.FirstContactTime ? " — not caught" : "")}";
             if (_lab.LastCall is FairFoulResult c && c.Call == BallInPlayCall.Fair && play.ClearedFence && t >= play.EndTime && t < possession) line += " · ground-rule double";
             if (LiveText.Calls(_lab.LastLive, t) is string calls && calls.Length > 0) line += $" · {calls}";
             return line;

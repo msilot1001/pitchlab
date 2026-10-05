@@ -71,7 +71,7 @@ namespace Pitchlab.Gameplay.Fielding
     /// braking past it (tight play). Position, velocity and phase are exact functions of time — identical whatever the
     /// render frame rate, and the same law the intercept solver predicts with.
     /// </summary>
-    public sealed class FielderMotion
+    public sealed class FielderMotion : IFieldMotion
     {
         public FielderMotion(FielderProfile profile, Vector3d start)
         {
@@ -141,6 +141,8 @@ namespace Pitchlab.Gameplay.Fielding
 
         public Vector3d VelocityAt(double time) => SpeedAt(time) * Direction;
 
+        public Vector3d DirectionAt(double time) => Direction;
+
         public MotionPhase PhaseAt(double time)
         {
             double t = time - StartTime;
@@ -162,7 +164,7 @@ namespace Pitchlab.Gameplay.Fielding
     /// when the target is reachable; slower — a jog — when there is time to spare), in the fixed direction d̂ toward
     /// target − c(T); after T he brakes to rest along his velocity at the braking deceleration. Exact functions of time.
     /// </summary>
-    public sealed class ContinuationMotion
+    public sealed class ContinuationMotion : IFieldMotion
     {
         /// <summary>Holds no target: momentum only, relaxing to rest (v₀ = 0: standing).</summary>
         public ContinuationMotion(FielderProfile profile, Vector3d start, Vector3d initialVelocity, double startTime)

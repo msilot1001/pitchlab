@@ -448,14 +448,13 @@ namespace Pitchlab.Tests
             Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome);
             Assert.AreEqual(DefensivePosition.Shortstop, f.Primary);
             Assert.Less(f.PossessionTime, f.Ball.EndTime, "fielded before it stops");
-            DefensiveAction chosen = _lab.LastRules.Chosen;
-            Assert.AreSame(chosen.Play, _lab.LastDefense, "the shown defense is the chosen action");
+            LiveAction chosen = _lab.LastDefense.Decisions[0].Chosen;
             Assert.AreEqual(Base.First, chosen.Target, "a force out at first");
             Assert.IsTrue(chosen.Retires);
             // TASK-007: the out is made by the live play (possession on the bag before the batter-runner touches it).
             PlayEvent outAtFirst = _lab.LastLive.RulesEvents.Single();
             Assert.AreEqual(PlayEventKind.ForceOut, outAtFirst.Kind);
-            Assert.AreEqual(chosen.OutTime, outAtFirst.Time, 1e-6, "when the decision predicted it");
+            Assert.AreEqual(chosen.Completion, outAtFirst.Time, 1e-6, "when the decision predicted it");
             Assert.AreEqual(_lab.LastLive.EndTime, _lab.PlayEnd, 0.0, "the loop ends with the play");
             Assert.GreaterOrEqual(_lab.PlayEnd, outAtFirst.Time);
             At(f.PossessionTime + FieldingPlay.SecureTime + 0.02);   // secured (the ball settles into the glove over the secure time)
@@ -470,9 +469,9 @@ namespace Pitchlab.Tests
             PlayerMannequin actor = _view.Defense.Figure(chosen.Actor);
             Assert.Less(Vector3.Distance(_lab.BallTransform.position, actor.GloveAnchor.position), 1e-4f, "ball in the glove of the defender who made the out");
             StringAssert.Contains($"by {HittingLabPresentation.Abbreviation(f.Primary.Value)}", _view.Banner);
-            ThrowPlay th = chosen.Play.Throw;
+            LiveThrow th = chosen.Throw;
             Assert.IsNotNull(th, "the shortstop throws");
-            StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target)} ✓", _view.Banner);
+            StringAssert.Contains($"throw to {HittingLabPresentation.Abbreviation(th.Target.Value)} ✓", _view.Banner);
             StringAssert.Contains("OUT AT 1B", _view.Banner);
             Assert.IsTrue(_camera.IsFollowing);
         }
@@ -486,9 +485,12 @@ namespace Pitchlab.Tests
             HittingPitch pitch = _lab.CurrentPitch;
             _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z + 0.02);
             Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration + 0.004).IsContact);
-            RulesPlay rules = _lab.LastRules;
-            Assert.IsTrue(DefensiveDecision.IsOutfielder(rules.Fielding.Primary.Value));
-            Assert.IsNull(rules.Chosen.Runner, "no play on a runner");
+            LivePlay live = _lab.LastLive;
+            Assert.IsTrue(DefensiveDecision.IsOutfielder(live.Fielding.Primary.Value));
+            LiveAction chosen = live.Defense.Decisions[0].Chosen;
+            Assert.IsNull(chosen.Runner, "no play on a runner");
+            Assert.AreEqual((LiveActionKind.Throw, (Base?)null), (chosen.Kind, chosen.Target), "the ball to the cut-off man");
+            Assert.That(chosen.Actor, Is.EqualTo(DefensivePosition.Shortstop).Or.EqualTo(DefensivePosition.SecondBase));
             Assert.AreEqual(0, _lab.LastLive.OutsMade);
             Assert.AreEqual(_lab.LastLive.EndTime, _lab.PlayEnd, 0.0);
             Assert.IsTrue(_lab.LastLive.ResultingBases().First, "a single: the batter-runner is on first");

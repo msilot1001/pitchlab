@@ -219,6 +219,16 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void AShorterHorizonIsTheSameBallUpToItsEnd()
+        {
+            BallState s = Launch(90.0, -8.0, -10.0, -1200.0);
+            BallInPlay full = Run(s), part = BallInPlaySimulation.Run(s, EnvironmentState.Standard, Field, AerodynamicModel.BattedBall, 1.5);
+            Assert.AreEqual(s.Time + 1.5, part.EndTime, 0.01);
+            for (double t = s.Time; t <= part.EndTime; t += 0.01)
+                Assert.AreEqual(0.0, (full.StateAt(t).Position - part.StateAt(t).Position).Length, 1e-9, $"+{t - s.Time:0.00}");
+        }
+
+        [Test]
         public void GroundBallBouncesSlidesRollsAndStops()
         {
             BallInPlay play = Run(Launch(90.0, -8.0, -10.0, -1200.0));   // topspin grounder toward short
