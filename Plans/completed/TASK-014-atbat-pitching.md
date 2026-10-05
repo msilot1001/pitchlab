@@ -42,7 +42,7 @@ Claude Code (sole writer); reviewers and Codex read-only.
   auto choice kept apart from the manual selection (LastCommand), auto only in the GameLab, seed hashed apart; tests:
   release times exact at 30 / 144 / uneven frames with a foul and a ball in play, the lab feeding count and pitch number,
   pause/idle, tall-batter targets, catcher glove at the flight, 13th pitch after a long PA (mutation: frame-time press caught).
-- [ ] Codex, merge.
+- [x] Codex: A (no findings); merge.
 
 ## Limitations
 - No pitcher command/accuracy model (the aim converges within 3 cm), no fatigue, no pitch sequencing beyond the count.
