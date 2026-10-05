@@ -47,6 +47,11 @@ namespace Pitchlab.Sandbox
         private TrailRenderer _sweetTrail;  // debug: sweet-spot path
         private DefenseView _defense;
         private RunnerView _runners;
+        /// <summary>Runners walk from their bags to their leads between plays in this long (real s; presentation only).</summary>
+        private const double LeadWalk = 1.2;
+        private bool _situationShown;
+        private BaseOccupancy _shownBases;
+        private double _leadWalkStart;
         private readonly System.Collections.Generic.List<MeshRenderer> _eventMarkers = new System.Collections.Generic.List<MeshRenderer>();
         private readonly System.Collections.Generic.List<Mesh> _builtMeshes = new System.Collections.Generic.List<Mesh>();
         private readonly MannequinPose _pose = new MannequinPose(), _from = new MannequinPose();
@@ -222,7 +227,14 @@ namespace Pitchlab.Sandbox
             // he plays the ball (a dribbler); the primary defender is framed with the ball, which sits in his glove from
             // the possession moment.
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C;
-            _defense.Show(_lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
+            _defense.Alignment = _lab.Situation.Alignment;   // where they stand for the next pitch (double-play depth…)
+            _defense.Clock = _lab.Clock;
+            // Once the play is over (and its result shown) the fielders jog back to the alignment and the ball returns to the
+            // pitcher.
+            LivePlay played = _lab.LastLive;
+            bool playOver = played != null && played.IsOver && t > played.EndTime + ResultPause;
+            _defense.Show(playOver ? null : _lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
+            if (playOver) _lab.BallTransform.position = _pitcher.BallAnchor.position;
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
 
             // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
@@ -231,7 +243,23 @@ namespace Pitchlab.Sandbox
             bool over = live != null && live.IsOver && t > live.EndTime + ResultPause;
             bool running = !over && live != null && live.RunnerOf(Runner.Batter) != null && t >= live.ContactTime + live.Profile.BatterStartDelay;
             if (_batter.gameObject.activeSelf == running) _batter.gameObject.SetActive(!running);
-            _runners.Show(over ? null : live, t, _batterRoot);
+            if (live != null && !over) _runners.Show(live, t, _batterRoot);
+            else
+            {
+                // Between plays (GameLab): the runners of the game's situation walk from their bags to their leads.
+                BaseOccupancy bases = _lab.Situation.Bases;
+                double now = _lab.Clock();
+                if (!_situationShown || !bases.Equals(_shownBases))
+                {
+                    _situationShown = true;
+                    _shownBases = bases;
+                    _leadWalkStart = now;
+                }
+
+                _runners.ShowSituation(bases, Mathf.Clamp01((float)((now - _leadWalkStart) / LeadWalk)));
+            }
+
+            if (live != null && !over) _situationShown = false;
         }
 
         /// <summary>

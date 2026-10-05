@@ -43,18 +43,22 @@ namespace Pitchlab.Sandbox
         /// <summary>The figure for a runner (identified by the base he started on; home = the batter-runner).</summary>
         public PlayerMannequin Figure(Runner runner) => _figures[runner.From];
 
-        /// <summary>Before a play: the runners on <paramref name="bases"/>, on their bags.</summary>
-        public void ShowSituation(BaseOccupancy bases)
+        /// <summary>
+        /// Between plays: the runners on <paramref name="bases"/>, <paramref name="leadOff"/> of the way from their bags to
+        /// their leads (1 = exactly where the next play starts them: no jump at contact). Presentation only.
+        /// </summary>
+        public void ShowSituation(BaseOccupancy bases, float leadOff)
         {
             foreach (var pair in _figures)
             {
                 bool on = pair.Key != Base.Home && bases.IsOccupied(pair.Key);
-                pair.Value.gameObject.SetActive(on);
+                if (pair.Value.gameObject.activeSelf != on) pair.Value.gameObject.SetActive(on);
                 if (!on) continue;
-                Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(pair.Key));
-                Vector3 toNext = SimulationSpace.ToUnity(FieldLayout.BasePosition(BaseLeg.Bases(pair.Key))) - bag;
-                toNext.y = 0f;
-                Pose(pair.Value, bag, toNext, 0f, 0f);
+                BaseLeg leg = BaseLeg.Of(pair.Key, false);
+                float u = Mathf.SmoothStep(0f, 1f, leadOff);
+                Vector3 at = SimulationSpace.ToUnity(leg.PositionAt(u * LivePlay.Lead(pair.Key)));
+                Vector3 toNext = SimulationSpace.ToUnity(FieldLayout.BasePosition(BaseLeg.Bases(pair.Key))) - at;
+                Pose(pair.Value, at, toNext, leadOff > 0f && leadOff < 1f ? 1.2f : 0f, 0f);
             }
         }
 

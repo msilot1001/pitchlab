@@ -39,6 +39,9 @@ namespace Pitchlab.Sandbox
         [SerializeField, Min(0.5f)] private float _deliveryLead = 1.1f;
         [SerializeField] private bool _showDebugPaths;
         [SerializeField] private bool _showPanel = true;
+        /// <summary>GameLab (TASK-010): plate appearances in a persistent half-inning (<see cref="Game"/>) instead of an empty
+        /// diamond every pitch.</summary>
+        [SerializeField] private bool _gameMode;
         [Header("Mouse aim")]
         /// <summary>Normalized PCI units per mouse count (the PCI spans 2 units across).</summary>
         [SerializeField, Range(0.0005f, 0.02f)] private float _mouseSensitivity = 0.004f;
@@ -90,6 +93,14 @@ namespace Pitchlab.Sandbox
         /// <summary>The live play with real runners (TASK-007; bases empty in the batting loop), resolved at contact. The
         /// batting loop observes its end; it holds no rules itself.</summary>
         public LivePlay LastLive { get; private set; }
+        /// <summary>The game (GameLab only; null in the HittingLab): the situation each pitch is played in, updated when a play
+        /// is over.</summary>
+        public GameState Game { get; private set; }
+        /// <summary>The situation of the current pitch (an empty diamond in the HittingLab).</summary>
+        public Situation Situation => Game?.Situation ?? new Situation(0, BaseOccupancy.Empty);
+        /// <summary>The Situation Editor works only between plays (Ready, the last result applied).</summary>
+        public bool EditorLocked => Game == null || _resultPending || StateAt(Clock()) != BattingState.Ready;
+        private bool _resultPending;
         /// <summary>The play under the rules (TASK-006B; bases empty in the batting loop): the defense's decision and the
         /// OUT/SAFE events. The batting loop observes its end; it holds no rules itself.</summary>
         /// <summary>The chosen defensive action's play: the ball's authority at every instant.</summary>
@@ -145,6 +156,7 @@ namespace Pitchlab.Sandbox
                 return;
             }
 
+            if (_gameMode) Game = new GameState();
             _pciRange = Instantiate(_pci, _pci.transform.parent);
             _pciRange.name = "PciRange";
             _pciRange.widthMultiplier = 0.5f * _pci.widthMultiplier;
@@ -281,9 +293,13 @@ namespace Pitchlab.Sandbox
         /// <summary>Simulates the selected pitch and starts its playback now.</summary>
         public void ThrowPitch(int presetIndex) => ThrowPitch(presetIndex, Clock());
 
+        /// <summary>The next pitch of the plate appearance (the selected preset), now.</summary>
+        public void StartPlateAppearance() => ThrowPitch(_presetIndex, Clock());
+
         /// <summary>Simulates the selected pitch; it is released at <paramref name="releaseRealtime"/> on the shared clock.</summary>
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
+            ApplyResult();   // a press during a play skips its remainder: its result stands
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
             CurrentPitch = HittingPitch.Create(Presets[_presetIndex], Environment);
             _pitchStartRealtime = releaseRealtime;
@@ -381,11 +397,20 @@ namespace Pitchlab.Sandbox
 
             double t = ToSimTime(now);
             RenderedSimTime = t;
+            if (_resultPending && t >= LastLive.EndTime) ApplyResult();
             // Authoritative samples only: the pitch, then (after contact) the ball in play until it rests or leaves play.
             // After contact: free on its trajectory until a defender possesses it, then carried (FieldingPlay).
             _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
                 ? LastDefense.BallPositionAt(t)
                 : CurrentPitch.Flight.StateAt(t).Position);
+        }
+
+        /// <summary>The finished play's result into the game (once; at the play's end, or when the next pitch is thrown first).</summary>
+        private void ApplyResult()
+        {
+            if (!_resultPending) return;
+            _resultPending = false;
+            Game.Apply(LastLive);
         }
 
         private void ShowResult(ContactResult r)
@@ -397,9 +422,11 @@ namespace Pitchlab.Sandbox
                 LastBattedBall = BattedBallSimulation.Run(r.BattedBall, Environment);
                 LastPlay = BallInPlaySimulation.Run(r.BattedBall, Environment, Field);
                 LastCall = FairFoul.Call(LastPlay);
-                LastFielding = FieldingSolver.Solve(LastPlay);
-                LastLive = new LivePlay(LastFielding, new Situation(0, BaseOccupancy.Empty));
+                Situation situation = Situation;
+                LastFielding = FieldingSolver.Solve(LastPlay, situation.Alignment, FielderProfile.For, Field);
+                LastLive = new LivePlay(LastFielding, situation);
                 LastLive.RunToEnd();
+                _resultPending = Game != null;
                 BattedBallMetrics flight = LastBattedBall.Metrics;
                 // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.
                 double carry = LastPlay.ReachedFenceInTheAir ? flight.Distance : LastPlay.CarryDistance;

@@ -93,11 +93,30 @@ namespace Pitchlab.Sandbox
 
         private const double TakeoverBlend = 0.25;
 
+        /// <summary>After a play the fielders jog back to the alignment in this long (real s; presentation only — the next play
+        /// starts them from the alignment).</summary>
+        public const double ReturnTime = 2.0;
+        private readonly Vector3d[] _returnFrom = new Vector3d[DefensiveAlignment.Count];
+        /// <summary>The real-time clock the jog back runs on (the lab's clock: tests freeze it).</summary>
+        public Func<double> Clock { get; set; } = () => Time.realtimeSinceStartupAsDouble;
+        private double _returnStart = double.NegativeInfinity;
+        /// <summary>The adopted pitcher moved in the last play: this view walks him back to the rubber before handing him back.</summary>
+        private bool _pitcherReturning;
+        private bool Returning => _defense == null && Clock() - _returnStart < ReturnTime;
+
         /// <summary>Poses every defender for <paramref name="defense"/> at play time <paramref name="time"/> (null: ready at the
         /// alignment).</summary>
         public void Show(LiveDefense defense, double time, Transform ball, bool debug)
         {
+            if (defense == null && _defense != null)
+            {
+                for (int i = 0; i < _returnFrom.Length; i++) _returnFrom[i] = _defense.FielderPositionAt((DefensivePosition)i, _time);
+                _returnStart = Clock();
+                _pitcherReturning = DrivesPitcher(_defense, _time);
+            }
+
             if (!ReferenceEquals(defense, _defense)) _pitcherTakeover = double.NaN;
+
             _defense = defense;
             _time = time;
             _debug = debug;
@@ -106,7 +125,7 @@ namespace Pitchlab.Sandbox
                 var p = (DefensivePosition)i;
                 PlayerMannequin figure = _figures[i];
                 if (figure == null) continue;
-                if (p == DefensivePosition.P && figure == _adoptedPitcher && !DrivesPitcher(defense, time)) continue;
+                if (p == DefensivePosition.P && figure == _adoptedPitcher && !DrivesPitcher(defense, time) && !(_pitcherReturning && Returning)) continue;
                 if (p == DefensivePosition.C)
                 {
                     // Shown when he plays the ball or leaves the plate area (covering home is standing there: not shown).
@@ -134,9 +153,23 @@ namespace Pitchlab.Sandbox
         private void Pose(DefensivePosition position, PlayerMannequin figure, LiveDefense d, double time, Transform ball)
         {
             Vector3d at = d?.FielderPositionAt(position, time) ?? _alignment[position];
+            float speed = d == null ? 0f : (float)d.FielderSpeedAt(position, time);
+            if (d == null)
+            {
+                // Jogging back from where the last play left him.
+                double u = (Clock() - _returnStart) / ReturnTime;
+                if (u < 1.0)
+                {
+                    Vector3d from = _returnFrom[(int)position], to = at;
+                    // The adopted pitcher goes back to where the delivery has him (the rubber), which then takes over.
+                    if (position == DefensivePosition.P && figure == _adoptedPitcher) to = SimulationSpace.ToSimulation(_takeoverRoot);
+                    at = from + Mathf.SmoothStep(0f, 1f, (float)u) * (to - from);
+                    speed = (to - from).Length > 0.5 ? 3f : 0f;
+                }
+            }
+
             Vector3 root = SimulationSpace.ToUnity(new Vector3d(at.X, at.Y, 0.0));
             root.y = FieldDressing.MoundHeight(root.x, root.z);   // stand on the mound, not in it (presentation only)
-            float speed = d == null ? 0f : (float)d.FielderSpeedAt(position, time);
             var input = new FieldingPoseInput { Speed = speed, Distance = d == null ? 0f : (float)d.FielderDistanceAt(position, time) };
 
             // His takes and throws around now: the take he is reaching for (or has just made), the throw he is making.
@@ -173,7 +206,7 @@ namespace Pitchlab.Sandbox
                 : run.sqrMagnitude > 1e-4f ? run : face;
             Quaternion rotation = look.sqrMagnitude > 1e-6f ? Quaternion.LookRotation(look) : figure.transform.rotation;
             bool adopted = position == DefensivePosition.P && figure == _adoptedPitcher;
-            if (adopted && double.IsNaN(_pitcherTakeover))
+            if (adopted && d != null && double.IsNaN(_pitcherTakeover))
             {
                 // Takeover starts from where the sandbox pitcher stood (read before this frame moves him).
                 _takeoverRoot = figure.transform.position;
@@ -212,7 +245,7 @@ namespace Pitchlab.Sandbox
             else input.HoldingBall = holding;
 
             FieldingPoser.Compose(input, _pose);
-            if (adopted)
+            if (adopted && d != null)
             {
                 // Take the sandbox pitcher over from wherever and however he stood (root, heading and pose blend together).
                 if (double.IsNaN(_pitcherTakeover))
