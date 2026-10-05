@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Running;
+using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Simulation.Field;
 
 namespace Pitchlab.Gameplay.Play
 {
@@ -296,8 +298,29 @@ namespace Pitchlab.Gameplay.Play
 
             if (winner == null) return (outsMade, kind, what);
             int outs = 0;
+            PlayEvent? batterOut = null;
             foreach (PlayEvent e in play.RulesEvents)
-                if (e.IsOut && e.Time <= winner.ScoreTime) outs++;
+                if (e.IsOut && e.Time <= winner.ScoreTime)
+                {
+                    outs++;
+                    if (e.Runner.IsBatter) batterOut = e;
+                }
+
+            // The play as it stood at the winning run: outs made after it do not turn it into a double or triple play.
+            if (kind == PlayResultKind.DoublePlay && outs < 2 || kind == PlayResultKind.TriplePlay && outs < 3)
+            {
+                if (outs >= 2) kind = PlayResultKind.DoublePlay;
+                else if (batterOut is PlayEvent b)
+                    kind = b.Kind == PlayEventKind.FlyOut
+                        ? (play.Situation.Outs < 2 && DefensiveDecision.IsOutfielder(play.Fielding.Primary.Value) ? PlayResultKind.SacrificeFly : PlayResultKind.FlyOut)
+                        : PlayResultKind.Groundout;
+                else
+                {
+                    LiveRunner batter = play.RunnerOf(Runner.Batter);
+                    kind = batter == null || batter.LastTouched == Base.Home || batter.LastTouched == Base.First ? PlayResultKind.Single
+                        : batter.LastTouched == Base.Second ? PlayResultKind.Double : PlayResultKind.Triple;
+                }
+            }
             int hitBases = kind switch
             {
                 PlayResultKind.Single => 1,
@@ -306,7 +329,7 @@ namespace Pitchlab.Gameplay.Play
                 PlayResultKind.InsideTheParkHomeRun => 4,
                 _ => 0,
             };
-            if (hitBases == 0) return (outs, kind, what);
+            if (hitBases == 0) return (outs, kind, PlayResults.Describe(kind));
             int credited = Math.Min(hitBases, 4 - (int)winner.Id.From);   // the winning runner's bases (from third: one)
             PlayResultKind hit = credited switch { 1 => PlayResultKind.Single, 2 => PlayResultKind.Double, 3 => PlayResultKind.Triple, _ => kind };
             return (outs, hit, PlayResults.Describe(hit));

@@ -155,6 +155,22 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void AWalkOffIsThePlayAsItStoodAtTheWinningRun()
+        {
+            // Bases loaded, none out, tied: a fly is caught, the runner from third tags and scores — the game is over — and a
+            // runner is doubled off afterwards. As a play: a double play; as the game's last plate appearance: a sacrifice fly.
+            var g = new GameState();
+            g.Set(9, Half.Bottom, 0, BaseOccupancy.Loaded, 3, 3);
+            LivePlay play = Play(g, 95.0, 25.0, 20.0, 1800.0);
+            Assume.That(PlayResults.Classify(play), Is.EqualTo(PlayResultKind.DoublePlay));
+            g.Apply(play);
+            Assert.IsTrue(g.IsOver);
+            PlateAppearance pa = g.Completed.Last();
+            Assert.AreEqual((1, 1, PlayResultKind.SacrificeFly, "sacrifice fly"), (pa.Runs, pa.OutsMade, pa.PlayResult.Value, pa.Result));
+            Assert.AreEqual((1, 3, 4), (g.Outs, g.AwayScore, g.HomeScore));
+        }
+
+        [Test]
         public void AWalkOffWalkEndsTheGameWithTheOneRun()
         {
             var g = new GameState();

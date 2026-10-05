@@ -52,7 +52,7 @@ Claude Code (sole writer); rules / Unity / test reviewers and Codex read-only.
   games: recorded = simulated pitches, halves in order with exactly three outs, a replay that the game ended at its first
   decisive moment, seeds pinned to each ending (incl. 12 innings), determinism over pitch records; scene: final dwell,
   NEW GAME mid-play, auto into a new game.
-- [ ] Codex, merge.
+- [x] Codex: B — a walk-off is classified as the play stood at the winning run (no double play from outs after it; a caught fly with a tag-up run is a sacrifice fly), NEW GAME clickable mid-play (outside the editor lock). Merge.
 
 ## Measurements
 - Simulated games (EditMode, Editor): ≈ 1.2–1.6 s per nine-inning game, 240–315 pitches, 62–77 plate appearances.
