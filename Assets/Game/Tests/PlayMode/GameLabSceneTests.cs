@@ -84,30 +84,33 @@ namespace Pitchlab.Tests
             Assert.AreEqual(play.ResultingBases(), game.Bases);
             Assert.AreEqual(play.Outs, game.Outs);
 
-            // After the result pause the runners left on base walk to their leads: exactly where the next play starts them.
+            // The fielders jog back during the result pause: in the new situation's alignment when the batter is ready.
             double over = _release + play.EndTime + HittingLabPresentation.ResultPause + 0.01;
             Frame(over);
-            Frame(over + 2.0);
             Assert.IsFalse(_lab.EditorLocked, "ready again");
-            Assert.IsTrue(game.Bases.First || game.Bases.Second || game.Bases.Third, "somebody is on base");
-            foreach (Base b in new[] { Base.First, Base.Second, Base.Third }.Where(game.Bases.IsOccupied))
+            foreach (DefensivePosition p in new[] { DefensivePosition.FirstBase, DefensivePosition.SecondBase, DefensivePosition.ThirdBase, DefensivePosition.Shortstop, DefensivePosition.LeftField, DefensivePosition.CenterField, DefensivePosition.RightField })
+                Assert.Less(Vector3.Distance(Flat(_view.Defense.Figure(p).transform.position), Flat(SimulationSpace.ToUnity(game.Situation.Alignment[p]))), 1e-3f, $"{p} in position");
+
+            // The next pitch thrown at once: the runners left on base walk to their leads before contact — exactly where the
+            // next play starts them — and nobody jumps at contact.
+            Base[] on = new[] { Base.First, Base.Second, Base.Third }.Where(game.Bases.IsOccupied).ToArray();
+            Assert.IsNotEmpty(on, "somebody is on base");
+            LivePlay next = Swing(0.006, 0.02);
+            At(next.ContactTime - 0.001);
+            foreach (Base b in on)
             {
                 Vector3 lead = SimulationSpace.ToUnity(BaseLeg.Of(b, false).PositionAt(LivePlay.Lead(b)));
                 Assert.Less(Vector3.Distance(Flat(_view.Runners.Figure(new Runner(b)).transform.position), Flat(lead)), 1e-3f, $"leading off {b}");
             }
 
-            // The defense stands in the new situation's alignment by the next pitch.
-            Frame(over + 2.0 + DefenseView.ReturnTime);
-            foreach (DefensivePosition p in new[] { DefensivePosition.Shortstop, DefensivePosition.SecondBase, DefensivePosition.LeftField })
-                Assert.Less(Vector3.Distance(Flat(_view.Defense.Figure(p).transform.position), Flat(SimulationSpace.ToUnity(game.Situation.Alignment[p]))), 1e-3f, $"{p} in position");
-
-            // The next play starts every runner where his figure stood: no jump at contact.
-            Base[] on = new[] { Base.First, Base.Second, Base.Third }.Where(game.Bases.IsOccupied).ToArray();
-            Vector3[] before = on.Select(b => Flat(_view.Runners.Figure(new Runner(b)).transform.position)).ToArray();
-            LivePlay next = Swing(0.006, 0.02);
-            At(next.ContactTime + 0.01);
+            var fielders = new[] { DefensivePosition.SecondBase, DefensivePosition.Shortstop, DefensivePosition.CenterField };
+            Vector3[] runnersBefore = on.Select(b => Flat(_view.Runners.Figure(new Runner(b)).transform.position)).ToArray();
+            Vector3[] fieldersBefore = fielders.Select(p => Flat(_view.Defense.Figure(p).transform.position)).ToArray();
+            At(next.ContactTime + 0.001);
             for (int i = 0; i < on.Length; i++)
-                Assert.Less(Vector3.Distance(before[i], Flat(_view.Runners.Figure(new Runner(on[i])).transform.position)), 0.1f, $"runner from {on[i]}");
+                Assert.Less(Vector3.Distance(runnersBefore[i], Flat(_view.Runners.Figure(new Runner(on[i])).transform.position)), 0.05f, $"runner from {on[i]}");
+            for (int i = 0; i < fielders.Length; i++)
+                Assert.Less(Vector3.Distance(fieldersBefore[i], Flat(_view.Defense.Figure(fielders[i]).transform.position)), 0.05f, $"{fielders[i]}");
         }
 
         [UnityTest]

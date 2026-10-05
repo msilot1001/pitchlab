@@ -49,7 +49,8 @@ namespace Pitchlab.Gameplay.Play
 
         private readonly int[] _score = new int[2];
         private readonly List<string> _log = new List<string>();
-        private (int Inning, Half Half, int Outs, BaseOccupancy Bases, int Away, int Home) _paStart;
+        private (int Inning, Half Half, int Outs, BaseOccupancy Bases, int Away, int Home, int Pa, int Log) _paStart;
+        private LivePlay _lastApplied;
 
         public GameState() => _paStart = Snapshot();
 
@@ -86,7 +87,10 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Back to the situation this plate appearance started from (undoes the last play's result).</summary>
         public void ResetPlateAppearance()
         {
-            (Inning, Half, Outs, Bases, _score[0], _score[1]) = _paStart;
+            int log;
+            (Inning, Half, Outs, Bases, _score[0], _score[1], PlateAppearance, log) = _paStart;
+            _log.RemoveRange(log, _log.Count - log);
+            _lastApplied = null;
         }
 
         /// <summary>
@@ -98,10 +102,12 @@ namespace Pitchlab.Gameplay.Play
         {
             if (play == null) throw new ArgumentNullException(nameof(play));
             if (!play.IsOver) throw new InvalidOperationException("Apply a play once it is over.");
+            if (ReferenceEquals(play, _lastApplied)) throw new InvalidOperationException("This play has already been applied.");
             if (play.Situation.Outs != Outs || !play.Situation.Bases.Equals(Bases)) throw new InvalidOperationException("The play did not start from this state.");
             if (play.Kind == LivePlay.BallKind.Dead && play.AwardedBases == 0) return;   // foul: the plate appearance goes on
 
             _paStart = Snapshot();
+            _lastApplied = play;
             _score[Half == Half.Top ? 0 : 1] += play.Runs;
             PlateAppearance++;
             int outs = Math.Min(play.Outs, OutsPerHalf);
@@ -130,6 +136,6 @@ namespace Pitchlab.Gameplay.Play
 
         public override string ToString() => $"{HalfName} {Inning} · {Outs} out · {Bases} · Away {AwayScore} – Home {HomeScore}";
 
-        private (int, Half, int, BaseOccupancy, int, int) Snapshot() => (Inning, Half, Outs, Bases, _score[0], _score[1]);
+        private (int, Half, int, BaseOccupancy, int, int, int, int) Snapshot() => (Inning, Half, Outs, Bases, _score[0], _score[1], PlateAppearance, _log.Count);
     }
 }

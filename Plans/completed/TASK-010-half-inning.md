@@ -29,10 +29,14 @@ Claude Code (sole writer); reviewers and Codex read-only.
 - [x] Lab integration, presentation between plays, panel, scene.
 - [x] PlayMode tests (2): result at play end, editor lock, lead-offs = next play's start, defense back in alignment, third
   out → half change, reset.
-- [ ] Reviews; check.sh; Codex; merge.
+- [x] Reviews (Unity, Codex B) and fixes: a play cannot be applied twice; Reset PA also rolls back the PA count and log;
+  fielders jog back during the result pause (1.4 s < 1.5 s: back before the next pitch can be thrown) keeping the ball in
+  the last holder's glove; a new pitch ends any pitcher return (the delivery is his only writer); alignment latched while a
+  play is shown; START PA has the wind-up; clicks on the editor panel never capture the mouse or throw.
+- [x] check.sh (EditMode 534/540, PlayMode 48/48); merge.
 
 ## Verification
-- check.sh: EditMode 533/539 (6 skipped, pre-existing), PlayMode 48/48.
+- check.sh: EditMode 534/540 (6 skipped, pre-existing), PlayMode 48/48.
 - Runtime (GameLab): R1 0 out → hard grounder to 2B, OUT AT 2B; state → 1 out, R1, PA 1, Ready. Scripted half-inning:
   CF hit, RF hit (bases loaded, 1 out), liner to SS caught + runner doubled off → 3 out → Bottom 1, bases empty. Loaded
   preset: runners lead off; panel and state line visible.
@@ -40,3 +44,4 @@ Claude Code (sole writer); reviewers and Codex read-only.
 ## Remaining risks / limitations
 - No count, no batting order (one batter model), no game end (innings continue).
 - Runners shown between plays are keyed by base (figure identity may change between plays; presentation only).
+- A press that skips the rest of a play cuts its presentation (runners/fielders jump to the next state).

@@ -227,14 +227,14 @@ namespace Pitchlab.Sandbox
             // he plays the ball (a dribbler); the primary defender is framed with the ball, which sits in his glove from
             // the possession moment.
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C;
-            _defense.Alignment = _lab.Situation.Alignment;   // where they stand for the next pitch (double-play depth…)
+            // Where they stand: the play's alignment while it is shown, the next situation's once it is over.
+            LivePlay shown = _lab.LastLive;
+            bool returning = shown != null && shown.IsOver && t > shown.EndTime;
+            _defense.Alignment = (shown != null && !returning ? shown.Situation : _lab.Situation).Alignment;
             _defense.Clock = _lab.Clock;
-            // Once the play is over (and its result shown) the fielders jog back to the alignment and the ball returns to the
-            // pitcher.
-            LivePlay played = _lab.LastLive;
-            bool playOver = played != null && played.IsOver && t > played.EndTime + ResultPause;
-            _defense.Show(playOver ? null : _lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
-            if (playOver) _lab.BallTransform.position = _pitcher.BallAnchor.position;
+            // Once the play is over the fielders jog back to the alignment during the result pause (back before the next pitch
+            // can be thrown); whoever has the ball keeps it.
+            _defense.Show(returning ? null : _lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
 
             // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
@@ -316,6 +316,7 @@ namespace Pitchlab.Sandbox
 
         private void ResetForPitch(HittingPitch pitch)
         {
+            _defense.EndPitcherReturn();
             _pitch = pitch;
             _swing = null;
             _contactShown = false;

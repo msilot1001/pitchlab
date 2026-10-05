@@ -107,6 +107,19 @@ namespace Pitchlab.Tests
             Assert.AreNotEqual(start, game.ToString());
             game.ResetPlateAppearance();
             Assert.AreEqual(start, game.ToString());
+            Assert.AreEqual(0, game.PlateAppearance, "the plate appearance is replayed");
+            Assert.AreEqual(0, game.Log.Count, "and its log line removed");
+        }
+
+        [Test]
+        public void APlayIsAppliedOnce()
+        {
+            // A solo home run leaves outs and bases as they were: applying it again must still be refused.
+            var game = new GameState();
+            LivePlay hr = HomeRun(game);
+            game.Apply(hr);
+            Assert.Throws<InvalidOperationException>(() => game.Apply(hr));
+            Assert.AreEqual((1, 1), (game.AwayScore, game.PlateAppearance));
         }
 
         [Test]

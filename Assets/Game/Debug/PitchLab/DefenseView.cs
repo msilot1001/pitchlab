@@ -95,13 +95,18 @@ namespace Pitchlab.Sandbox
 
         /// <summary>After a play the fielders jog back to the alignment in this long (real s; presentation only — the next play
         /// starts them from the alignment).</summary>
-        public const double ReturnTime = 2.0;
+        public const double ReturnTime = 1.4;
         private readonly Vector3d[] _returnFrom = new Vector3d[DefensiveAlignment.Count];
         /// <summary>The real-time clock the jog back runs on (the lab's clock: tests freeze it).</summary>
         public Func<double> Clock { get; set; } = () => Time.realtimeSinceStartupAsDouble;
         private double _returnStart = double.NegativeInfinity;
         /// <summary>The adopted pitcher moved in the last play: this view walks him back to the rubber before handing him back.</summary>
         private bool _pitcherReturning;
+        /// <summary>Who had the ball when the play ended: he keeps it in his glove as he jogs back.</summary>
+        private DefensivePosition? _returnHolder;
+
+        /// <summary>A new pitch: the delivery has the pitcher (whatever is left of his jog back).</summary>
+        public void EndPitcherReturn() => _pitcherReturning = false;
         private bool Returning => _defense == null && Clock() - _returnStart < ReturnTime;
 
         /// <summary>Poses every defender for <paramref name="defense"/> at play time <paramref name="time"/> (null: ready at the
@@ -113,6 +118,7 @@ namespace Pitchlab.Sandbox
                 for (int i = 0; i < _returnFrom.Length; i++) _returnFrom[i] = _defense.FielderPositionAt((DefensivePosition)i, _time);
                 _returnStart = Clock();
                 _pitcherReturning = DrivesPitcher(_defense, _time);
+                _returnHolder = _defense.HolderAt(double.MaxValue);   // whoever ends up with it
             }
 
             if (!ReferenceEquals(defense, _defense)) _pitcherTakeover = double.NaN;
@@ -144,6 +150,10 @@ namespace Pitchlab.Sandbox
 
                 Pose(p, figure, defense, time, ball);
             }
+
+            // Between plays the ball stays in the glove of whoever had it.
+            if (defense == null && ball != null && _returnHolder is DefensivePosition h && _figures[(int)h] != null && _figures[(int)h].gameObject.activeSelf)
+                ball.position = _figures[(int)h].GloveAnchor.position;
         }
 
         /// <summary>The figure the camera should keep with the ball (the holder, the receiver of a throw in the air, whoever

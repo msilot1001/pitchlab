@@ -15,6 +15,19 @@ namespace Pitchlab.Sandbox
         [SerializeField] private HittingLabController _lab;
         [SerializeField] private bool _showEditor = true;
 
+        private void OnEnable()
+        {
+            if (_lab != null) _lab.ClickBlocked = p => _lab.Game != null && PanelRect.Contains(new Vector2(p.x, Screen.height - p.y));
+        }
+
+        private void OnDisable()
+        {
+            if (_lab != null) _lab.ClickBlocked = null;
+        }
+
+        /// <summary>The panel's screen area (GUI coordinates, origin top-left).</summary>
+        private Rect PanelRect => new Rect(Screen.width - 330, 10, 320, _showEditor ? 382 : 46);
+
         private void Update()
         {
             if (Keyboard.current != null && Keyboard.current.gKey.wasPressedThisFrame) _showEditor = !_showEditor;

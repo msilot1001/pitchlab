@@ -186,6 +186,7 @@ namespace Pitchlab.Sandbox
             _panelAction = Button("<Keyboard>/h", null, _ => _showPanel = !_showPanel);
             _clickAction = Button("<Mouse>/leftButton", null, context =>
             {
+                if (!MouseCaptured && Mouse.current != null && ClickBlocked != null && ClickBlocked(Mouse.current.position.ReadValue())) return;
                 if (_requireMouseCapture && !MouseCaptured)
                 {
                     // The capturing click never throws; but during a live pitch (the lock was lost mid at-bat) it still swings.
@@ -294,7 +295,11 @@ namespace Pitchlab.Sandbox
         public void ThrowPitch(int presetIndex) => ThrowPitch(presetIndex, Clock());
 
         /// <summary>The next pitch of the plate appearance (the selected preset), now.</summary>
-        public void StartPlateAppearance() => ThrowPitch(_presetIndex, Clock());
+        public void StartPlateAppearance() => ThrowPitch(_presetIndex, Clock() + _deliveryLead / _playbackSpeed);
+
+        /// <summary>Screen points (Input System coordinates, origin bottom-left) where a click belongs to an on-screen panel and
+        /// must not capture the mouse or throw/swing (the GameLab's Situation Editor).</summary>
+        public Func<Vector2, bool> ClickBlocked { get; set; }
 
         /// <summary>Simulates the selected pitch; it is released at <paramref name="releaseRealtime"/> on the shared clock.</summary>
         public void ThrowPitch(int presetIndex, double releaseRealtime)
