@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
+using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Simulation.BallFlight;
@@ -47,6 +48,50 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void ABattedBallIsAFoulOnlyWhenItIsDeadWithoutAnAward()
+        {
+            var game = new GameState();
+            HittingPitch pitch = HittingPitch.Create(Simulation.Pitching.PitchPresets.FourSeam, EnvironmentState.Standard);
+            var swing = new SwingInput(pitch.IdealContactTime - SwingParameters.Default.SwingDuration, pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z);
+            ContactResult contact = ContactResolver.Resolve(pitch, swing, SwingParameters.Default);
+            Assert.IsTrue(contact.IsContact);
+            Assert.AreEqual(PitchOutcome.Foul, PitchOutcomes.Of(pitch, swing, contact, Foul(game)));
+            Assert.AreEqual(PitchOutcome.InPlay, PitchOutcomes.Of(pitch, swing, contact, Single(game)));
+            LivePlay hr = HomeRun(game);
+            Assert.AreEqual(LivePlay.BallKind.Dead, hr.Kind, "a home run is dead too — with an award");
+            Assert.AreEqual(PitchOutcome.InPlay, PitchOutcomes.Of(pitch, swing, contact, hr));
+            Assert.Throws<ArgumentNullException>(() => PitchOutcomes.Of(pitch, swing, contact, null));
+        }
+
+        [Test]
+        public void ResetAfterAFinishedPlateAppearanceReturnsToTheNextOnesStart()
+        {
+            // The first pitch of each plate appearance marks where RESET PA returns (not the editor's last change).
+            var game = new GameState();
+            for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);   // walk: PA 1 over
+            game.Pitch(PitchOutcome.Ball);
+            game.ResetPlateAppearance();
+            Assert.AreEqual((new BaseOccupancy(true, false, false), new Count(), 1, 1), (game.Bases, game.Count, game.PlateAppearance, game.Log.Count), "back to PA 2's start, the walk stands");
+            game.Apply(Single(game));
+            game.Apply(Foul(game));
+            Assert.AreEqual(new Count(0, 1), game.Count);
+            game.ResetPlateAppearance();
+            Assert.AreEqual((new BaseOccupancy(true, true, false), new Count(), 2), (game.Bases, game.Count, game.PlateAppearance), "back to after the single");
+        }
+
+        [Test]
+        public void EditingMidCountThenResettingStartsThePlateAppearanceOver()
+        {
+            var game = new GameState();
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.CalledStrike);
+            game.Set(GameState.Presets.First(p => p.Name == "R3, 1 out"));
+            Assert.AreEqual(new Count(1, 1), game.Count, "the editor keeps the count");
+            game.ResetPlateAppearance();
+            Assert.AreEqual((1, new BaseOccupancy(false, false, true), new Count()), (game.Outs, game.Bases, game.Count));
+        }
+
+        [Test]
         public void BallFourWalksTheBatterAndForcesTheRunners()
         {
             var game = new GameState();
@@ -75,6 +120,11 @@ namespace Pitchlab.Tests
             StringAssert.Contains("strikeout looking", game.Log.Last());
             for (int i = 0; i < 3; i++) game.Pitch(PitchOutcome.SwingingStrike);
             Assert.AreEqual((Half.Bottom, 0, BaseOccupancy.Empty), (game.Half, game.Outs, game.Bases), "three out");
+            StringAssert.Contains("strikeout swinging, 0 runs → 3 out", game.Log[game.Log.Count - 2]);
+            Assert.AreEqual("— Bottom 1 —", game.Log.Last());
+            game.Set(1, Half.Bottom, 2, BaseOccupancy.Loaded, 0, 0);
+            for (int i = 0; i < 3; i++) game.Pitch(PitchOutcome.CalledStrike);
+            Assert.AreEqual((2, Half.Top, 0, BaseOccupancy.Empty, 0, 0), (game.Inning, game.Half, game.Outs, game.Bases, game.AwayScore, game.HomeScore), "the bottom half ends: next inning, nobody scored");
             Assert.Throws<ArgumentException>(() => game.Pitch(PitchOutcome.Foul), "a batted ball comes with its play");
         }
 

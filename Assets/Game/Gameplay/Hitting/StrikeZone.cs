@@ -65,7 +65,7 @@ namespace Pitchlab.Gameplay.Hitting
             if (!swing.HasValue) return StrikeZone.IsStrike(pitch) ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
             if (!(result is ContactResult r) || !r.IsContact) return PitchOutcome.SwingingStrike;
             if (play == null) throw new ArgumentNullException(nameof(play), "a batted ball has a play");
-            return play.Kind == LivePlay.BallKind.Dead && play.AwardedBases == 0 ? PitchOutcome.Foul : PitchOutcome.InPlay;
+            return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
         }
     }
 }

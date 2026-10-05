@@ -399,7 +399,8 @@ namespace Pitchlab.Sandbox
                 case BattingState.PitchInFlight:
                     // One swing per pitch: a second press stamped earlier than the first (another device's event handled
                     // later in the same update) reads as "before the swing" but must not swing again.
-                    if (!LastSwing.HasValue) SwingAtSimTime(ToSimTime(eventRealtime));
+                    // A press stamped before the end of the pitch but handled after its take was counted is too late.
+                    if (!LastSwing.HasValue && (Game == null || _resultPending)) SwingAtSimTime(ToSimTime(eventRealtime));
                     return;
                 case BattingState.Windup:
                 case BattingState.Swinging:

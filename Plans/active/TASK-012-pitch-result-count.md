@@ -17,8 +17,8 @@ Claude Code (sole writer); test-reviewer / rules reviewer and Codex read-only.
 
 ## Design
 - Gameplay/Rules `Count` (balls, strikes) with `After(PitchResult)` → next count and how the plate appearance ends
-  (none, walk, strikeout, in play). OBR: ball four → walk (5.05(b)(1)); strike three → out (5.09(a)(2)); a foul is a strike
-  unless there are two (Definition of Terms "Strike" (d)); fair ball → in play.
+  (none, walk, strikeout, in play). OBR: ball four → walk (5.05(b)(1); forced runners 5.06(b)(3)(B)); strike three → out (5.09(a)(2)); a foul is a strike
+  unless there are two (Definition of Terms "Strike" (c)); fair ball → in play.
 - Gameplay/Hitting `StrikeZone`: a taken pitch is a strike when any part of the ball passes through the zone at the front
   plane of home plate (Statcast plate_x / plate_z plane) — |x| ≤ half plate + ball radius, bottom − r ≤ z ≤ top + r with the
   default zone. REFERENCE CONVENTION (the rulebook zone is a 3-D volume over the plate and depends on the batter's stance).

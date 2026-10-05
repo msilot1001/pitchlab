@@ -69,7 +69,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The situation the next pitch is thrown in.</summary>
         public Situation Situation => new Situation(Outs, Bases);
 
-        /// <summary>The Situation Editor (between plays only — the caller locks it during a live play). The count is kept.</summary>
+        /// <summary>The Situation Editor (between plays only — the caller locks it during a live play). The count is kept;
+        /// RESET PA then returns to the edited situation at 0–0.</summary>
         public void Set(int inning, Half half, int outs, BaseOccupancy bases, int away, int home)
         {
             if (inning < 1) throw new ArgumentOutOfRangeException(nameof(inning));
@@ -82,6 +83,7 @@ namespace Pitchlab.Gameplay.Play
             _score[0] = away;
             _score[1] = home;
             _paStart = Snapshot();
+            _paStart.Count = default;   // RESET PA: the edited situation at the plate appearance's start (0–0)
         }
 
         public void Set(SituationPreset preset) => Set(Inning, Half, preset.Outs, preset.Bases, AwayScore, HomeScore);
@@ -119,7 +121,7 @@ namespace Pitchlab.Gameplay.Play
             if (!play.IsOver) throw new InvalidOperationException("Apply a play once it is over.");
             if (ReferenceEquals(play, _lastApplied)) throw new InvalidOperationException("This play has already been applied.");
             if (play.Situation.Outs != Outs || !play.Situation.Bases.Equals(Bases)) throw new InvalidOperationException("The play did not start from this state.");
-            return Record(play.Kind == LivePlay.BallKind.Dead && play.AwardedBases == 0 ? PitchOutcome.Foul : PitchOutcome.InPlay, play);
+            return Record(play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay, play);
         }
 
         private PlateAppearanceEnd Record(PitchOutcome result, LivePlay play)

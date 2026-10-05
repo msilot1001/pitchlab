@@ -26,6 +26,10 @@ namespace Pitchlab.Tests
             Assert.AreEqual((new Count(), PlateAppearanceEnd.Strikeout), new Count(3, 2).After(PitchOutcome.CalledStrike), "strike three, full count");
             Assert.AreEqual((new Count(), PlateAppearanceEnd.Strikeout), new Count(1, 2).After(PitchOutcome.SwingingStrike));
             Assert.AreEqual((new Count(), PlateAppearanceEnd.InPlay), new Count(2, 1).After(PitchOutcome.InPlay));
+            // Each pitch moves only its own half of the count.
+            Assert.AreEqual((new Count(2, 2), PlateAppearanceEnd.None), new Count(2, 1).After(PitchOutcome.CalledStrike));
+            Assert.AreEqual((new Count(2, 2), PlateAppearanceEnd.None), new Count(1, 2).After(PitchOutcome.Ball));
+            Assert.AreEqual((new Count(0, 1), PlateAppearanceEnd.None), new Count().After(PitchOutcome.Foul));
         }
 
         [Test]

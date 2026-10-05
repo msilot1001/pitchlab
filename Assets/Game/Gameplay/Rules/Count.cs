@@ -2,7 +2,8 @@ using System;
 
 namespace Pitchlab.Gameplay.Rules
 {
-    /// <summary>What one pitch did (TASK-012). Hit-by-pitch, check swings and bunts are not modelled.</summary>
+    /// <summary>What one pitch did (TASK-012). Hit-by-pitch, check swings and bunts are not modelled; the catcher always
+    /// holds strike three (no dropped third strike, OBR 5.05(a)(2)).</summary>
     public enum PitchOutcome
     {
         Ball,
@@ -42,7 +43,7 @@ namespace Pitchlab.Gameplay.Rules
         /// <summary>
         /// The count after <paramref name="pitch"/> and whether it ended the plate appearance: ball four is a walk (OBR
         /// 5.05(b)(1)), strike three an out (5.09(a)(2)); a foul is a strike only with fewer than two strikes (Definitions,
-        /// "Strike" (d)); a fair ball ends it in play. A finished plate appearance's count is 0–0 (the next batter's).
+        /// "Strike" (c)); a fair ball ends it in play. A finished plate appearance's count is 0–0 (the next batter's).
         /// </summary>
         public (Count Next, PlateAppearanceEnd End) After(PitchOutcome pitch)
         {
@@ -63,7 +64,7 @@ namespace Pitchlab.Gameplay.Rules
         }
 
         /// <summary>
-        /// The bases after a walk: the batter to first and every forced runner up one base (OBR 5.05(b)(1)); with the bases
+        /// The bases after a walk: the batter to first and every forced runner up one base (OBR 5.05(b)(1), 5.06(b)(3)(B)); with the bases
         /// loaded the runner on third scores (<paramref name="runs"/> = 1).
         /// </summary>
         public static BaseOccupancy Walk(BaseOccupancy before, out int runs)
