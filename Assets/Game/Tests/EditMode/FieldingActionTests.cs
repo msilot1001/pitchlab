@@ -43,12 +43,14 @@ namespace Pitchlab.Tests
         [Test]
         public void ActionCriteriaAreObjective()
         {
+            var seen = new System.Collections.Generic.List<FieldingAction>();
             // A sliding catch is low and at speed; a jumping catch is high; a dive is the dive envelope; a running catch is moving.
             foreach (var (mph, launch, spray, spin) in new[] { (60.0, 10.0, -20.0, 1500.0), (95.0, 30.0, -10.0, 2200.0), (80.0, 22.0, -40.0, 1500.0), (90.0, 20.0, 15.0, 1800.0) })
             {
                 FieldingPlay f = Field(mph, launch, spray, spin);
                 FielderMotion m = f.Motion(f.Primary.Value);
                 double speed = m.VelocityAt(f.Intercept.Time).Length, z = f.Intercept.Ball.Position.Z;
+                seen.Add(f.Action);
                 switch (f.Action)
                 {
                     case FieldingAction.SlidingCatch:
@@ -64,8 +66,13 @@ namespace Pitchlab.Tests
                     case FieldingAction.RunningCatch:
                         Assert.GreaterOrEqual(speed, FieldingActions.RunningSpeed);
                         break;
+                    default:
+                        Assert.Fail($"unexpected {f.Action}");
+                        break;
                 }
             }
+
+            CollectionAssert.AreEquivalent(new[] { FieldingAction.SlidingCatch, FieldingAction.JumpingCatch, FieldingAction.DivingCatch, FieldingAction.RunningCatch }, seen);
         }
 
         [Test]
@@ -79,10 +86,20 @@ namespace Pitchlab.Tests
             Assert.GreaterOrEqual(f.Intercept.RouteDistance, InterceptSolver.DiveRunUp);
             FieldingPlay normal = Field(92.0, 32.0, 0.0, 2400.0);
             Assert.IsFalse(normal.Intercept.Dive, "a routine fly is caught standing, never dived for");
-            // Without the dive nobody catches it: every defender's own intercept is not a catch.
+            // Without the dive nobody catches it: every defender's own intercept is not a catch — the diver's normal one included.
             foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
                 if (p != f.Primary)
                     Assert.AreNotEqual(InterceptKind.FlyCatch, f.Candidate(p).Kind, $"{p} could catch it normally");
+            DefensivePosition diver = f.Primary.Value;
+            Intercept normal2 = InterceptSolver.Solve(f.Ball, DefensiveAlignment.Standard[diver], FielderProfile.For(diver), FieldLayout.Standard, double.PositiveInfinity);
+            Assert.AreNotEqual(InterceptKind.FlyCatch, normal2.Kind, "the diver himself cannot catch it without diving");
+            // The ball is within the running reach plus the dive's extra reach of where he takes off — and no further.
+            Vector3d at = f.Motion(diver).PositionAt(f.Intercept.Time), ball = f.Intercept.Ball.Position;
+            double gap = new Vector3d(ball.X - at.X, ball.Y - at.Y, 0.0).Length;
+            Assert.LessOrEqual(gap, FielderProfile.For(diver).ReachAt(ball.Z) + InterceptSolver.DiveReach + 1e-6);
+            Assert.Greater(gap, FielderProfile.For(diver).ReachAt(ball.Z), "beyond the running reach: a real dive");
+            // The second-baseman preset is a dive too.
+            Assert.IsTrue(Field(60.0, 16.0, 0.0, 1500.0).Intercept.Dive);
         }
 
         [Test]
@@ -113,7 +130,12 @@ namespace Pitchlab.Tests
             play.RunToEnd();
             LiveThrow th = play.Defense.Throws.FirstOrDefault(x => x.Thrower == f.Primary);
             Assert.IsNotNull(th, "he throws the ball in");
-            Assert.GreaterOrEqual(th.ReleaseTime, f.PossessionTime + ThrowProfile.For(f.Primary.Value).TransferTime + FieldingActions.DiveRecovery - 1e-9);
+            // To the cut-off (no waiting for a cover): the release is exactly transfer + recovery after the catch.
+            Assert.AreEqual(f.PossessionTime + ThrowProfile.For(f.Primary.Value).TransferTime + FieldingActions.DiveRecovery, th.ReleaseTime, 1e-6);
+            // The runners' read of the defense includes it too (asked live: before the play has run).
+            var fresh = new LivePlay(f, new Situation(0, new BaseOccupancy(true, false, false)));
+            Assert.GreaterOrEqual(fresh.DefenseEta(Base.Second, fresh.ContactTime + 0.5),
+                f.PossessionTime + ThrowProfile.For(f.Primary.Value).TransferTime + FieldingActions.DiveRecovery);
         }
     }
 }

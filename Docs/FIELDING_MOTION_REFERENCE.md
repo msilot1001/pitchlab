@@ -8,7 +8,8 @@ approximation; a tuning starting point). Presentation follows gameplay; these sh
 - Walking ≈ 115–120 steps/min, step ≈ 0.75–0.85 m, duty factor ≈ 0.6 — **MEASURED** ([PMC8008308](https://pmc.ncbi.nlm.nih.gov/articles/PMC8008308/)).
 - Jogging 150–165 steps/min; fast running 170–190 — **REFERENCE CONVENTION/MEASURED** ([PMC6915645](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6915645/)).
 - Elite top speed 10.6 m/s: ≈ 4.5 steps/s, step ≈ 2.3 m, contact 0.096 s, flight 0.124 s (duty ≈ 0.22) — **MEASURED** ([PMC6628312](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6628312/)).
-- Acceleration: trunk lean 30–45° over the first 10 m, upright near top speed; contact ≈ 0.20 s on the first steps — **MEASURED**.
+- Acceleration: trunk lean 30–45° over the first 10 m, upright near top speed; contact ≈ 0.20 s on the first steps — **REFERENCE
+  CONVENTION** (sprint-start literature; no single source retrieved).
 - MLB sprint speed average 27 ft/s (8.2 m/s) — **MEASURED** ([Statcast](https://www.mlb.com/glossary/statcast/sprint-speed)).
 - Implemented: cadence f(v) = 1.8 + 0.28 v steps/s (2.2 walking, 2.6 jogging, 4.1 at 8.2 m/s), step = v / f, duty 0.6 → 0.28,
   forward lean from speed and acceleration, back-lean and lower when braking, arms opposite the legs — **VISUALLY ESTIMATED** fit to the above.
@@ -34,6 +35,9 @@ approximation; a tuning starting point). Presentation follows gameplay; these sh
   over-the-shoulder catch keeps running — **REFERENCE CONVENTION** ([drop step](https://www.learn-youth-baseball-coaching.com/BaseballOutfield-DropStep.html)).
 - Sliding catch: feet first, glove-side hand out, low — **REFERENCE CONVENTION**.
 - Dive: take-off ≈ one stride from the ball, airborne ≈ 0.3–0.4 s, up again ≈ 1.0–1.5 s after landing — **VISUALLY ESTIMATED**.
+  Implemented (gameplay): fly balls only, ball 0.15–1.2 m high, ≥ 6 m run-up, +1.0 m reach, only when nobody can catch it
+  normally, +1.0 s before the throw can be ready; a dive inside the envelope always holds the ball (no misses modelled).
+  Infield dives from a near-standing start (the most common MLB dive) are not modelled.
 - Statcast catch probability tiers (5★ 0–25 %, 4★ 30–50 %, …) depend on distance, opportunity time, direction, wall — **MEASURED** ([Catch Probability](https://mlb.com/glossary/statcast/catch-probability), [Jump](https://www.mlb.com/glossary/statcast/jump)). No published dive frequency.
 
 ## Throwing and receiving

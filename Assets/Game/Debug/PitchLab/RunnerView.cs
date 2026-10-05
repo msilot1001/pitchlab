@@ -57,10 +57,12 @@ namespace Pitchlab.Sandbox
                 if (!on) continue;
                 BaseLeg leg = BaseLeg.Of(pair.Key, false);
                 float u = Mathf.SmoothStep(0f, 1f, leadOff);
-                Vector3 at = SimulationSpace.ToUnity(leg.PositionAt(u * LivePlay.Lead(pair.Key)));
+                // From the bag's outside edge (where the play left him, RunnerBagSide) out to his lead.
+                Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(pair.Key));
+                Vector3 at = SimulationSpace.ToUnity(leg.PositionAt(u * LivePlay.Lead(pair.Key))) + (bag - Mound).normalized * (RunnerBagSide * (1f - u));
                 Vector3 toNext = SimulationSpace.ToUnity(FieldLayout.BasePosition(BaseLeg.Bases(pair.Key))) - at;
                 // Leading off: the lead stance, lower during the delivery (the secondary lead, in place).
-                var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN, Ready = u > 0.5f ? ReadyStyle.RunnerLead : ReadyStyle.RunnerStand, Secondary = secondary };
+                var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN, Ready = ReadyStyle.Runner, LeadStance = u, Secondary = secondary };
                 Pose(pair.Value, at, YawOf(Mound - Flat(at)), Vector3.zero, 0f, 0f, 0f, input);
             }
         }
@@ -99,13 +101,13 @@ namespace Pitchlab.Sandbox
                 root += BagSide(r, time);
 
                 MotionTrack track = Track(r.Id.From);
-                LiveRunner runner = r;
-                if (!track.Follows(play)) track.Follow(play, play.ContactTime, YawOf(Facing(runner, play.ContactTime)), t => Sample(runner, t));
+                if (!track.Follows(play)) track.Follow(play, play.ContactTime, YawOf(Facing(r, play.ContactTime)), Sampler(r));
                 (float phase, float yaw) = track.At(time);
                 Vector3 velocity = Flat(SimulationSpace.ToUnity(r.VelocityAt(time)));
                 float speed = velocity.magnitude;
                 float accel = (float)((r.SpeedAt(time + 0.05) - r.SpeedAt(Math.Max(play.ContactTime, time - 0.05))) / 0.1);
-                var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN };
+                // The secondary lead he had at the pitch eases off over the first moment of the play (no pop at contact).
+                var input = new FieldingPoseInput { Runner = true, ActionTime = float.NaN, Secondary = 1f - Mathf.SmoothStep(0f, 1f, (float)((time - play.ContactTime) / 0.3)) };
                 Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
                 Action(play, r, time, root, rotation, ref input);
                 _shown[r.Id.From] = input.Action;
@@ -138,18 +140,23 @@ namespace Pitchlab.Sandbox
         /// </summary>
         public static void Action(LivePlay play, LiveRunner r, double time, Vector3 root, Quaternion rotation, ref FieldingPoseInput input)
         {
-            bool onBag = r.TouchingBaseAt(time, out _);
-            input.Ready = onBag || r.SpeedAt(time) > 0.3 ? ReadyStyle.RunnerStand : ReadyStyle.RunnerLead;
+            // The lead stance by how far he is from the nearest bag (continuous: on the bag 0, at his lead 1).
+            input.Ready = ReadyStyle.Runner;
+            input.LeadStance = Mathf.SmoothStep(0f, 1f, (float)(NearestBag(r.PositionAt(time)) / 2.0));
             IReadOnlyList<LiveRunner.Segment> legs = r.Segments;
             for (int i = 0; i < legs.Count; i++)
             {
                 PathMotion m = legs[i].Motion;
                 BaseLeg leg = legs[i].Leg;
                 double next = i + 1 < legs.Count ? legs[i + 1].Motion.StartTime : double.PositiveInfinity;
+                // Put out on the way (tagged before he gets there): the slide is cut at the out, not dropped.
+                if (r.IsOut && Math.Abs(next - r.OutTime) < 1e-6) next = double.PositiveInfinity;
                 if (m.Sign > 0.0 && m.EndSpeed == 0.0 && leg.To != Base.First && leg.To != Base.Home && m.Deceleration == play.Profile.SlideDeceleration
                     && m.Target >= leg.Length - 1e-6 && m.ArrivalTime <= next + 1e-6)
                 {
-                    // Into second or third: the authoritative slide (its braking phase).
+                    // Into second or third: the authoritative slide (its braking phase) — shown as a slide on a close play; with no
+                    // throw coming he pulls up standing (the same braking, upright).
+                    if (!CloseThrow(play, leg.To, m.ArrivalTime)) continue;
                     double lead = m.ArrivalTime - m.BrakeTime;
                     if (time >= m.BrakeTime && time <= m.ArrivalTime + SlideRecovery + FieldingPoser.GetUp)
                         Set(ref input, BodyAction.Slide, time - m.ArrivalTime, (float)lead, root, rotation, leg.End);
@@ -187,9 +194,26 @@ namespace Pitchlab.Sandbox
 
         private static bool CloseThrow(LivePlay play, Base b, double arrival)
         {
-            foreach (var th in play.Defense.Throws)
-                if (th.Target == b && th.Caught && Math.Abs(th.Catch.Time - arrival) < ClosePlay) return true;
+            IReadOnlyList<Gameplay.Fielding.LiveThrow> throws = play.Defense.Throws;
+            for (int i = 0; i < throws.Count; i++)
+                if (throws[i].Target == b && throws[i].Caught && Math.Abs(throws[i].Catch.Time - arrival) < ClosePlay) return true;
             return false;
+        }
+
+        private static Func<double, MotionSample> Sampler(LiveRunner r) => t => Sample(r, t);
+
+        private static readonly Base[] AllBases = { Base.First, Base.Second, Base.Third, Base.Home };
+
+        private static double NearestBag(Vector3d at)
+        {
+            double best = double.PositiveInfinity;
+            foreach (Base b in AllBases)
+            {
+                Vector3d bag = FieldLayout.BasePosition(b);
+                best = Math.Min(best, new Vector3d(at.X - bag.X, at.Y - bag.Y, 0.0).Length);
+            }
+
+            return best;
         }
 
         private readonly Dictionary<Base, MotionTrack> _tracks = new Dictionary<Base, MotionTrack>();

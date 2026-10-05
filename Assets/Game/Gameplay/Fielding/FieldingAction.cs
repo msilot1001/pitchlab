@@ -34,19 +34,20 @@ namespace Pitchlab.Gameplay.Fielding
         /// <summary>Running at least this fast at the take (m/s) is a running catch.</summary>
         public const double RunningSpeed = 1.5;
         /// <summary>A catch with the ball centre above this (m) needs a jump (standing reach ≈ 2.2 m with the glove).</summary>
-        public const double JumpHeight = 2.25;
+        public const double JumpHeight = 2.4;
         /// <summary>A low ball (centre below, m) taken running this fast (m/s) or faster is a sliding catch.</summary>
         public const double SlideHeight = 0.6, SlideSpeed = 4.5;
         /// <summary>A ball whose ground point is this far (m) to the glove side / across the body is a forehand / backhand.</summary>
         public const double SideReach = 0.35;
-        /// <summary>A pickup within this long (s) after a bounce is a short hop.</summary>
-        public const double ShortHop = 0.12;
+        /// <summary>A pickup within this long (s) after a real bounce (falling faster than <see cref="RealBounce"/> m/s) is a short
+        /// hop: ≈ a foot of ball travel.</summary>
+        public const double ShortHop = 0.05, RealBounce = 1.0;
         /// <summary>Charging: running at it at least this fast (m/s) for a ball slower than <see cref="SlowRoller"/> (m/s).</summary>
         public const double ChargeSpeed = 2.5, SlowRoller = 9.0;
         /// <summary>A take this close to the fence (m) is a wall play.</summary>
         public const double WallZone = 3.0;
         /// <summary>Recovery after a diving catch before the ball can be thrown (s, added to the transfer; up off the ground).</summary>
-        public const double DiveRecovery = 0.8;
+        public const double DiveRecovery = 1.0;
 
         /// <param name="ball">The ball in play.</param>
         /// <param name="take">The take (time, ball state, kind, dive).</param>
@@ -80,7 +81,9 @@ namespace Pitchlab.Gameplay.Fielding
                     Vector3d incoming = Flat(take.Ball.Velocity);
                     double ballSpeed = incoming.Length;
                     // Charging a slow ball: running toward where it comes from.
-                    if (ballSpeed < SlowRoller && speed >= ChargeSpeed && (ballSpeed < 0.5 || Dot(velocity, incoming) < -0.5 * speed * ballSpeed))
+                    // (A ball at rest: only if he runs at it toward home — an outfielder chasing a ball in the gap is not charging.)
+                    if (ballSpeed < SlowRoller && speed >= ChargeSpeed
+                        && (ballSpeed < 0.5 ? Dot(velocity, -fielder) > 0.5 * speed * Flat(fielder).Length : Dot(velocity, incoming) < -0.5 * speed * ballSpeed))
                         return FieldingAction.ChargingPickup;
                     if (SinceBounce(ball, take.Time) < ShortHop) return FieldingAction.ShortHopPickup;
                     // Side of the ball in the frame facing the incoming ball (a right-handed fielder: glove on the left).
@@ -99,7 +102,7 @@ namespace Pitchlab.Gameplay.Fielding
         {
             double last = double.NegativeInfinity;
             foreach (BallEvent e in ball.Events)
-                if (e.Kind == BallEventKind.GroundImpact && e.Time <= t) last = e.Time;
+                if (e.Kind == BallEventKind.GroundImpact && e.Time <= t && e.Before.Velocity.Z < -RealBounce) last = e.Time;
             return t - last;
         }
 

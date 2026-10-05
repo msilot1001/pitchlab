@@ -53,6 +53,9 @@ namespace Pitchlab.Tests
         private double Start => _lab.Play.First.Time;
         private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
+        /// <summary>The figure is in a slide or dive (shown low): its pelvis is below a squat.</summary>
+        private static bool Down(PlayerMannequin m) => m.Joint(MannequinJoint.Pelvis).position.y < 0.45f;
+
         private System.Collections.Generic.IEnumerable<PlayerMannequin> Figures()
         {
             foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition))) yield return _lab.Defense.Figure(p);
@@ -70,12 +73,21 @@ namespace Pitchlab.Tests
                 {
                     At(t);
                     foreach (PlayerMannequin m in Figures())
+                    {
                         foreach (Transform j in m.GetComponentsInChildren<Transform>())
                         {
                             Vector3 p = j.position;
+                            Quaternion q = j.localRotation;
                             Assert.IsTrue(float.IsFinite(p.x) && float.IsFinite(p.y) && float.IsFinite(p.z), $"{sc.Name}: {m.name}/{j.name} at +{t:0.0}");
                             Assert.Greater(p.y, -0.05f, $"{sc.Name}: {m.name}/{j.name} under the ground at +{t:0.0}");
+                            Assert.AreEqual(1f, Mathf.Sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w), 1e-3f, $"{sc.Name}: {m.name}/{j.name} rotation at +{t:0.0}");
                         }
+
+                        // On his feet the figure is never inverted: the head stays at least about at hip height (a deep running
+                        // scoop brings it down to the hips; only a slide or dive lays him down).
+                        if (!m.gameObject.activeInHierarchy || Down(m)) continue;
+                        Assert.Greater(m.Joint(MannequinJoint.Neck).position.y, m.Joint(MannequinJoint.Pelvis).position.y - 0.1f, $"{sc.Name}: {m.name} not inverted at +{t:0.0}");
+                    }
                 }
             }
         }
@@ -92,19 +104,24 @@ namespace Pitchlab.Tests
                 Launch(sc.Name);
                 const double dt = 1.0 / 120.0;
                 At(0.0);
-                Vector3 last = _lab.Ball.position;
+                Vector3 last = _lab.Ball.position, lastGame = SimulationSpace.ToUnity(_lab.Team.BallPositionAt(Start));
                 float max = 0f;
                 double at = 0.0;
                 for (double t = dt; t < _lab.Live.EndTime - Start; t += dt)
                 {
                     At(t);
-                    float step = Vector3.Distance(last, _lab.Ball.position);
-                    if (step > max) (max, at) = (step, t);
+                    Vector3 game = SimulationSpace.ToUnity(_lab.Team.BallPositionAt(Start + t));
+                    // The shown ball moves like the gameplay ball, plus at most a few centimetres a tick (into the glove, the
+                    // transfer, the arm action) — never a snap, however slow the gameplay ball is.
+                    float excess = Vector3.Distance(last, _lab.Ball.position) - Vector3.Distance(lastGame, game);
+                    if (excess > max) (max, at) = (excess, t);
                     last = _lab.Ball.position;
+                    lastGame = game;
                 }
 
-                worst.AppendLine($"{sc.Name}: largest step {max:0.000} m at +{at:0.00}");
-                Assert.Less(max, 50f * (float)dt + 0.05f, $"{sc.Name}: the ball jumped at +{at:0.00}");
+                worst.AppendLine($"{sc.Name}: largest excess step {max:0.000} m at +{at:0.00}");
+                // (≤ 10 cm: the two-bone arm can re-solve by a few centimetres as the body rises out of a pickup at speed.)
+                Assert.Less(max, 0.1f, $"{sc.Name}: the ball jumped at +{at:0.00}");
             }
 
             TestContext.WriteLine(worst.ToString());
@@ -135,6 +152,15 @@ namespace Pitchlab.Tests
                 }
 
             Assert.Greater(checkedFeet, 3);
+            // A runner standing on his bag (tagging up before the catch): planted too.
+            Launch("Runner on 3B, 1 out, deep fly: tag-up");
+            PlayerMannequin r3 = _lab.Runners.Figure(new Runner(Base.Third));
+            double catchAt = _lab.Fielding.PossessionTime - Start;
+            At(catchAt - 0.6);
+            Vector3 la = r3.Joint(MannequinJoint.LeftFoot).position, ra = r3.Joint(MannequinJoint.RightFoot).position;
+            At(catchAt - 0.3);
+            Assert.Less(Vector3.Distance(la, r3.Joint(MannequinJoint.LeftFoot).position), 0.02f, "runner's left foot");
+            Assert.Less(Vector3.Distance(ra, r3.Joint(MannequinJoint.RightFoot).position), 0.02f, "runner's right foot");
         }
 
         [UnityTest]
@@ -171,15 +197,16 @@ namespace Pitchlab.Tests
         [UnityTest]
         public IEnumerator ASlideReachesTheBagAtTheAuthoritativeArrival()
         {
-            // The runner from first slides into third (gameplay stops him there with the slide deceleration): he goes down when
-            // the authoritative braking starts and his lead foot is at the bag when he arrives — the arrival time is gameplay's.
+            // The batter-runner slides into second on the throw there (gameplay stops him with the slide deceleration; the throw
+            // is close): he goes down when the authoritative braking starts and his lead foot is at the bag when he arrives — the
+            // arrival time is gameplay's.
             yield return null;
-            Launch("Runner on 1B, ball off the wall");
-            LiveRunner r = _lab.Live.RunnerOf(new Runner(Base.First));
-            var slide = r.Segments.Last(s => s.Leg.To == Base.Third && s.Motion.Sign > 0.0 && s.Motion.ArrivalTime > s.Motion.StartTime);   // the run, not the standing state after it
+            Launch("F: R1, 2 out, gap ball");
+            LiveRunner r = _lab.Live.RunnerOf(Runner.Batter);
+            var slide = r.Segments.Last(s => s.Leg.To == Base.Second && s.Motion.Sign > 0.0 && s.Motion.ArrivalTime > s.Motion.StartTime);   // the run, not the standing state after it
             Assert.AreEqual(_lab.Live.Profile.SlideDeceleration, slide.Motion.Deceleration, "a slide stop");
             PlayerMannequin m = _lab.Runners.Figure(r.Id);
-            Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.Third));
+            Vector3 bag = SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.Second));
             At(slide.Motion.BrakeTime - Start - 0.15);
             float upright = m.Joint(MannequinJoint.Pelvis).position.y;
             Assert.Greater(upright, 0.75f, "running before the slide");
@@ -240,27 +267,109 @@ namespace Pitchlab.Tests
         public IEnumerator PosesDoNotDependOnTheFrameSchedule()
         {
             // The gait phase and heading are sampled on a fixed grid (MotionTrack): the same moment looks the same whether it
-            // was reached at 30 fps, 144 fps or in one jump.
+            // was reached at 30 fps, 144 fps, in one jump, or in 0.25× slow motion.
             yield return null;
-            const string preset = "Runner on 1B, ball off the wall";
-            double end = 6.0;
-            System.Collections.Generic.List<Vector3> Pose(double step)
+            foreach (string preset in new[] { "Runner on 1B, ball off the wall", "Diving catch (LF)", "Head-first back (R2)", "Home run, R1 (trot)" })
             {
-                Launch(preset);
-                for (double t = 0.0; t < end; t += step) At(t);
-                At(end);
-                return Figures().SelectMany(m => m.GetComponentsInChildren<Transform>()).Select(j => j.position).ToList();
-            }
+                double end = 5.5;
+                System.Collections.Generic.List<Vector3> Pose(double step, float speed)
+                {
+                    Launch(preset);
+                    _lab.SetSpeed(speed);
+                    for (double t = 0.0; t < end; t += step)
+                    {
+                        _now = _launch + t / speed;
+                        _lab.FrameUpdate();
+                    }
 
-            var a = Pose(1.0 / 30.0);
-            var b = Pose(1.0 / 144.0);
-            var c = Pose(end);
-            Assert.AreEqual(a.Count, b.Count);
-            for (int i = 0; i < a.Count; i++)
-            {
-                Assert.Less(Vector3.Distance(a[i], b[i]), 1e-3f, $"joint {i}: 30 vs 144 fps");
-                Assert.Less(Vector3.Distance(a[i], c[i]), 1e-3f, $"joint {i}: 30 fps vs one jump");
+                    _now = _launch + end / speed;
+                    _lab.FrameUpdate();
+                    _lab.SetSpeed(1f);
+                    // Shown figures only (a hidden figure keeps whatever frame it was last shown in).
+                    return Figures().Where(m => m.gameObject.activeInHierarchy).SelectMany(m => m.GetComponentsInChildren<Transform>()).Select(j => j.position).ToList();
+                }
+
+                var a = Pose(1.0 / 30.0, 1f);
+                var b = Pose(1.0 / 144.0, 1f);
+                var c = Pose(end, 1f);
+                var d = Pose(1.0 / 60.0, 0.25f);
+                Assert.AreEqual(a.Count, b.Count);
+                for (int i = 0; i < a.Count; i++)
+                {
+                    Assert.Less(Vector3.Distance(a[i], b[i]), 1e-3f, $"{preset}: joint {i}: 30 vs 144 fps");
+                    Assert.Less(Vector3.Distance(a[i], c[i]), 1e-3f, $"{preset}: joint {i}: 30 fps vs one jump");
+                    Assert.Less(Vector3.Distance(a[i], d[i]), 1e-3f, $"{preset}: joint {i}: 1× vs 0.25×");
+                }
             }
+        }
+
+        [UnityTest]
+        public IEnumerator PresentationNeverChangesThePlay()
+        {
+            // The lab's play (rendered frame by frame, overlays, slow motion) is exactly the headless play of the same ball.
+            yield return null;
+            foreach (FieldingLabController.Scenario sc in FieldingLabController.Presets)
+            {
+                Launch(sc.Name);
+                _lab.SetSpeed(0.25f);
+                for (double t = 0.0; t < 3.0; t += 0.1)
+                {
+                    _now = _launch + t / 0.25;
+                    _lab.FrameUpdate();
+                }
+
+                _lab.SetSpeed(1f);
+                var situation = new Situation(sc.Outs, sc.Bases);
+                FieldingPlay f = FieldingSolver.Solve(_lab.Play, situation.Alignment, FielderProfile.For, FieldLayout.Standard);
+                var headless = new LivePlay(f, situation, null, null, sc.RunsOnContact is Base runs ? r => r.From == runs : (System.Func<Runner, bool>)null);
+                headless.RunToEnd();
+                if (sc.TagAt != null) continue;   // the lab's scripted choice for that preset
+                Assert.AreEqual(string.Join("|", headless.Log.Select(e => $"{e.Time:0.000000} {e.Text}")), string.Join("|", _lab.Live.Log.Select(e => $"{e.Time:0.000000} {e.Text}")), sc.Name);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator HeadFirstAndHomeSlidesReachTheBase()
+        {
+            yield return null;
+            // Head-first back to second: the hands reach the bag as he gets back (or is tagged).
+            Launch("Head-first back (R2)");
+            // (He is doubled off — the bag is touched with the ball before he gets back — but still dives back: shown at his
+            // authoritative arrival.)
+            LiveRunner r2 = _lab.Live.RunnerOf(new Runner(Base.Second));
+            var back = r2.Segments.Last(s => s.Motion.Sign < 0.0 && s.Motion.Target <= 1e-6);
+            double arrive = back.Motion.ArrivalTime;
+            At(arrive - Start);
+            PlayerMannequin m = _lab.Runners.Figure(r2.Id);
+            Vector3 second = Flat(SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.Second)));
+            float hands = Mathf.Min(Vector3.Distance(Flat(m.Joint(MannequinJoint.LeftHand).position), second), Vector3.Distance(Flat(m.Joint(MannequinJoint.RightHand).position), second));
+            Assert.Less(hands, 0.6f, "hands at the bag");
+            Assert.IsTrue(Down(m), "head-first: down");
+            // Feet-first at home on the close play (the throw home caught within a second of his arrival).
+            Launch("I: R2, 2 out, single to CF");
+            LiveRunner home = _lab.Live.RunnerOf(new Runner(Base.Second));
+            double tag = _lab.Live.RulesEvents.First(e => e.Runner == home.Id && e.IsOut).Time;
+            At(tag - Start);
+            PlayerMannequin hm = _lab.Runners.Figure(home.Id);
+            Assert.IsTrue(Down(hm), "sliding into home");
+            Vector3 plate = Flat(SimulationSpace.ToUnity(FieldLayout.BasePosition(Base.Home)));
+            Assert.Less(Vector3.Distance(Flat(hm.Joint(MannequinJoint.LeftFoot).position), plate), 1.2f, "lead foot near the plate at the tag");
+            TestContext.WriteLine($"head-first hands–bag {hands:0.00} m");
+        }
+
+        [Test]
+        public void BagSideOffsetsAreSmallAndOnOppositeSides()
+        {
+            // The documented presentation offsets (a fielder on the infield edge, a runner on the outside edge): bounded, gone
+            // when running, zero off the bag.
+            Vector3d second = FieldLayout.BasePosition(Base.Second);
+            Vector3 fielder = DefenseView.BagSide(second, 0f);
+            Assert.That(fielder.magnitude, Is.InRange(0.25f, 0.3f + 1e-4f));
+            Vector3 toMound = (new Vector3(0f, 0f, 18.44f) - SimulationSpace.ToUnity(second)).normalized;
+            Assert.Greater(Vector3.Dot(fielder.normalized, toMound), 0.99f, "toward the mound");
+            Assert.AreEqual(Vector3.zero, DefenseView.BagSide(second, 4f), "not while running");
+            Assert.AreEqual(Vector3.zero, DefenseView.BagSide(second + new Vector3d(2.0, 0.0, 0.0), 0f), "not off the bag");
+            Assert.LessOrEqual(DefenseView.BagSide(FieldLayout.BasePosition(Base.Home), 0f).magnitude, 0.25f + 1e-4f);
         }
     }
 }

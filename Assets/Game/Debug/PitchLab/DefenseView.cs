@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
@@ -174,14 +175,20 @@ namespace Pitchlab.Sandbox
             {
                 Take = null;
                 Throw = null;
-                foreach (BallTake k in d.Takes)
-                    if (k.Fielder == position && k.Time - GloveLead <= time && (Take == null || k.Time > Take.Value.Time)) Take = k;
-                foreach (LiveThrow x in d.Throws)
+                // Index loops (no enumerator boxing: this runs for every fielder every frame and every motion-grid step).
+                IReadOnlyList<BallTake> takes = d.Takes;
+                for (int i = 0; i < takes.Count; i++)
+                    if (takes[i].Fielder == position && takes[i].Time - GloveLead <= time && (Take == null || takes[i].Time > Take.Value.Time)) Take = takes[i];
+                IReadOnlyList<LiveThrow> throws = d.Throws;
+                for (int i = 0; i < throws.Count; i++)
+                {
+                    LiveThrow x = throws[i];
                     if (x.Thrower == position && (Take == null || x.ReleaseTime >= Take.Value.Time) && time <= x.ReleaseTime + FollowThrough + StrideRecovery)
                     {
                         Throw = x;
                         break;
                     }
+                }
 
                 SinceTake = Take == null ? double.NegativeInfinity : time - Take.Value.Time;
                 Holding = d.HolderAt(time) == position;
@@ -198,6 +205,8 @@ namespace Pitchlab.Sandbox
             public double WindStart => Take == null ? ArmStart - 0.15 : Math.Max(ArmStart - 0.15, Take.Value.Time + FieldingPlay.SecureTime);
         }
 
+        /// <summary>A sliding catch keeps him down this long after the catch (s) before he gets up.</summary>
+        private const double SlideRecovery = 0.35;
         /// <summary>A throw released while running faster than this (m/s) is a throw on the run (no planted stride).</summary>
         private const double MovingThrowSpeed = 2.5;
         /// <summary>The outfielder's crow hop before the arm action (s).</summary>
@@ -233,7 +242,7 @@ namespace Pitchlab.Sandbox
 
         private static bool OnABase(Vector3d at)
         {
-            foreach (Simulation.Field.Base b in new[] { Simulation.Field.Base.First, Simulation.Field.Base.Second, Simulation.Field.Base.Third, Simulation.Field.Base.Home })
+            foreach (Simulation.Field.Base b in Bags)
                 if (Gameplay.Rules.BaseTouch.IsTouching(at, b)) return true;
             return false;
         }
@@ -273,8 +282,23 @@ namespace Pitchlab.Sandbox
             float speed = velocity.magnitude;
             float w = throwing ? 0f : Mathf.SmoothStep(0f, 1f, (speed - 1.5f) / 3f);
             Vector3 look = face.sqrMagnitude > 1e-4f && speed > 1e-3f ? Vector3.Slerp(face.normalized, velocity / speed, w) : speed > 1e-3f ? velocity / speed : face;
+            // Down on the ground after a dive or a sliding catch he cannot turn until he is up again.
+            if (c.Take is BallTake k && c.SinceTake >= 0.0 && (k.Action == FieldingAction.DivingCatch || k.Action == FieldingAction.SlidingCatch)
+                && c.SinceTake < (k.Action == FieldingAction.DivingCatch ? FieldingActions.DiveRecovery : SlideRecovery) + FieldingPoser.GetUp)
+                return new MotionSample { Velocity = velocity, Facing = look, MaxTurnRate = 0f };
             return new MotionSample { Velocity = velocity, Facing = look, MaxTurnRate = throwing ? ThrowTurnRate : TurnRate };
         }
+
+        private static Func<double, MotionSample> Sampler(LiveDefense d, DefensivePosition position) => t => Desired(d, position, t);
+
+        /// <summary>The jog back: along the way, turning toward home over its last 40 % so he is facing it when he arrives.</summary>
+        private static Func<double, MotionSample> ReturnSampler(double start, Vector3d from, Vector3d to) => t =>
+        {
+            double v = (t - start) / ReturnTime;
+            Vector3 travel = Flat(SimulationSpace.ToUnity(to - from)) * (float)(6.0 * v * (1.0 - v) / ReturnTime);   // d/dt smoothstep
+            Vector3 facing = v < 0.6 && travel.sqrMagnitude > 0.01f ? travel : -SimulationSpace.ToUnity(to);
+            return new MotionSample { Velocity = v < 1.0 ? travel : Vector3.zero, Facing = facing, MaxTurnRate = TurnRate };
+        };
 
         private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
@@ -294,8 +318,13 @@ namespace Pitchlab.Sandbox
             {
                 MotionTrack track = _motion[i];
                 // A new play starts every figure's track from the heading it was shown with (the delivery's pitcher from his own).
-                float initial = position == DefensivePosition.P && figure == _adoptedPitcher ? figure.transform.eulerAngles.y : _shownYaw[i];
-                if (!track.Follows(d)) track.Follow(d, d.StartTime, initial, t => Desired(d, position, t));
+                // A new play starts every figure facing home from its spot (deterministic: not whatever the last play left), the
+                // delivery's pitcher from his own heading.
+                if (!track.Follows(d))
+                {
+                    float initial = position == DefensivePosition.P && figure == _adoptedPitcher ? figure.transform.eulerAngles.y : ReadyYaw(position);
+                    track.Follow(d, d.StartTime, initial, Sampler(d, position));
+                }
                 (phase, yaw) = track.At(time);
                 velocity = Flat(SimulationSpace.ToUnity(d.FielderVelocityAt(position, time)));
                 accel = (float)((d.FielderSpeedAt(position, time + 0.05) - d.FielderSpeedAt(position, Math.Max(d.StartTime, time - 0.05))) / 0.1);
@@ -314,14 +343,7 @@ namespace Pitchlab.Sandbox
                     at = from + Mathf.SmoothStep(0f, 1f, (float)u) * (to - from);
                     MotionTrack track = _motion[i];
                     object key = _returnKeys[0];
-                    if (!track.Follows(key))
-                        track.Follow(key, _returnStart, _shownYaw[i], t =>
-                        {
-                            double v = (t - _returnStart) / ReturnTime;
-                            Vector3 travel = Flat(SimulationSpace.ToUnity(to - from)) * (float)(6.0 * v * (1.0 - v) / ReturnTime);   // d/dt smoothstep
-                            Vector3 facing = v < 0.85 && travel.sqrMagnitude > 0.01f ? travel : -SimulationSpace.ToUnity(to);
-                            return new MotionSample { Velocity = v < 1.0 ? travel : Vector3.zero, Facing = facing, MaxTurnRate = TurnRate };
-                        });
+                    if (!track.Follows(key)) track.Follow(key, _returnStart, _shownYaw[i], ReturnSampler(_returnStart, from, to));
                     double now = Clock();
                     (phase, yaw) = track.At(now);
                     velocity = Flat(SimulationSpace.ToUnity(to - from)) * (float)(6.0 * u * (1.0 - u) / ReturnTime);
@@ -368,30 +390,41 @@ namespace Pitchlab.Sandbox
                 input.ActionTime = (float)sinceTake;
                 // The take point in the figure's frame at the take (frozen: after it he keeps moving, braking — the action's
                 // direction and reach must not swing as he passes the spot).
-                Vector3 takeRoot = SimulationSpace.ToUnity(new Vector3d(d.FielderPositionAt(position, take.Value.Time).X, d.FielderPositionAt(position, take.Value.Time).Y, 0.0));
+                Vector3d takeAt = d.FielderPositionAt(position, take.Value.Time);
+                Vector3 takeRoot = SimulationSpace.ToUnity(new Vector3d(takeAt.X, takeAt.Y, 0.0)) + BagSide(takeAt, (float)d.FielderSpeedAt(position, take.Value.Time));   // the shown root
+                takeRoot.y = FieldDressing.MoundHeight(takeRoot.x, takeRoot.z);
                 float takeYaw = _motion[i].Follows(d) ? _motion[i].At(take.Value.Time).Yaw : yaw;
                 input.ActionPoint = Quaternion.Inverse(Quaternion.Euler(0f, takeYaw, 0f)) * (SimulationSpace.ToUnity(take.Value.BallPoint) - takeRoot);
-                input.Recovery = take.Value.Action == FieldingAction.DivingCatch ? (float)FieldingActions.DiveRecovery : take.Value.Action == FieldingAction.SlidingCatch ? 0.35f : 0f;
+                input.Recovery = take.Value.Action == FieldingAction.DivingCatch ? (float)FieldingActions.DiveRecovery : take.Value.Action == FieldingAction.SlidingCatch ? (float)SlideRecovery : 0f;
             }
 
             if (d != null)
-                foreach (var tag in d.Tags)
-                    if (tag.Fielder == position && holding && time > tag.Time - TagLead && time < tag.Time + TagHold)
+            {
+                var tags = d.Tags;
+                for (int k = 0; k < tags.Count; k++)
+                {
+                    var tag = tags[k];
+                    if (tag.Fielder != position || !holding) continue;
+                    // The tag: the glove with the ball sweeps down to where the runner is at the authoritative tag — only once
+                    // he has the ball (a tag right after a catch starts at the catch, the sweep taking at least 0.1 s).
+                    double from = Math.Max(tag.Time - TagLead, take?.Time ?? double.NegativeInfinity);
+                    double peak = Math.Max(tag.Time, from + 0.1);
+                    if (time > from && time < peak + TagHold)
                     {
-                        // The tag: the glove with the ball sweeps down to where the runner is at the authoritative tag — only once
-                        // he has the ball (a tag right after a catch starts at the catch).
-                        double from = Math.Max(tag.Time - TagLead, take?.Time ?? double.NegativeInfinity);
-                        double u = time < tag.Time ? (time - from) / Math.Max(1e-3, tag.Time - from) : 1.0 - (time - tag.Time) / TagHold;
+                        double u = time < peak ? (time - from) / (peak - from) : 1.0 - (time - peak) / TagHold;
                         input.TagWeight = Mathf.SmoothStep(0f, 1f, (float)u);
                         input.TagTarget = figure.WorldToFigurePoint(SimulationSpace.ToUnity(tag.Runner) + new Vector3(0f, 0.35f, 0f));
                     }
+                }
+            }
 
             if (take != null && sinceTake < FieldingPlay.SecureTime)
             {
                 // The glove goes to the ball before the take, then carries it in to the chest over the secure time.
                 double lead = -sinceTake;
                 input.GloveWeight = sinceTake >= 0.0 ? 1f : Mathf.SmoothStep(0f, 1f, (float)(1.0 - lead / GloveLead));
-                Vector3 point = figure.WorldToFigurePoint(SimulationSpace.ToUnity(take.Value.BallPoint));
+                // Caught, the ball moves with him (he keeps moving after the take): the take point frozen in his frame.
+                Vector3 point = sinceTake >= 0.0 ? input.ActionPoint : figure.WorldToFigurePoint(SimulationSpace.ToUnity(take.Value.BallPoint));
                 float secure = sinceTake >= 0.0 ? Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)) : 0f;
                 input.GloveTarget = Vector3.Lerp(point, FieldingPoser.HoldPoint(input), secure);   // ends exactly in the hold pose
             }
@@ -412,7 +445,11 @@ namespace Pitchlab.Sandbox
                                         * (1f - Mathf.SmoothStep(0f, 1f, (float)((time - release - FollowThrough) / StrideRecovery)));
                     // Outfielders crow-hop into a planted throw.
                     if (!moving && Gameplay.Rules.DefensiveDecision.IsOutfielder(position) && time < armStart)
-                        input.CrowHop = Mathf.Clamp01((float)((time - (armStart - CrowHopTime)) / CrowHopTime));
+                    {
+                        // Never into the catch: the hop starts once the ball is secured (shorter when the arm action is soon).
+                        double hopStart = Math.Max(armStart - CrowHopTime, take.Value.Time + FieldingPlay.SecureTime);
+                        input.CrowHop = hopStart < armStart ? Mathf.Clamp01((float)((time - hopStart) / (armStart - hopStart))) : 0f;
+                    }
                     // Through the arm action the ball (and the hand holding it) goes from the hold at the chest to the gameplay ball
                     // path, arriving exactly on it at the release (the transfer, readable; no jump).
                     Vector3 hand = time < release
@@ -455,14 +492,14 @@ namespace Pitchlab.Sandbox
             figure.ApplyPose(_pose);
             if (adopted && _pitcherShown != null) MannequinPose.Blend(_pose, _pose, 0f, _pitcherShown);   // the next pitch blends from what was shown
 
-            // The shown ball (presentation; gameplay placed it this frame): settling into the glove after a take, in the glove
+            // The shown ball (presentation; gameplay placed it this frame): from the take point (carried with him) into the glove, in the glove
             // while held, back on the gameplay path through the arm action (the hand follows it), free after release.
             if (ball == null || !holding || take == null) return;
             Vector3 glove = figure.GloveAnchor.position;
             if (sinceTake < FieldingPlay.SecureTime)
-                ball.position = Vector3.Lerp(ball.position, glove, Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)));
-            else if (th != null && time >= armStart)
-                ball.position = ArmBall(figure, input, d, time, armStart, release);
+                ball.position = Vector3.Lerp(figure.FigurePoint(input.ActionPoint), glove, Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)));
+            else if (th != null && time >= c.WindStart)
+                ball.position = ArmBall(figure, input, d, time, armStart, release);   // from the wind-up: at the hold, between the hands
             else ball.position = glove;
         }
 

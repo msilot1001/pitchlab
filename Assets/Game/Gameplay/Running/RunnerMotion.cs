@@ -27,7 +27,8 @@ namespace Pitchlab.Gameplay.Running
         public double AccelerationTime { get; }
         /// <summary>Braking to a stop on a base or after an overrun (m/s²; ASSUMED — gives the 15–25 ft overrun of first).</summary>
         public double BrakeDeceleration { get; }
-        /// <summary>Stopping on second, third or home: he slides (m/s²; ASSUMED — a slide stops a runner in ~3 m from top speed).</summary>
+        /// <summary>Stopping on second or third: he slides (m/s²; ASSUMED — a slide stops a runner in ~3 m from top speed). Home is
+        /// run through, not a braking stop.</summary>
         public double SlideDeceleration { get; }
         /// <summary>Highest speed through a base he rounds: 0.8·v_max (15–25 % lost per turn, optimal-path model — REPORTED).</summary>
         public double RoundingSpeed { get; }
@@ -47,7 +48,7 @@ namespace Pitchlab.Gameplay.Running
         /// <summary>The same runner trotting (an awarded dead-ball advance: home run, ground-rule double): slower, keeping his
         /// speed through the bases, the batter watching the ball a moment longer before he goes.</summary>
         public RunnerProfile Trot() =>
-            new RunnerProfile(TrotFactor * MaxSpeed, AccelerationTime, BrakeDeceleration, 0.95, BatterStartDelay + 0.4, ReadDelay, SlideDeceleration);
+            new RunnerProfile(TrotFactor * MaxSpeed, AccelerationTime, BrakeDeceleration, 0.95, BatterStartDelay + 0.4, ReadDelay, BrakeDeceleration);   // nobody slides on a trot
     }
 
     /// <summary>

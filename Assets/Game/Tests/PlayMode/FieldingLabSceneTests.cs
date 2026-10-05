@@ -66,7 +66,7 @@ namespace Pitchlab.Tests
             for (int k = 0; k < FieldingLabController.Presets.Length; k++)
             {
                 FieldingPlay f = Launch(k);
-                if (_lab.Live.AwardedBases > 0) continue;   // a home run: nobody fields it (the trot preset)
+                if (FieldingLabController.Presets[k].Name == "Home run, R1 (trot)") continue;   // a home run: nobody fields it
                 Assert.AreEqual(FieldingOutcome.Fielded, f.Outcome, $"{FieldingLabController.Presets[k].Name} is fielded");
                 DefensivePosition p = f.Primary.Value;
                 // Before the take the shown ball is still the free trajectory.
@@ -79,11 +79,13 @@ namespace Pitchlab.Tests
                 Assert.Less(d, f.Intercept.Kind == InterceptKind.GroundPickup ? 0.10f : 0.20f, $"{FieldingLabController.Presets[k].Name}");
                 // At the take the shown ball is exactly the gameplay ball (no jump); once secured it sits in the glove.
                 At(t + 1e-5);
-                Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, "no jump at the take");
-                // Held until the throwing arm action starts (TASK-006A), or for good without a throw.
+                Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, $"{FieldingLabController.Presets[k].Name}: no jump at the take");
+                // Held in the glove until the wind-up (0.15 s before the arm action, not before it is secured; from there the
+                // ball is between the hands), or for good without a throw.
                 LiveThrow th = _lab.Team.Throws.FirstOrDefault();
-                At(th == null ? t + 0.5 : th.ReleaseTime - DefensivePlay.ArmAction - f.Ball.First.Time - 1e-3);
-                Assert.Less(Vector3.Distance(_lab.Ball.position, _lab.Defense.Figure(p).GloveAnchor.position), 1e-4f, "held in the glove");
+                double windUp = th == null ? 0.0 : System.Math.Max(th.ReleaseTime - DefensivePlay.ArmAction - 0.15, f.Intercept.Time + FieldingPlay.SecureTime);
+                At(th == null ? t + 0.5 : windUp - f.Ball.First.Time - 1e-3);
+                Assert.Less(Vector3.Distance(_lab.Ball.position, _lab.Defense.Figure(p).GloveAnchor.position), 1e-4f, $"{FieldingLabController.Presets[k].Name}: held in the glove");
             }
 
             TestContext.WriteLine(log.ToString());

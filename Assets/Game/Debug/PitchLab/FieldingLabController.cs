@@ -300,7 +300,8 @@ namespace Pitchlab.Sandbox
             {
                 PlayerMannequin m = _defense.Figure(p);
                 if (m == null || !m.gameObject.activeInHierarchy) continue;
-                string err = Team.HolderAt(t) == p ? $"  ball err {Vector3.Distance(m.GloveAnchor.position, _ball.position):0.00} m" : "";
+                // Glove against the authoritative ball (the shown ball is placed in the glove, so it would always read 0).
+                string err = Team.HolderAt(t) == p ? $"  glove–ball {Vector3.Distance(m.GloveAnchor.position, SimulationSpace.ToUnity(Team.BallPositionAt(t))):0.00} m" : "";
                 s.AppendLine($"{LivePlayNames.Abbrev(p),-3} {Team.FielderSpeedAt(p, t),4:0.0} m/s  game {_defense.GameplayAction(p)}  shown {_defense.ShownAction(p)}{err}");
             }
 

@@ -460,7 +460,8 @@ namespace Pitchlab.Tests
             Assert.AreEqual(chosen.Completion, outAtFirst.Time, 1e-6, "when the decision predicted it");
             Assert.AreEqual(_lab.LastLive.EndTime, _lab.PlayEnd, 0.0, "the loop ends with the play");
             Assert.GreaterOrEqual(_lab.PlayEnd, outAtFirst.Time);
-            At(f.PossessionTime + FieldingPlay.SecureTime + 0.02);   // secured (the ball settles into the glove over the secure time)
+            // Secured (the ball settles into the glove over the secure time; a quick transfer winds up right after it).
+            At(f.PossessionTime + FieldingPlay.SecureTime - 1e-3);
             Assert.AreEqual(BattingState.BallInPlay, _lab.StateAt(_now));
             PlayerMannequin holder = _view.Defense.Figure(f.Primary.Value);
             Assert.Less(Vector3.Distance(_lab.BallTransform.position, holder.GloveAnchor.position), 1e-4f, "ball in the glove");

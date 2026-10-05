@@ -36,10 +36,9 @@ namespace Pitchlab.Presentation
         Outfield,
         Pitcher,
         Catcher,
-        /// <summary>A runner leading off: wide, low, square to the plate, hands off the knees.</summary>
-        RunnerLead,
-        /// <summary>A runner standing on a base: upright, ready.</summary>
-        RunnerStand,
+        /// <summary>A runner: upright on a base, leading off (wide, low, square to the plate) by
+        /// <see cref="FieldingPoseInput.LeadStance"/>.</summary>
+        Runner,
     }
 
     /// <summary>What the fielder is doing this frame, all from gameplay state (presentation decides nothing).</summary>
@@ -60,6 +59,8 @@ namespace Pitchlab.Presentation
         public bool Runner;
         /// <summary>Runner's secondary lead during the delivery (0–1): lower, weight toward the next base.</summary>
         public float Secondary;
+        /// <summary>Runner: 0 standing on a base, 1 in the lead-off stance (continuous: no pop as he walks out or breaks).</summary>
+        public float LeadStance;
         /// <summary>Tag (0–1): the glove (with the ball) sweeps to <see cref="TagTarget"/> (figure frame, the runner).</summary>
         public float TagWeight;
         public Vector3 TagTarget;
@@ -149,7 +150,7 @@ namespace Pitchlab.Presentation
             Vector3 p = input.ActionPoint;
             float lead = Lead(input, DiveLead);
             float fly = Mathf.SmoothStep(0f, 1f, (t + lead) / lead);
-            float land = Mathf.SmoothStep(0f, 1f, (t + (input.Action == BodyAction.HeadFirst ? 0.15f : 0f)) / 0.25f);   // head-first lands on the bag
+            float land = Mathf.SmoothStep(0f, 1f, (t + (input.Action == BodyAction.HeadFirst ? 0.15f : 0f)) / 0.35f);   // head-first lands on the bag
             float up = Mathf.SmoothStep(0f, 1f, (t - input.Recovery) / GetUp);
             var toward = new Vector3(p.x, 0f, p.z);
             Vector3 dir = toward.sqrMagnitude > 1e-4f ? toward.normalized : Vector3.forward;
@@ -195,8 +196,7 @@ namespace Pitchlab.Presentation
                 ReadyStyle.Outfield => (-0.07f, 14f),
                 ReadyStyle.Pitcher => (-0.05f, 10f),
                 ReadyStyle.Catcher => (-0.45f, 18f),
-                ReadyStyle.RunnerLead => (-0.16f - 0.08f * input.Secondary, 24f + 6f * input.Secondary),
-                ReadyStyle.RunnerStand => (-0.05f, 8f),
+                ReadyStyle.Runner => (Mathf.Lerp(-0.05f, -0.16f - 0.08f * input.Secondary, input.LeadStance), Mathf.Lerp(8f, 24f + 6f * input.Secondary, input.LeadStance)),
                 _ => (-0.13f, 22f),
             };
             pose.PelvisOffset = new Vector3(0f, Mathf.Lerp(crouch, -0.07f, run) - 0.1f * brake, 0f);
@@ -207,8 +207,11 @@ namespace Pitchlab.Presentation
             pose.Neck = new Vector3(Mathf.Lerp(-18f, -14f, run) - 0.6f * along * dir.y, 0f, 0f);
 
             // Legs (ankle IK). Ready: feet shoulder-width, knees out over the toes.
-            Foot(phase, v, run, dir, 0.17f, out Vector3 right, out float rightPitch);
-            Foot(phase + 0.5f, v, run, dir, -0.17f, out Vector3 left, out float leftPitch);
+            // The feet follow the gait as soon as the gait clock runs (MotionTrack ramps it in by 0.4 m/s): a planted foot never
+            // slips at walking speed (the torso keeps its slower ready-to-run blend).
+            float gait = Mathf.SmoothStep(0f, 1f, v / 0.4f);
+            Foot(phase, v, gait, dir, 0.17f, out Vector3 right, out float rightPitch);
+            Foot(phase + 0.5f, v, gait, dir, -0.17f, out Vector3 left, out float leftPitch);
             pose.RightFootWeight = pose.LeftFootWeight = 1f;
             pose.RightFoot = right;
             pose.LeftFoot = left;
@@ -216,10 +219,10 @@ namespace Pitchlab.Presentation
             pose.LeftKneeHint = new Vector3(-0.25f, 0f, 1f);
             pose.RightFootPitch = rightPitch;
             pose.LeftFootPitch = leftPitch;
-            if (input.Ready == ReadyStyle.RunnerLead)
+            if (input.Ready == ReadyStyle.Runner)
             {
                 // Lead-off: feet well outside the shoulders (square to the plate), only while standing.
-                float wide = 0.16f * (1f - run);
+                float wide = 0.16f * (1f - run) * input.LeadStance;
                 pose.LeftFoot.x -= wide;
                 pose.RightFoot.x += wide;
             }
