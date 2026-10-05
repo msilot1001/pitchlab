@@ -51,6 +51,12 @@ namespace Pitchlab.Sandbox
 
         /// <summary>Hide the catcher until he leaves his crouch (e.g. while the batting camera looks over his shoulder).</summary>
         public bool CatcherVisible { get; set; } = true;
+        /// <summary>
+        /// Presentation only (TASK-014): the catcher receiving a pitch that was not put in play — his glove toward this world
+        /// point with this weight (0: his ready pose). Nothing is decided by it: the call is the flight's.
+        /// </summary>
+        public Vector3 CatcherGlove { get; set; }
+        public float CatcherGloveWeight { get; set; }
 
         public PlayerMannequin Figure(DefensivePosition position) => _figures[(int)position];
 
@@ -418,7 +424,12 @@ namespace Pitchlab.Sandbox
                 }
             }
 
-            if (take != null && sinceTake < FieldingPlay.SecureTime)
+            if (d == null && position == DefensivePosition.C && CatcherGloveWeight > 0f)
+            {
+                input.GloveTarget = figure.WorldToFigurePoint(CatcherGlove);
+                input.GloveWeight = Mathf.Clamp01(CatcherGloveWeight);
+            }
+            else if (take != null && sinceTake < FieldingPlay.SecureTime)
             {
                 // The glove goes to the ball before the take, then carries it in to the chest over the secure time.
                 double lead = -sinceTake;

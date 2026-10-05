@@ -237,7 +237,11 @@ namespace Pitchlab.Sandbox
             // Defense (TASK-005): the catcher stands right in front of the batting camera, so here he is shown only when
             // he plays the ball (a dribbler); the primary defender is framed with the ball, which sits in his glove from
             // the possession moment.
-            _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C;
+            _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C || !_lab.CameraBehindPlate;
+            // A pitch not put in play ends in the catcher's glove where he can be seen (TASK-014; presentation only).
+            bool received = _pitch != null && !_contactShown && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
+            _defense.CatcherGloveWeight = received ? Mathf.SmoothStep(0f, 1f, (float)((t - _catchTime + CatcherReach) / CatcherReach)) : 0f;
+            _defense.CatcherGlove = _catchPoint;
             // Where they stand: the play's alignment while it is shown, the next situation's once it is over.
             LivePlay shown = _lab.LastLive;
             bool returning = shown != null && shown.IsOver && t > shown.EndTime;
@@ -246,6 +250,7 @@ namespace Pitchlab.Sandbox
             // Once the play is over the fielders jog back to the alignment during the result pause (back before the next pitch
             // can be thrown); whoever has the ball keeps it.
             _defense.Show(returning ? null : _lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
+            if (received && t >= _catchTime) _lab.BallTransform.position = _defense.Figure(DefensivePosition.C).GloveAnchor.position;
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
 
             // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
@@ -346,6 +351,7 @@ namespace Pitchlab.Sandbox
             MannequinPose.Blend(_pitcherShown, _pitcherShown, 0f, _pitcherFrom);
             MannequinPose.Blend(_batterShown, _batterShown, 0f, _batterFrom);
             if (pitch != null) PlacePitcher(pitch.Flight.First.Position);
+            (_catchTime, _catchPoint) = pitch != null ? CatcherCatch(pitch) : (double.NaN, Vector3.zero);
             _deliveryClip.Sample(_deliveryClip.Marker("set"), _from);
             _pitcherTransition = pitch != null && Away(_pitcherFrom, _from);
             _swingClip.Sample(_uStance, _from);
@@ -401,6 +407,29 @@ namespace Pitchlab.Sandbox
 
         /// <summary>A batter who has just stepped in shows his stance until the next pitch (not the last batter's motion).</summary>
         private bool _freshBatter;
+
+        /// <summary>The plane (simulation Y, m) where the crouched catcher's glove takes a pitch (he sets up at −0.76 m).</summary>
+        public const double CatcherGlovePlaneY = -0.35;
+        /// <summary>How long (s) his glove moves to the pitch before it arrives.</summary>
+        private const double CatcherReach = 0.3;
+        private double _catchTime = double.NaN;
+        private Vector3 _catchPoint;
+
+        /// <summary>When and where the pitch reaches the catcher's glove plane (NaN if it never does).</summary>
+        private static (double Time, Vector3 Point) CatcherCatch(HittingPitch pitch)
+        {
+            TrajectoryResult f = pitch.Flight;
+            if (f.Final.Position.Y > CatcherGlovePlaneY) return (double.NaN, Vector3.zero);
+            double a = f.First.Time, b = f.Final.Time;
+            for (int i = 0; i < 50; i++)
+            {
+                double m = 0.5 * (a + b);
+                if (f.StateAt(m).Position.Y > CatcherGlovePlaneY) a = m;
+                else b = m;
+            }
+
+            return (b, SimulationSpace.ToUnity(f.StateAt(b).Position));
+        }
         private PlayerProfile _shownBatter;
 
         private void PlaceBatter(BatterSide side)

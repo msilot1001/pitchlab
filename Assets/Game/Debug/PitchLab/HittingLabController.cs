@@ -63,7 +63,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _upLocationAction, _downLocationAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction,
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _upLocationAction, _downLocationAction, _pitchingAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction,
             _clickAction, _releaseCursorAction;
         private int _presetIndex;
         private PciTrack _pciTrack;
@@ -106,12 +106,24 @@ namespace Pitchlab.Sandbox
         private PlayerProfile _zoneBatter;
         private GameplayCameraController _cameraModes;
         /// <summary>The keyboard arrows belong to the tactical camera (the gamepad's D-pad still chooses the pitch).</summary>
+        /// <summary>Is the camera behind the plate (umpire, catcher, auto) — where a catcher figure would block the view?</summary>
+        public bool CameraBehindPlate => _cameraModes == null || _cameraModes.Mode == CameraMode.Umpire || _cameraModes.Mode == CameraMode.Catcher || _cameraModes.Mode == CameraMode.Auto;
+
         private bool CameraHasArrows(InputAction.CallbackContext c) => _cameraModes != null && _cameraModes.CapturesArrowKeys && c.control?.device is Keyboard;
         /// <summary>The selected pitch preset.</summary>
         public int PresetIndex { get => _presetIndex; set => _presetIndex = ((value % Presets.Length) + Presets.Length) % Presets.Length; }
         public static string PresetLabel(int index) => Presets[index].Label;
-        /// <summary>Where the next pitch is aimed (<see cref="PitchLocation.All"/>; Up / Down, D-pad up / down).</summary>
-        public int LocationIndex { get; set; }
+        /// <summary>Where the next pitch is aimed (TASK-014; null: where the preset itself aims, mid-zone for the default
+        /// batter). Keys U I O / J K L / N M , and 7 8 9 0; arrows / D-pad up and down step through them.</summary>
+        public PitchTarget? Target { get; set; }
+
+        /// <summary>The automatic pitcher (P / gamepad Y): each pitch is chosen by <see cref="AutoPitcher"/> from the game, and
+        /// after a result the next one is thrown <see cref="AutoPitchDelay"/> after the loop is ready (GameLab only).</summary>
+        public bool AutoPitch { get; set; }
+        /// <summary>The auto pitcher's seed (the same seed and game give the same pitches).</summary>
+        public int AutoPitchSeed { get; set; } = 1;
+        /// <summary>Real seconds between the loop becoming ready and the auto pitcher's next press.</summary>
+        public double AutoPitchDelay { get; set; } = 0.8;
         /// <summary>The last pitch's result once it is decided (GameLab: applied to the game), and how it ended the plate
         /// appearance.</summary>
         public PitchOutcome? LastOutcome { get; private set; }
@@ -218,8 +230,16 @@ namespace Pitchlab.Sandbox
             _cameraModes = _camera.GetComponent<GameplayCameraController>();
             _nextPresetAction = Button("<Keyboard>/rightArrow", "<Gamepad>/dpad/right", c => { if (!CameraHasArrows(c)) _presetIndex = (_presetIndex + 1) % Presets.Length; });
             _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", c => { if (!CameraHasArrows(c)) _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length; });
-            _upLocationAction = Button("<Keyboard>/upArrow", "<Gamepad>/dpad/up", c => { if (!CameraHasArrows(c)) LocationIndex = (LocationIndex + 1) % PitchLocation.All.Length; });
-            _downLocationAction = Button("<Keyboard>/downArrow", "<Gamepad>/dpad/down", c => { if (!CameraHasArrows(c)) LocationIndex = (LocationIndex + PitchLocation.All.Length - 1) % PitchLocation.All.Length; });
+            _upLocationAction = Button("<Keyboard>/upArrow", "<Gamepad>/dpad/up", c => { if (!CameraHasArrows(c)) StepTarget(1); });
+            _downLocationAction = Button("<Keyboard>/downArrow", "<Gamepad>/dpad/down", c => { if (!CameraHasArrows(c)) StepTarget(-1); });
+            // Pitcher controls that never touch the arrows (TASK-014): the zone grid on U I O / J K L / N M , (as the catcher
+            // sees it), the four balls on 7 8 9 0 (up, down, left, right), the pitch type on Z / X (shoulders), auto on P (Y).
+            _pitchingAction = new InputAction("Pitching", InputActionType.Button);
+            foreach (string key in PitchingKeys) _pitchingAction.AddBinding("<Keyboard>/" + key);
+            _pitchingAction.AddBinding("<Gamepad>/leftShoulder");
+            _pitchingAction.AddBinding("<Gamepad>/rightShoulder");
+            _pitchingAction.AddBinding("<Gamepad>/buttonNorth");
+            _pitchingAction.performed += c => OnPitchingKey(c.control.name);
             _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
             _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
             _slowestSpeedAction = Button("<Keyboard>/digit3", null, _ => _playbackSpeed = 0.25f);   // motion inspection (TASK-011.8)
@@ -265,6 +285,27 @@ namespace Pitchlab.Sandbox
             _pciTrack.Move(eventPtr.time, delta.x * _mouseSensitivity, delta.y * _mouseSensitivity);
         }
 
+        /// <summary>Keyboard keys of the pitcher controls: the nine zone spots (PitchTarget order), then the four balls.</summary>
+        private static readonly string[] PitchingKeys = { "u", "i", "o", "j", "k", "l", "n", "m", "comma", "7", "8", "9", "0", "z", "x", "p" };
+
+        /// <summary>A pitcher control (key or gamepad control name).</summary>
+        public void OnPitchingKey(string control)
+        {
+            int target = Array.IndexOf(PitchingKeys, control);
+            if (target >= 0 && target < PitchTargets.All.Length) Target = PitchTargets.All[target];
+            else if (control == "z" || control == "leftShoulder") PresetIndex = _presetIndex - 1;
+            else if (control == "x" || control == "rightShoulder") PresetIndex = _presetIndex + 1;
+            else if (control == "p" || control == "buttonNorth") AutoPitch = !AutoPitch;
+        }
+
+        /// <summary>Arrows / D-pad up and down: through the targets (from the preset's own aim, then each target in order).</summary>
+        private void StepTarget(int step)
+        {
+            int n = PitchTargets.All.Length + 1, i = Target.HasValue ? (int)Target.Value + 1 : 0;
+            i = ((i + step) % n + n) % n;
+            Target = i == 0 ? (PitchTarget?)null : (PitchTarget)(i - 1);
+        }
+
         private static InputAction Button(string binding, string secondBinding, Action<InputAction.CallbackContext> onPress)
         {
             var action = new InputAction(type: InputActionType.Button, binding: binding);
@@ -280,6 +321,7 @@ namespace Pitchlab.Sandbox
             _nextPresetAction?.Enable();
             _previousPresetAction?.Enable();
             _upLocationAction?.Enable();
+            _pitchingAction?.Enable();
             _downLocationAction?.Enable();
             _normalSpeedAction?.Enable();
             _slowSpeedAction?.Enable();
@@ -305,6 +347,7 @@ namespace Pitchlab.Sandbox
             _nextPresetAction?.Disable();
             _previousPresetAction?.Disable();
             _upLocationAction?.Disable();
+            _pitchingAction?.Disable();
             _downLocationAction?.Disable();
             _normalSpeedAction?.Disable();
             _slowSpeedAction?.Disable();
@@ -325,6 +368,7 @@ namespace Pitchlab.Sandbox
             _nextPresetAction?.Dispose();
             _previousPresetAction?.Dispose();
             _upLocationAction?.Dispose();
+            _pitchingAction?.Dispose();
             _downLocationAction?.Dispose();
             _normalSpeedAction?.Dispose();
             _slowSpeedAction?.Dispose();
@@ -378,15 +422,24 @@ namespace Pitchlab.Sandbox
             PitchBatter = Game?.Batter;
             if (PitchBatter != null) _swing.Side = PitchBatter.Bats;
             DrawZone(Zone);
-            PitchLocation location = PitchLocation.All[LocationIndex];
-            CurrentPitch = HittingPitch.Create(location.Aim(Presets[_presetIndex]), Environment);
+            if (AutoPitch && Game != null)
+            {
+                PitchCommand auto = AutoPitcher.Choose(AutoPitchSeed, Game.Current.Number, Game.Current.Pitches.Count + 1, Game.Count);
+                _presetIndex = auto.Preset;
+                Target = auto.Target;
+            }
+
+            (double bottom, double top) = Zone;
+            CurrentPitch = Target is PitchTarget target
+                ? PitchTargets.Create(new PitchCommand(_presetIndex, target), bottom, top, Environment)
+                : HittingPitch.Create(Presets[_presetIndex], Environment);
             _pitchInfo = PitchInfo.Of(Presets[_presetIndex].Label, CurrentPitch);   // as thrown (the selection may change)
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             ClearPitch();
             _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
             PitchesThrown++;
-            _pitchLabel = $"{Presets[_presetIndex].Label} ({location})";
+            _pitchLabel = $"{Presets[_presetIndex].Label} ({TargetName})";
             _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 
@@ -500,6 +553,14 @@ namespace Pitchlab.Sandbox
             _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
                 ? LastDefense.BallPositionAt(t)
                 : CurrentPitch.Flight.StateAt(t).Position);
+
+            // The auto pitcher's next press: AutoPitchDelay after the loop is ready, at that exact time (not this frame's).
+            if (AutoPitch && Game != null && !_resultPending)
+            {
+                double ready = _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
+                double press = ready + AutoPitchDelay;
+                if (now >= press) ThrowPitch(_presetIndex, press + _deliveryLead / _playbackSpeed);
+            }
         }
 
         /// <summary>The pitch's result into the game (once; when it is decided — the end of the pitch or the swing, the play's
@@ -566,7 +627,9 @@ namespace Pitchlab.Sandbox
             _contactMarker.gameObject.SetActive(show && LastBattedBall != null);
         }
 
-        private void ShowIdle() => _readout = $"Next: {Presets[_presetIndex].Label} ({PitchLocation.All[LocationIndex]}). Press Space / A to throw.";
+        private void ShowIdle() => _readout = $"Next: {Presets[_presetIndex].Label} ({TargetName}). Press Space / A to throw.";
+
+        private string TargetName => Target is PitchTarget t ? PitchTargets.Name(t) : "preset aim";
 
         private void DrawPci(double now)
         {
@@ -668,10 +731,10 @@ namespace Pitchlab.Sandbox
             }
 
             GUILayout.BeginArea(new Rect(10, 10, 440, _showDebugPaths ? 290 : 175), GUI.skin.box);
-            GUILayout.Label($"Pitch: {Presets[_presetIndex].Label} · {PitchLocation.All[LocationIndex]}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
+            GUILayout.Label($"Pitch: {Presets[_presetIndex].Label} · {TargetName}{(AutoPitch ? " · AUTO" : "")}   speed {_playbackSpeed:0.0}×   #{PitchesThrown}");
             GUILayout.Label(_readout);
             GUILayout.Label((_requireMouseCapture && !MouseCaptured ? "Click to capture the mouse.  " : "Mouse PCI · click throw/swing · Esc release.  ") +
-                            "Space/A throw·swing  WASD/stick PCI  ←/→ pitch  ↑/↓ location  1/2/3 speed  T debug  H panel");
+                            "Space/A throw·swing  WASD/stick PCI  Z/X pitch  UIO/JKL/NM, zone  7890 ball  P auto  1/2/3 speed  T debug  H panel");
             if (_showDebugPaths) GUILayout.Label(DebugOverlay());
             GUILayout.EndArea();
         }
