@@ -114,7 +114,16 @@ namespace Pitchlab.Tests
                         FieldingPlay f = Field(mph, launch, spray, 1500.0);
                         if (f.Outcome != FieldingOutcome.Fielded) continue;
                         fielded++;
-                        if (f.Intercept.Dive) dives++;
+                        if (!f.Intercept.Dive) continue;
+                        dives++;
+                        // Only when nobody — the diver included — has a normal catch (not just the selected take).
+                        foreach (DefensivePosition p in System.Enum.GetValues(typeof(DefensivePosition)))
+                        {
+                            Intercept normal = p == f.Primary
+                                ? InterceptSolver.Solve(f.Ball, DefensiveAlignment.Standard[p], FielderProfile.For(p), FieldLayout.Standard, double.PositiveInfinity)
+                                : f.Candidate(p);
+                            Assert.AreNotEqual(InterceptKind.FlyCatch, normal.Kind, $"{mph} mph {launch}° {spray}°: {p} could catch it normally");
+                        }
                     }
 
             Assert.Greater(dives, 0, "the dive exists");

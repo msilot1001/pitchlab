@@ -146,7 +146,7 @@ namespace Pitchlab.Gameplay.Fielding
                 candidates[i] = InterceptSolver.Solve(ball, alignment[(DefensivePosition)i], profiles((DefensivePosition)i), field, playable, unfielded.At.Time);
             int best = SelectPrimary(candidates);
             // Nobody can catch it normally: the earliest diving catch, if any (TASK-011.6, conservative envelope).
-            if (best < 0 || candidates[best].Kind != InterceptKind.FlyCatch)
+            if (Array.TrueForAll(candidates, c => !c.Feasible || c.Kind != InterceptKind.FlyCatch))
             {
                 int diver = -1;
                 Intercept dive = Intercept.None;

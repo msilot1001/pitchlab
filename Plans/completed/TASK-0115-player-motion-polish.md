@@ -67,7 +67,8 @@ Claude Code (sole writer); unity-reviewer, test-reviewer, rules/research reviewe
 - [x] 011.7 runner presentation + trot; Docs/BASERUNNING_MOTION_REFERENCE.md.
 - [x] 011.8 integration tests, overlay (M), slow motion (S: 1/0.5/0.25× FieldingLab; 1/2/3 HittingLab/GameLab), runtime inspection.
 - [x] Reviews (unity, test, rules/research) and fixes; check.sh green.
-- [ ] Codex, merge.
+- [x] Codex (verdict B: dive fallback must check every normal candidate, not just the selected one — fixed, grid
+  invariant added; no change on the measured grids), merge.
 
 ## Verification
 - check.sh: EditMode 547/553 (6 skipped, pre-existing), PlayMode 66/66.
