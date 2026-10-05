@@ -38,8 +38,8 @@ Claude Code (sole writer); unity-reviewer, test-reviewer, rules/research reviewe
   SlidingCatch, DivingCatch, JumpingCatch, OverShoulderCatch, ForehandPickup, BackhandPickup, CenteredPickup,
   ChargingPickup (slow roller), ShortHopPickup, HopCatch (chest/high hop), WallPlay.
 - Diving catch (the one gameplay change): when no fielder has a normal fly catch, a fielder may take the ball in the air by
-  diving — extra horizontal reach 1.0 m, ball 0.15–1.2 m high, fielder at ≥ 70 % of top speed at the take — with a
-  recovery cost (+0.8 s before the throw can be ready). Before/after catch rates measured on a batted-ball grid; tests.
+  diving — extra horizontal reach 1.0 m, ball 0.15–1.2 m high, after a ≥ 6 m run-up — with a recovery cost (+1.0 s
+  before the throw can be ready). Before/after catch rates measured on a batted-ball grid; tests.
 - Presentation per action: approach → lower → glove presentation → take → gather → transfer (ball glove → hand) → throw
   (planted / on the run / outfield crow hop / quick relay / pivot) → recovery (slide/dive get-up). Base receivers:
   approach, plant on the bag, stretch toward the throw. Tags: glove sweeps to the runner at the authoritative tag time.
@@ -66,13 +66,15 @@ Claude Code (sole writer); unity-reviewer, test-reviewer, rules/research reviewe
 - [x] 011.6 FieldingAction + dive model + defensive presentation; Docs/FIELDING_MOTION_REFERENCE.md.
 - [x] 011.7 runner presentation + trot; Docs/BASERUNNING_MOTION_REFERENCE.md.
 - [x] 011.8 integration tests, overlay (M), slow motion (S: 1/0.5/0.25× FieldingLab; 1/2/3 HittingLab/GameLab), runtime inspection.
-- [ ] Reviews (unity, test, rules/research), check.sh, Codex, merge.
+- [x] Reviews (unity, test, rules/research) and fixes; check.sh green.
+- [ ] Codex, merge.
 
 ## Verification
-- check.sh: EditMode 547/553 (6 skipped, pre-existing), PlayMode 63/63.
-- Action distribution on a 420-ball grid: centred 86, forehand 60, backhand 42, charging 35, short hop 23, standing 70,
-  running 37, over-shoulder 23, sliding 12, hop 16, wall 6, jumping 4, diving 6. Catch rate 34.8 % → 36.2 % with dives
-  (1.4 % of fielded balls; test bounds dives < 5 %).
+- check.sh: EditMode 547/553 (6 skipped, pre-existing), PlayMode 66/66.
+- Action distribution (final thresholds) on a 420-ball grid (60–110 mph × −10…50° × ±45° spray, 1500 rpm; 344 fielded):
+  standing 98, centred 62, backhand 41, forehand 39, running 29, charging 29, over-shoulder 13, hop 12, wall 10, diving 8,
+  sliding 3 (short hop and jumping catch occur in presets, not on this grid). Air-catch rate 34.0 % → 36.0 % with dives
+  (2.3 % of fielded balls; test bounds dives < 5 % on its own grid).
 - Objective alignment (tests): glove–ball ≤ 0.10 m on pickups, ≤ 0.20 m on catches/receptions for every preset incl. dive and
   slide; shown ball never moves more than 0.47 m in a 120 Hz tick; standing feet drift < 2 cm; sprint stance foot < 15 % of
   body speed; slide lead foot – bag < 0.45 m at the authoritative arrival; tag glove – runner < 0.5 m; safe foot – bag < 0.6 m;
@@ -90,9 +92,12 @@ Claude Code (sole writer); unity-reviewer, test-reviewer, rules/research reviewe
   presentation offsets, tested.
 - Arm action blends from the hold over ≥ 0.15 s (the gameplay transfer can leave 0.05 s between secure and arm start).
 - Dive: the only gameplay change on the fielding side — 1.0 m extra reach, 0.15–1.2 m ball, ≥ 6 m run-up, only when nobody
-  can catch it normally, +0.8 s recovery before the throw. Home-run trot: the other gameplay change (awarded advances).
+  can catch it normally, +1.0 s recovery before the throw. Home-run trot: the other gameplay change (awarded advances).
 
 ## Limitations
 - Throws on the run stay overhand (the gameplay release point is fixed at 1.8 m; no sidearm without a gameplay change).
 - Running pickups at 7 m/s slip the feet briefly in the lunge (the gameplay take does not slow the fielder).
 - No dive misses (a deterministic envelope: inside it the catch is made).
+- A tag right after a catch is shown with a 0.1 s sweep, so the glove can reach the runner up to 0.1 s after the gameplay tag.
+- The catcher's crouch is shown only before the pitch; the return jog after a play runs on the real clock.
+- Home slide: the figure slides while the gameplay runner keeps his speed to the plate (no gameplay slide at home).
