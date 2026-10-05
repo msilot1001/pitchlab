@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Pitchlab.Gameplay.Rules;
+using Pitchlab.Gameplay.Running;
 
 namespace Pitchlab.Gameplay.Play
 {
@@ -207,14 +208,14 @@ namespace Pitchlab.Gameplay.Play
             {
                 case PlateAppearanceEnd.Walk:
                     BaseOccupancy walked = Rules.Count.Walk(Bases, out int runs);
-                    End(e.End, "walk", runs, 0, walked, null, false);
+                    End(e.End, "walk", runs, 0, walked, null, null);
                     break;
                 case PlateAppearanceEnd.Strikeout:
-                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : "strikeout swinging", 0, 1, Bases, null, false);
+                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : "strikeout swinging", 0, 1, Bases, null, null);
                     break;
                 case PlateAppearanceEnd.InPlay:
                     PlayResultKind kind = PlayResults.Classify(play);
-                    End(e.End, PlayResults.Describe(kind), play.Runs, play.OutsMade, play.ResultingBases(), kind, kind == PlayResultKind.HomeRun);
+                    End(e.End, PlayResults.Describe(kind), play.Runs, play.OutsMade, play.ResultingBases(), kind, play);
                     break;
             }
 
@@ -226,13 +227,18 @@ namespace Pitchlab.Gameplay.Play
         /// the last batter who completed his time at bat, 5.04(a)(3)); runs, then the outs and bases — or,
         /// on the third out, the next half — and the next batter comes up.
         /// </summary>
-        private void End(PlateAppearanceEnd end, string what, int runs, int outsMade, BaseOccupancy bases, PlayResultKind? kind, bool homeRunOutOfPark)
+        private void End(PlateAppearanceEnd end, string what, int runs, int outsMade, BaseOccupancy bases, PlayResultKind? kind, LivePlay play)
         {
             // A walk-off: the home team takes the lead in the 9th or later — the game ends the moment the winning run scores,
             // so only that run counts, unless the batter hit it out of the park: then he and every runner score (OBR 7.01(e)(3)
-            // and its EXCEPTION; a forced walk-off scores the one run, 5.08(b)).
+            // and its EXCEPTION; a forced walk-off scores the one run, 5.08(b)). Outs made after the winning run do not count,
+            // and a hit is credited only with the bases the winning runner advanced (9.06(f)).
             bool walkOff = Half == Half.Bottom && Inning >= RegulationInnings && _score[1] <= _score[0] && _score[1] + runs > _score[0];
-            if (walkOff && !homeRunOutOfPark) runs = _score[0] - _score[1] + 1;
+            if (walkOff && kind != PlayResultKind.HomeRun)
+            {
+                runs = _score[0] - _score[1] + 1;
+                if (play != null) (outsMade, kind, what) = WalkOff(play, runs, outsMade, kind.Value, what);
+            }
             Current.Complete(end, what, runs, outsMade, kind);
             _completed.Add(Current);
             int team = (int)Batting;
@@ -256,7 +262,7 @@ namespace Pitchlab.Gameplay.Play
                 Outs = 0;
                 Bases = BaseOccupancy.Empty;
                 if (Half == Half.Top && Inning >= RegulationInnings && _score[1] > _score[0])
-                    Finish(Inning == RegulationInnings ? "the home team leads after the top of the 9th" : $"the home team leads after the top of the {Inning}th");   // 7.01(e)(1)
+                    Finish($"the home team leads after the top of the {Ordinal(Inning)}");   // 7.01(e)(1)
                 else if (Half == Half.Bottom && Inning >= RegulationInnings && _score[0] != _score[1])
                     Finish(Inning == RegulationInnings ? "nine innings" : $"{Inning} innings");   // 7.01(e)(2), 7.01(b)(1)
                 else
@@ -275,6 +281,38 @@ namespace Pitchlab.Gameplay.Play
 
             Current = NewPlateAppearance();
         }
+
+        /// <summary>The walk-off play cut at the winning run: the outs made before it scored, and a hit's value (9.06(f)).</summary>
+        private static (int Outs, PlayResultKind Kind, string What) WalkOff(LivePlay play, int winningRun, int outsMade, PlayResultKind kind, string what)
+        {
+            LiveRunner winner = null;
+            int scored = 0;
+            foreach (LiveRunner r in System.Linq.Enumerable.OrderBy(play.Runners, r => r.ScoreTime))
+                if (r.HasScored && r.RunCounts && ++scored == winningRun)
+                {
+                    winner = r;
+                    break;
+                }
+
+            if (winner == null) return (outsMade, kind, what);
+            int outs = 0;
+            foreach (PlayEvent e in play.RulesEvents)
+                if (e.IsOut && e.Time <= winner.ScoreTime) outs++;
+            int hitBases = kind switch
+            {
+                PlayResultKind.Single => 1,
+                PlayResultKind.Double or PlayResultKind.GroundRuleDouble => 2,
+                PlayResultKind.Triple => 3,
+                PlayResultKind.InsideTheParkHomeRun => 4,
+                _ => 0,
+            };
+            if (hitBases == 0) return (outs, kind, what);
+            int credited = Math.Min(hitBases, 4 - (int)winner.Id.From);   // the winning runner's bases (from third: one)
+            PlayResultKind hit = credited switch { 1 => PlayResultKind.Single, 2 => PlayResultKind.Double, 3 => PlayResultKind.Triple, _ => kind };
+            return (outs, hit, PlayResults.Describe(hit));
+        }
+
+        private static string Ordinal(int n) => n + (n % 100 is >= 11 and <= 13 ? "th" : (n % 10) switch { 1 => "st", 2 => "nd", 3 => "rd", _ => "th" });
 
         private void Finish(string reason)
         {
@@ -299,6 +337,7 @@ namespace Pitchlab.Gameplay.Play
         {
             public int Inning, Outs, Away, Home, Completed, Log;
             public GameResult Result;
+            public bool Started;
             public Half Half;
             public BaseOccupancy Bases;
             public int[] UpNext;
@@ -308,7 +347,7 @@ namespace Pitchlab.Gameplay.Play
         private Snapshot Capture(bool clearPitches) => new Snapshot
         {
             Inning = Inning, Half = Half, Outs = Outs, Bases = Bases, Away = _score[0], Home = _score[1],
-            Completed = _completed.Count, Log = _log.Count, UpNext = (int[])_upNext.Clone(), Result = Result,
+            Completed = _completed.Count, Log = _log.Count, UpNext = (int[])_upNext.Clone(), Result = Result, Started = _started,
             Current = clearPitches ? NewPlateAppearance(Current.Number) : Current.Copy(),
         };
 
@@ -317,6 +356,7 @@ namespace Pitchlab.Gameplay.Play
             (Inning, Half, Outs, Bases, _score[0], _score[1]) = (s.Inning, s.Half, s.Outs, s.Bases, s.Away, s.Home);
             s.UpNext.CopyTo(_upNext, 0);
             Result = s.Result;
+            _started = s.Started;
             _completed.RemoveRange(s.Completed, _completed.Count - s.Completed);
             _log.RemoveRange(s.Log, _log.Count - s.Log);
             Current = s.Current.Copy();

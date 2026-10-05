@@ -95,7 +95,8 @@ namespace Pitchlab.Sandbox
             bool ready = _lab.CurrentPitch == null || _lab.StateAt(realtime) == BattingState.Ready;
             // The call of the last pitch stays up through the result pause: its plate appearance's end, or the pitch itself.
             string flash = string.Empty;
-            PlateAppearance shown = g.Current;
+            // After the end the last plate appearance stays (there is no next batter).
+            PlateAppearance shown = g.IsOver && g.CompletedPlateAppearances > 0 ? g.Completed[g.CompletedPlateAppearances - 1] : g.Current;
             if (!ready && _lab.LastOutcome is PitchOutcome o)
             {
                 if (_lab.LastEnd != PlateAppearanceEnd.None && g.CompletedPlateAppearances > 0)
@@ -106,17 +107,18 @@ namespace Pitchlab.Sandbox
                 else flash = PitchOutcomes.Describe(o);
             }
 
-            if (g.IsOver && ready) flash = FinalFlash;
+            bool final = g.IsOver && ready;
+            if (final) flash = FinalFlash;
             if (ReferenceEquals(g, _built.Game) && g.Version == _built.Version && ReferenceEquals(shown, _built.Shown) && flash == _built.Flash) return;
             _built = (g, g.Version, shown, flash);
-            Rebuild(g, shown, flash);
+            Rebuild(g, shown, flash, final);
         }
 
-        private void Rebuild(GameState g, PlateAppearance shown, string flash)
+        private void Rebuild(GameState g, PlateAppearance shown, string flash, bool final)
         {
             Shown = shown;
             Flash = flash;
-            FinalText = g.IsOver && ReferenceEquals(flash, FinalFlash)
+            FinalText = final
                 ? $"FINAL\n{g.LineupOf(TeamSide.Away).Team.ToUpperInvariant()} {g.Result.Away}   {g.LineupOf(TeamSide.Home).Team.ToUpperInvariant()} {g.Result.Home}\n{g.Result.Reason}\n\nSpace / A: new game"
                 : string.Empty;
             InningText = $"{(g.Half == Half.Top ? "TOP" : "BOT")} {g.Inning}";
@@ -133,8 +135,8 @@ namespace Pitchlab.Sandbox
             BatterText = $"#{at.Slot}  {at.Batter.Name}  ({(at.Batter.Bats == BatterSide.Left ? "L" : "R")})";
             if (shown.IsComplete && shown.Pitches.Count > 0)
             {
-                Count final = shown.Pitches[shown.Pitches.Count - 1].Before;
-                (Balls, Strikes) = (final.Balls, final.Strikes);
+                Count lastCount = shown.Pitches[shown.Pitches.Count - 1].Before;
+                (Balls, Strikes) = (lastCount.Balls, lastCount.Strikes);
             }
 
             _plot.Clear();

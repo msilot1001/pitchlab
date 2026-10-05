@@ -43,8 +43,21 @@ Claude Code (sole writer); rules / Unity / test reviewers and Codex read-only.
 - [x] GameState lifecycle + end rules + EditMode tests (GameFlowTests incl. whole simulated games).
 - [x] GameSimulator.
 - [x] GameLab end / final / new game + PlayMode tests (GameFlowSceneTests).
-- [ ] check.sh, runtime verification, reviews, Codex, merge.
+- [x] Reviews — rules: walk-off cut at the winning run (outs before it; a hit credited with the winning runner's bases,
+  9.06(f)), ordinal suffixes; Unity: auto pitching resumes after a new game (armed at NewGame, works with no pitch),
+  no next batter after the final, FINAL up FinalDwell (1 s) before a press starts a new game, START PA disabled after the end,
+  explicit final flag in the HUD, PlayToEnd throws if a game never ends, Status restored by RESET; tests: literal 8th-inning
+  cases (RegulationInnings mutation), walk-off from one down, 9.06(f) label, force-annulled run → extras (5.08(a)), tag
+  third out after the winning run → game over, visitors after exactly nine, Apply / simulator after the end, simulated
+  games: recorded = simulated pitches, halves in order with exactly three outs, a replay that the game ended at its first
+  decisive moment, seeds pinned to each ending (incl. 12 innings), determinism over pitch records; scene: final dwell,
+  NEW GAME mid-play, auto into a new game.
+- [ ] Codex, merge.
+
+## Measurements
+- Simulated games (EditMode, Editor): ≈ 1.2–1.6 s per nine-inning game, 240–315 pitches, 62–77 plate appearances.
 
 ## Limitations
+- After a 7.01(e)(1) end the scorebug's outs/bases read the cleared half (the FINAL panel is shown).
 - No automatic runner in extra innings (documented choice), no called/suspended games, no mercy rule, no substitutions.
 - The stand-in batter of the simulator is a test device, not a hitter model.

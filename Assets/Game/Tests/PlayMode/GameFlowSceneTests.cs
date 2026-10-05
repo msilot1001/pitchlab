@@ -78,13 +78,18 @@ namespace Pitchlab.Tests
             StringAssert.Contains("AWAY 3", _hud.FinalText);
             StringAssert.Contains("HOME 4", _hud.FinalText);
             StringAssert.Contains("walk-off", _hud.FinalText);
-            // Auto pitching does not go on either.
+            // A press right as the final appears does nothing (no mashing through it) …
+            double ready = _lab.CurrentPitch.Flight.Final.Time + BattingStateMachine.ResultPause;
+            At(ready + 0.1);
+            _lab.PressSwingButton(_now);
+            Assert.AreSame(game, _lab.Game, "not while the final has only just appeared");
+            // … auto pitching does not go on either …
             _lab.AutoPitch = true;
             for (int i = 0; i < 300; i++) Frame(_now + 1.0 / 30.0);
             Assert.AreEqual(thrown, _lab.PitchesThrown);
             _lab.AutoPitch = false;
-
-            // A press on the final: a new standard game, from the top.
+            // … and a press on the final once it has been up a moment starts a new standard game, from the top.
+            Assert.Greater(_now - _release, ready + HittingLabController.FinalDwell);
             _lab.PressSwingButton(_now);
             Frame(_now + 0.01);
             GameState fresh = _lab.Game;
@@ -98,6 +103,39 @@ namespace Pitchlab.Tests
             Assert.AreEqual(CameraMode.Offset, modes.Mode, "the player's camera mode is kept");
             Take(PitchTarget.Middle);
             Assert.AreEqual((1, new Count(0, 1)), (fresh.Current.Number, fresh.Count), "and it plays");
+            Assert.AreEqual(string.Empty, _hud.FinalText);
+        }
+
+        [UnityTest]
+        public IEnumerator NewGameMidPlayNeverAppliesTheOldPlay()
+        {
+            yield return null;
+            _lab.Target = PitchTarget.Middle;
+            _lab.PressSwingButton(_now);
+            _release = _now + _lab.DeliveryLead;
+            HittingPitch pitch = _lab.CurrentPitch;
+            _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z);
+            Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration).IsContact);
+            LivePlay play = _lab.LastLive;
+            At(play.ContactTime + 0.5);
+            _lab.NewGame();   // the editor's NEW GAME mid-play
+            GameState fresh = _lab.Game;
+            for (int i = 0; i < 60; i++) Frame(_now + 0.2);
+            Assert.AreEqual((0, 0, 0), (fresh.CompletedPlateAppearances, fresh.AwayScore, fresh.Current.Pitches.Count), "the old play never reaches the new game");
+        }
+
+        [UnityTest]
+        public IEnumerator AutoPitchingCarriesOnIntoANewGame()
+        {
+            yield return null;
+            _lab.AutoPitch = true;
+            _lab.NewGame();
+            int thrown = _lab.PitchesThrown;
+            Frame(_now + 0.05);
+            Assert.AreEqual(thrown, _lab.PitchesThrown, "not at once");
+            for (int i = 0; i < 120; i++) Frame(_now + 1.0 / 60.0);
+            Assert.Greater(_lab.PitchesThrown, thrown, "it starts by itself after the delay");
+            _lab.AutoPitch = false;
         }
 
         [UnityTest]

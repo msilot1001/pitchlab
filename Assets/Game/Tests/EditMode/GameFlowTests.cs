@@ -83,6 +83,78 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void TheEighthInningNeverEndsAGame()
+        {
+            var a = new GameState();
+            a.Set(8, Half.Top, 2, BaseOccupancy.Empty, 1, 3);
+            StrikeOut(a);
+            Assert.IsFalse(a.IsOver, "home ahead after the top of the 8th: the 8th goes on");
+            Assert.AreEqual((8, Half.Bottom), (a.Inning, a.Half));
+            var b = new GameState();
+            b.Set(8, Half.Bottom, 2, BaseOccupancy.Empty, 3, 1);
+            StrikeOut(b);
+            Assert.IsFalse(b.IsOver, "visitors ahead after 8: the 9th is played");
+            Assert.AreEqual((9, Half.Top), (b.Inning, b.Half));
+            var c = new GameState();
+            c.Set(8, Half.Bottom, 0, BaseOccupancy.Loaded, 4, 4);
+            LivePlay gap = Gapper(c);
+            c.Apply(gap);
+            Assert.IsFalse(c.IsOver, "no walk-off before the 9th");
+            Assert.AreEqual(4 + gap.Runs, c.HomeScore, "every run counts");
+        }
+
+        [Test]
+        public void VisitorsAheadAfterNineWin()
+        {
+            var g = new GameState();
+            g.Set(9, Half.Bottom, 2, BaseOccupancy.Empty, 3, 2);
+            StrikeOut(g);
+            Assert.IsTrue(g.IsOver);
+            Assert.AreEqual((TeamSide.Away, 9, Half.Bottom, "nine innings"), (g.Result.Winner, g.Result.Inning, g.Result.Half, g.Result.Reason));
+        }
+
+        [Test]
+        public void AWalkOffFromOneDownCountsTheTwoRunsItNeeds()
+        {
+            var g = new GameState();
+            g.Set(9, Half.Bottom, 0, BaseOccupancy.Loaded, 5, 4);
+            LivePlay gap = Gapper(g);
+            Assume.That(gap.Runs, Is.GreaterThanOrEqualTo(2));
+            g.Apply(gap);
+            Assert.IsTrue(g.IsOver);
+            Assert.AreEqual((5, 6, 2), (g.AwayScore, g.HomeScore, g.Completed.Last().Runs));
+        }
+
+        [Test]
+        public void ARunAnnulledByAForceThirdOutIsNoWalkOff()
+        {
+            // Two out, a runner on third: he crosses the plate, but the third out is a force (5.08(a)) — no run, extra innings.
+            var g = new GameState();
+            g.Set(9, Half.Bottom, 2, new BaseOccupancy(false, false, true), 3, 3);
+            LivePlay play = Play(g, 60.0, -10.0, -44.0, -1000.0);
+            Assert.IsTrue(play.Runners.Any(r => r.HasScored && !r.RunCounts), "he crossed the plate");
+            Assert.AreEqual((0, 3), (play.Runs, play.Outs));
+            g.Apply(play);
+            Assert.IsFalse(g.IsOver);
+            Assert.AreEqual((10, Half.Top, 3, 3), (g.Inning, g.Half, g.AwayScore, g.HomeScore));
+        }
+
+        [Test]
+        public void AWinningRunBeforeATagThirdOutEndsTheGame()
+        {
+            // Two out, bases loaded: the winning run scores before the third out (a tag, not a force) — it counts, game over.
+            var g = new GameState();
+            g.Set(9, Half.Bottom, 2, BaseOccupancy.Loaded, 3, 3);
+            LivePlay play = Play(g, 75.0, 22.0, -44.0, 1800.0);
+            Assert.AreEqual((3, 1), (play.Outs, play.Runs), "the third out came after the run");
+            g.Apply(play);
+            Assert.IsTrue(g.IsOver);
+            Assert.AreEqual((3, 4, "walk-off"), (g.AwayScore, g.HomeScore, g.Result.Reason));
+            Assert.AreEqual(0, g.Completed.Last().OutsMade, "the out after the winning run does not count");
+            Assert.AreEqual(2, g.Outs);
+        }
+
+        [Test]
         public void AWalkOffWalkEndsTheGameWithTheOneRun()
         {
             var g = new GameState();
@@ -103,8 +175,25 @@ namespace Pitchlab.Tests
             g.Apply(gap);
             Assert.IsTrue(g.IsOver, "7.01(e)(3): over the moment the winning run scores");
             Assert.AreEqual((3, 4), (g.AwayScore, g.HomeScore), "only the winning run counts");
-            Assert.AreEqual(1, g.Completed.Last().Runs);
+            PlateAppearance pa = g.Completed.Last();
+            Assert.AreEqual((1, 0), (pa.Runs, pa.OutsMade), "one run; no out before it");
             Assert.AreEqual((9, Half.Bottom), (g.Result.Inning, g.Result.Half));
+            Assert.Throws<InvalidOperationException>(() => g.Apply(Gapper(g)), "no play after the end");
+        }
+
+        [Test]
+        public void AWalkOffExtraBaseHitIsCreditedWithTheWinningRunnersBases()
+        {
+            // A runner on third, tied: a ball in the gap — a double as a play — ends the game when he scores, and the batter is
+            // credited with the one base the winning run advanced (OBR 9.06(f)).
+            var g = new GameState();
+            g.Set(9, Half.Bottom, 0, new BaseOccupancy(false, false, true), 3, 3);
+            LivePlay gap = Gapper(g);
+            Assume.That(PlayResults.Classify(gap), Is.EqualTo(PlayResultKind.Double));
+            g.Apply(gap);
+            Assert.IsTrue(g.IsOver);
+            PlateAppearance pa = g.Completed.Last();
+            Assert.AreEqual((1, PlayResultKind.Single, "single"), (pa.Runs, pa.PlayResult.Value, pa.Result));
         }
 
         [Test]
@@ -114,6 +203,7 @@ namespace Pitchlab.Tests
             g.Set(10, Half.Bottom, 2, new BaseOccupancy(true, true, false), 5, 5);
             LivePlay hr = HomeRun(g);
             Assert.AreEqual(4, hr.AwardedBases);
+            Assert.AreEqual(PlayResultKind.HomeRun, PlayResults.Classify(hr), "out of the park");
             g.Apply(hr);
             Assert.IsTrue(g.IsOver);
             Assert.AreEqual((5, 8), (g.AwayScore, g.HomeScore), "7.01(e) EXCEPTION: the batter and all runners score");
@@ -172,11 +262,13 @@ namespace Pitchlab.Tests
 
         // ------------------------------------------------------------------ whole games
 
-        [TestCase(1)]
-        [TestCase(4)]
-        [TestCase(12)]
-        [TestCase(33)]
-        public void ASimulatedGameIsAValidGame(int seed)
+        // Seeds chosen to exercise each ending: 1 visitors after nine, 4 home ahead after the top of the 9th, 12 a walk-off in
+        // the 9th, 33 extra innings ending in a walk-off in the 12th (asserted below).
+        [TestCase(1, "nine innings")]
+        [TestCase(4, "the home team leads after the top of the 9th")]
+        [TestCase(12, "walk-off")]
+        [TestCase(33, "walk-off")]
+        public void ASimulatedGameIsAValidGame(int seed, string ending)
         {
             var g = new GameState();
             var sim = new GameSimulator(g, seed);
@@ -186,21 +278,50 @@ namespace Pitchlab.Tests
             TestContext.WriteLine($"seed {seed}: {g.Result}, {g.Result.Inning} innings, {g.CompletedPlateAppearances} PA, {sim.Pitches} pitches, {timer.ElapsedMilliseconds} ms");
             Assert.IsTrue(g.IsOver, "it ends");
             GameResult r = g.Result;
+            Assert.AreEqual(ending, r.Reason, "the seed's ending");
+            if (seed == 33) Assert.Greater(r.Inning, 9, "extra innings");
             Assert.AreEqual((g.AwayScore, g.HomeScore), (r.Away, r.Home));
             Assert.AreNotEqual(r.Away, r.Home, "never a tie");
-            Assert.GreaterOrEqual(r.Inning, GameState.RegulationInnings);
+            Assert.GreaterOrEqual(r.Inning, 9);
+            Assert.AreEqual(sim.Pitches, g.Completed.Sum(p => p.Pitches.Count) + g.Current.Pitches.Count, "every simulated pitch recorded by the game");
             // Scores are the plate appearances' runs.
             Assert.AreEqual(r.Away, g.Completed.Where(p => p.Team == TeamSide.Away).Sum(p => p.Runs));
             Assert.AreEqual(r.Home, g.Completed.Where(p => p.Team == TeamSide.Home).Sum(p => p.Runs));
             // Every finished half-inning had exactly three outs; the last one three, or fewer on a walk-off.
-            var halves = g.Completed.GroupBy(p => (p.Inning, p.Half)).ToList();
-            Assert.AreEqual(2 * r.Inning - (r.Half == Half.Top ? 1 : 0), halves.Count, "every half up to the end was played, in order");
-            for (int i = 0; i < halves.Count; i++)
+            // The halves in order — top 1, bottom 1, … — each ended by exactly three outs, but a walk-off's.
+            var order = g.Completed.Select(p => (p.Inning, p.Half)).Distinct().ToList();
+            var expected = Enumerable.Range(1, r.Inning).SelectMany(i => new[] { (i, Half.Top), (i, Half.Bottom) }).Take(order.Count).ToList();
+            CollectionAssert.AreEqual(expected, order, "every half up to the end, in order");
+            Assert.AreEqual((r.Inning, r.Half), order.Last());
+            for (int i = 0; i < order.Count; i++)
             {
-                int outs = halves[i].Sum(p => p.OutsMade);
-                if (i < halves.Count - 1 || r.Reason != "walk-off") Assert.AreEqual(3, Math.Min(outs, 3), $"half {halves[i].Key}");
-                else Assert.Less(halves[i].First().StartOuts + outs - halves[i].Last().OutsMade, 3, "the walk-off came before the third out");
+                int outs = g.Completed.Where(p => (p.Inning, p.Half) == order[i]).Sum(p => p.OutsMade);
+                if (i < order.Count - 1 || r.Reason != "walk-off") Assert.AreEqual(3, outs, $"half {order[i]}");
+                else Assert.Less(outs, 3, "the walk-off came before the third out");
             }
+
+            // The game ended at its first decisive moment and for the stated reason (7.01(e)).
+            int away = 0, home = 0;
+            for (int i = 0; i < g.CompletedPlateAppearances; i++)
+            {
+                PlateAppearance pa = g.Completed[i];
+                int homeBefore = home;
+                if (pa.Team == TeamSide.Away) away += pa.Runs;
+                else home += pa.Runs;
+                bool last = i == g.CompletedPlateAppearances - 1;
+                bool halfOver = last || g.Completed[i + 1].Half != pa.Half;
+                if (!last && pa.Inning >= 9 && pa.Half == Half.Bottom && homeBefore <= away && home > away) Assert.Fail($"a walk-off at PA {pa.Number} was played on");
+                if (!last && halfOver && pa.Inning >= 9 && (pa.Half == Half.Top ? home > away : home != away)) Assert.Fail($"the game should have ended after PA {pa.Number}");
+            }
+
+            PlateAppearance final = g.Completed.Last();
+            if (r.Reason == "walk-off")
+            {
+                Assert.AreEqual(Half.Bottom, r.Half);
+                if (final.PlayResult != PlayResultKind.HomeRun) Assert.AreEqual(r.Away + 1, r.Home, "only the winning run");
+            }
+            else if (r.Half == Half.Top) Assert.Greater(r.Home, r.Away);
+            else Assert.Greater(r.Away, r.Home);
 
             // Each team's order: 1, 2, …, 9, 1, … through the whole game, never skipping, across innings.
             foreach (TeamSide team in new[] { TeamSide.Away, TeamSide.Home })
@@ -212,7 +333,10 @@ namespace Pitchlab.Tests
             }
 
             CollectionAssert.AreEqual(Enumerable.Range(1, g.CompletedPlateAppearances), g.Completed.Select(p => p.Number), "each plate appearance recorded once");
-            Assert.Less(timer.Elapsed.TotalSeconds, 20.0, "accelerated: no rendering");
+            Assert.Less(timer.Elapsed.TotalSeconds, 60.0, "accelerated: no rendering (a loose bound; the time is logged)");
+            Assert.Throws<InvalidOperationException>(() => sim.PlayPitch(), "no pitch after the end");
+            sim.PlayToEnd();
+            Assert.AreEqual(sim.Pitches, g.Completed.Sum(p => p.Pitches.Count) + g.Current.Pitches.Count, "a finished game plays no more");
         }
 
         [Test]
@@ -222,7 +346,8 @@ namespace Pitchlab.Tests
             {
                 var g = new GameState();
                 new GameSimulator(g, seed).PlayToEnd();
-                return string.Join("\n", g.Log);
+                return string.Join("\n", g.Log) + string.Join("|", g.Completed.SelectMany(p => p.Pitches)
+                    .Select(p => $"{p.Info.Label}@{p.Info.PlateX:R},{p.Info.PlateZ:R}:{p.Outcome}"));
             }
 
             string a = Run(3);

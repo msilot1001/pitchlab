@@ -87,6 +87,7 @@ namespace Pitchlab.Gameplay.Play
         public void PlayToEnd(int maxPitches = 3000)
         {
             while (!Game.IsOver && Pitches < maxPitches) PlayPitch();
+            if (!Game.IsOver) throw new InvalidOperationException($"No end after {maxPitches} pitches.");
         }
 
         private static double Unit(ref ulong h)
