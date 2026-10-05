@@ -433,6 +433,9 @@ MonoBehaviour:
   _deliveryLead: 1.1
   _showDebugPaths: 0
   _showPanel: 0
+  _gameMode: 0
+  _mouseSensitivity: 0.004
+  _requireMouseCapture: 1
   _ball: {fileID: 671174561}
   _rubber: {fileID: 1671547960}
   _plate: {fileID: 1231535125}
@@ -1479,6 +1482,7 @@ GameObject:
   - component: {fileID: 1903777413}
   - component: {fileID: 1903777416}
   - component: {fileID: 1903777417}
+  - component: {fileID: 1903777418}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -1623,6 +1627,19 @@ MonoBehaviour:
   _holdSeconds: 0.3
   _blendSeconds: 0.8
   _followWindow: 45
+--- !u!114 &1903777418
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1903777412}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5583904b096c04681b27c74362f1d0db, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Pitchlab.Presentation::Pitchlab.Presentation.GameplayCameraController
+  _mode: 4
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

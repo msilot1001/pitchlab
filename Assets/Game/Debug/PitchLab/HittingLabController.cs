@@ -3,6 +3,7 @@ using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Presentation;
 using Pitchlab.Simulation.Batting;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Core;
@@ -101,6 +102,8 @@ namespace Pitchlab.Sandbox
         /// <summary>The Situation Editor works only between plays (Ready, the last result applied).</summary>
         public bool EditorLocked => Game == null || _resultPending || StateAt(Clock()) != BattingState.Ready;
         private bool _resultPending;
+        private GameplayCameraController _cameraModes;
+        private bool CameraHasArrows => _cameraModes != null && _cameraModes.CapturesArrowKeys;
         /// <summary>The play under the rules (TASK-006B; bases empty in the batting loop): the defense's decision and the
         /// OUT/SAFE events. The batting loop observes its end; it holds no rules itself.</summary>
         /// <summary>The chosen defensive action's play: the ball's authority at every instant.</summary>
@@ -178,8 +181,10 @@ namespace Pitchlab.Sandbox
             _aimAction.performed += OnAim;
             _aimAction.canceled += OnAim;
 
-            _nextPresetAction = Button("<Keyboard>/rightArrow", "<Gamepad>/dpad/right", _ => _presetIndex = (_presetIndex + 1) % Presets.Length);
-            _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", _ => _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length);
+            // The arrow keys choose the pitch unless the tactical camera has them (TASK-011).
+            _cameraModes = _camera.GetComponent<GameplayCameraController>();
+            _nextPresetAction = Button("<Keyboard>/rightArrow", "<Gamepad>/dpad/right", _ => { if (!CameraHasArrows) _presetIndex = (_presetIndex + 1) % Presets.Length; });
+            _previousPresetAction = Button("<Keyboard>/leftArrow", "<Gamepad>/dpad/left", _ => { if (!CameraHasArrows) _presetIndex = (_presetIndex + Presets.Length - 1) % Presets.Length; });
             _normalSpeedAction = Button("<Keyboard>/digit1", null, _ => _playbackSpeed = 1f);
             _slowSpeedAction = Button("<Keyboard>/digit2", null, _ => _playbackSpeed = 0.5f);
             _pathsAction = Button("<Keyboard>/t", null, _ => SetDebugPaths(!_showDebugPaths));

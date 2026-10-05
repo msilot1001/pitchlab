@@ -1,7 +1,9 @@
 {
     "name": "Pitchlab.Presentation",
     "rootNamespace": "Pitchlab.Presentation",
-    "references": [],
+    "references": [
+        "Unity.InputSystem"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
