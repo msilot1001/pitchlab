@@ -37,7 +37,9 @@ namespace Pitchlab.Gameplay.Running
         /// The plan from (leg, d, v) at <paramref name="time"/> to <paramref name="destination"/>, going forward (the current leg's
         /// end, then on around the bases). <paramref name="destination"/> must be the current leg's end or a later base.
         /// </summary>
-        public static List<PlannedLeg> Plan(RunnerProfile p, BaseLeg leg, double d, double v, double time, Base destination, bool throughFirst)
+        /// <param name="bananaAll">Every leg is the banana route (a hit to the outfield: he may round any base, so he takes
+        /// the route from the start of each leg; the geometry of a leg cannot change once he is on it).</param>
+        public static List<PlannedLeg> Plan(RunnerProfile p, BaseLeg leg, double d, double v, double time, Base destination, bool throughFirst, bool bananaAll = false)
         {
             var plan = new List<PlannedLeg>();
             for (int guard = 0; guard < 4; guard++)
@@ -52,7 +54,7 @@ namespace Pitchlab.Gameplay.Running
                 v = motion.EndSpeed;
                 d = 0.0;
                 Base next = BaseLeg.Bases(leg.To);
-                leg = BaseLeg.Of(leg.To, next != destination);
+                leg = BaseLeg.Of(leg.To, bananaAll || next != destination);
             }
 
             throw new ArgumentException("Destination is not ahead of the runner.", nameof(destination));
@@ -60,8 +62,8 @@ namespace Pitchlab.Gameplay.Running
 
         /// <summary>When he would touch <paramref name="destination"/> (his foot on the bag — the rules' touch, LiveRunner.TouchDistance
         /// before its centre) going there now.</summary>
-        public static double ArrivalTime(RunnerProfile p, BaseLeg leg, double d, double v, double time, Base destination, bool throughFirst) =>
-            TouchTime(Plan(p, leg, d, v, time, destination, throughFirst));
+        public static double ArrivalTime(RunnerProfile p, BaseLeg leg, double d, double v, double time, Base destination, bool throughFirst, bool bananaAll = false) =>
+            TouchTime(Plan(p, leg, d, v, time, destination, throughFirst, bananaAll));
 
         /// <summary>The foot-on-the-bag time at the end of a plan.</summary>
         public static double TouchTime(List<PlannedLeg> plan)

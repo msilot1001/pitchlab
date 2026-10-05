@@ -108,7 +108,7 @@ namespace Pitchlab.Gameplay.Play
         private static double RunnerEtaGoingOn(LivePlay play, LiveRunner r, Base next, double now)
         {
             PathMotion m = r.Current.Motion;
-            return RunnerPlanner.ArrivalTime(play.Profile, r.Current.Leg, m.DistanceAt(now), m.VelocityAt(now), now, next, false);
+            return RunnerPlanner.ArrivalTime(play.Profile, r.Current.Leg, m.DistanceAt(now), m.VelocityAt(now), now, next, false, play.Kind == LivePlay.BallKind.Hit);
         }
 
         /// <summary>A runner ahead of him will be on <paramref name="b"/> (or short of it): he cannot go there.</summary>

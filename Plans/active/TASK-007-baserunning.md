@@ -42,10 +42,18 @@ Codex: B (Illinois termination), fixed and merged.
 - [x] Phase 0 performance (merged).
 - [x] Base paths, running law, planner, runners, engine, decisions; EditMode tests (13).
 - [x] RunnerView; FieldingLab and HittingLab on LivePlay; PlayMode tests.
-- [ ] Reviews, check.sh, runtime, Codex, merge.
+- [x] Reviews (rules, physics, Unity, tests), check.sh, runtime, Codex (B: infeasible stop, banana on hits; fixed), merge.
 
 ## Verification
-(filled in at the end)
+- **check.sh:** EditMode 487 passed / 493 (6 skipped, unchanged), PlayMode 46/46.
+- **Console:** clean.
+- **Runtime (FieldingLab, Game View):** runners shown in the offense colour on their gameplay paths:
+  - wall ball with a runner on first: he rounds second and third and scores;
+  - runners on first and third, CF single: the run scores, first to second;
+  - tag-up from third on a deep fly;
+  - forced runners on a bases-loaded grounder.
+- **Runtime (HittingLab):** the batter hands over to the batter-runner at contact + 0.34 s and is back at the plate in Ready after the play.
+- **Codex:** B. An infeasible stop was snapped onto the target; it now passes it continuously, rests beyond and returns. A runner rounding mid-leg kept a straight leg; on hits every leg is now the banana route from its start, in both prediction and execution. Regression tests added.
 
 ## Decisions / discoveries
 - **Arrival times:** slides on 2B/3B (10 m/s²) give force-play arrivals of ~4.2 s from contact for a runner on first. Without the slide model it was ~4.5 s.
@@ -66,4 +74,7 @@ Codex: B (Illinois termination), fixed and merged.
   - Not caught: "no overrun protection". The play ends once the ball is held and every runner is settled, and the protected batter's walk back happens after that. Protection only matters while a play is still live, which first arises with TASK-009's chained defensive actions; the decisive test belongs there.
 
 ## Remaining risks
-(filled in at the end)
+- **Defense:** TASK-006B's single action, decided at contact; no team coverage (TASK-008), no chained actions (TASK-009).
+- **Overrun protection:** after rounding first on a hit (banana), the batter-runner is still treated as returning from an overrun. Also untested until plays continue after the first action (TASK-009).
+- **Not modelled:** force reinstatement on retreat; retouching an original base after passing one (only lab scripting could produce it); home runs and the infield fly (TASK-009).
+- **Runners read the future:** they know at contact whether a fly will be caught (`Kind` comes from the fielding solution).

@@ -134,7 +134,7 @@ namespace Pitchlab.Tests
             var r1 = new Runner(Base.First);
             LiveRunner runner = wall.RunnerOf(r1);
             double decided = wall.Log.First(e => e.Kind == PlayLogKind.Decision && e.Runner == r1 && e.Text.Contains("rounds 3B")).Time;
-            double predictedHome = RunnerPlanner.ArrivalTime(P, runner.LegAt(decided), runner.DistanceAlongAt(decided), runner.PathVelocityAt(decided), decided, Base.Home, false);
+            double predictedHome = RunnerPlanner.ArrivalTime(P, runner.LegAt(decided), runner.DistanceAlongAt(decided), runner.PathVelocityAt(decided), decided, Base.Home, false, bananaAll: true);
             Assert.AreEqual(predictedHome, TouchTime(wall, r1, Base.Home), 1e-6, "prediction at the decision = execution");
         }
 
@@ -254,6 +254,10 @@ namespace Pitchlab.Tests
             Assert.IsFalse(sl.IsOut, "and is not thrown out");
             Assert.That(sl.LastTouched, Is.EqualTo(Base.Third).Or.EqualTo(Base.Second));
             Assert.IsTrue(normal.Log.Any(e => e.Kind == PlayLogKind.Decision && e.Runner == n.Id && e.Text.Contains("rounds 3B")), "he rounded third on his own decision");
+            // On a hit every leg is the banana route from its start (he may round any base; the geometry of a leg cannot
+            // change once he is on it): the leg he rounded second and third on curves out.
+            foreach (Base b in new[] { Base.Second, Base.Third })
+                Assert.IsTrue(n.LegAt(TouchTime(normal, n.Id, b) - 0.01).Banana, $"banana into {b}");
         }
 
         [Test]
@@ -429,6 +433,19 @@ namespace Pitchlab.Tests
                     Assert.AreEqual(target, m.DistanceAt(m.RestTime + 5.0), 0.0);
                 }
             }
+
+            // Asked to stop where he can no longer brake in time: he brakes from now, passes the target at the speed he still
+            // has and rests beyond it — continuously, never snapped back onto it.
+            var late = new PathMotion(P, 0.0, 9.0, 8.0, 10.0, 0.0);
+            Assert.Greater(late.EndSpeed, 0.0);
+            Assert.AreEqual(9.0 + 8.0 * 8.0 / (2.0 * P.BrakeDeceleration), late.DistanceAt(late.RestTime + 1.0), 1e-9);
+            for (double t = 0.0; t < late.RestTime + 0.5; t += 0.001)
+            {
+                Assert.GreaterOrEqual(late.DistanceAt(t + 0.001), late.DistanceAt(t) - 1e-12, "never moves back");
+                Assert.Less(late.DistanceAt(t + 0.001) - late.DistanceAt(t), 0.009, "no jump");
+            }
+
+            Assert.AreEqual(10.0, late.DistanceAt(late.ArrivalTime), 1e-9, "arrival is when he passes the target");
 
             // Told to go back while running full speed the other way: he first brakes at the braking deceleration.
             var back = new PathMotion(P, 0.0, 10.0, P.MaxSpeed, 0.0, 0.0);

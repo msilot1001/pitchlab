@@ -111,6 +111,16 @@ namespace Pitchlab.Gameplay.Running
 
             _brakeStart = hi;
             double vb = AlongSpeed(_brakeStart);
+            if (hi == 0.0 && Overshoot(0.0) > 1e-9 && vb > vEnd)
+            {
+                // Too close to stop (or slow to the end speed) by the target: he brakes from now and passes it at the speed
+                // he still has, then comes to rest beyond it — never snapped back onto it.
+                double cross = Math.Sqrt(Math.Max(0.0, vb * vb - 2.0 * _brake * remaining));
+                _arrival = (vb - cross) / _brake;
+                EndSpeed = cross;
+                return;
+            }
+
             if (vb > vEnd)
             {
                 _arrival = _brakeStart + (vb - vEnd) / _brake;

@@ -105,7 +105,7 @@ namespace Pitchlab.Gameplay.Play
 
             // Runners: on their bases at their leads; the batter-runner at home once the ball is fair in play.
             foreach (Runner r in situation.Bases.Runners)
-                _runners.Add(new LiveRunner(r, Profile, r.From, BaseLeg.Of(r.From, false), Lead(r.From), ContactTime));
+                _runners.Add(new LiveRunner(r, Profile, r.From, BaseLeg.Of(r.From, Kind == BallKind.Hit), Lead(r.From), ContactTime));
             if (Kind != BallKind.Dead)
                 _runners.Insert(0, new LiveRunner(Runner.Batter, Profile, Base.Home, BaseLeg.Of(Base.Home, Kind == BallKind.Hit), 0.0, ContactTime));
 
@@ -512,17 +512,18 @@ namespace Pitchlab.Gameplay.Play
             if (r.Continue is Base next && next != b)
             {
                 // Round the base onto the next leg at the speed he reached it with.
-                bool rounding = BaseLeg.Bases(b) != r.Target;
+                bool rounding = BaseLeg.Bases(b) != r.Target || Kind == BallKind.Hit;
                 var nextLeg = BaseLeg.Of(b, rounding);
                 Go(r, nextLeg, 0.0, m.EndSpeed, t, r.Target);
                 return;
             }
 
-            if (m.EndSpeed > 1e-6 && b == Base.First)
+            if (m.EndSpeed > 1e-6)
             {
-                // Through first: overrun, then back to the bag (protected — OBR 5.09(b)(4) exception).
+                // Through the bag: through first on purpose (protected while he returns — OBR 5.09(b)(4) Exception), or past a
+                // base he could no longer stop on (liable to be tagged until he is back on it). He comes to rest, then returns.
                 r.Phase = RunnerPhase.Overrunning;
-                r.OverrunProtected = true;
+                r.OverrunProtected = b == Base.First && r.Id.IsBatter;
                 LiveRunner runner = r;
                 Schedule(m.RestTime, () => ReturnAfterOverrun(runner), "overrun over", true);
                 return;
@@ -538,10 +539,10 @@ namespace Pitchlab.Gameplay.Play
             if (r.IsDone) return;
             BaseLeg leg = r.Current.Leg;
             r.Phase = RunnerPhase.Returning;
-            // Back to the bag at a jog (ASSUMED 3 m/s), ending on it.
-            r.Add(leg, new PathMotion(Profile, _now, r.Current.Motion.DistanceAt(_now), 0.0, leg.Length, 0.0, 3.0));
+            // Back to the bag, ending on it: a jog when protected (ASSUMED 3 m/s), otherwise as fast as he can.
+            r.Add(leg, new PathMotion(Profile, _now, r.Current.Motion.DistanceAt(_now), 0.0, leg.Length, 0.0, r.OverrunProtected ? 3.0 : double.NaN));
             r.Continue = null;
-            r.Target = Base.First;
+            r.Target = leg.To;
             LiveRunner runner = r;
             Schedule(r.Current.Motion.ArrivalTime, () =>
             {
@@ -692,7 +693,7 @@ namespace Pitchlab.Gameplay.Play
             if (leg.To != destination && d >= leg.Length - 1e-9)
             {
                 Base next = BaseLeg.Bases(leg.To);
-                leg = BaseLeg.Of(leg.To, next != destination);
+                leg = BaseLeg.Of(leg.To, next != destination || Kind == BallKind.Hit);
                 d = 0.0;
             }
 
@@ -700,7 +701,7 @@ namespace Pitchlab.Gameplay.Play
             r.Phase = RunnerPhase.Running;
             r.OverrunProtected = false;   // heading on: no longer returning from an overrun (OBR 5.09(b)(11))
             bool throughFirst = destination == Base.First && RunnerBrain.RunsThroughFirst(this, r);
-            List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(Profile, leg, d, v, t, destination, throughFirst);
+            List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(Profile, leg, d, v, t, destination, throughFirst, Kind == BallKind.Hit);
             PathMotion m = plan[0].Motion;
             r.Add(leg, m);
             r.Continue = leg.To != destination ? destination : (Base?)null;
@@ -859,7 +860,7 @@ namespace Pitchlab.Gameplay.Play
             BaseLeg leg = r.Current.Leg;
             PathMotion m = r.Current.Motion;
             if (Progress(r, b) <= Progress(r, leg.From)) return double.PositiveInfinity;
-            return RunnerPlanner.ArrivalTime(Profile, leg, m.DistanceAt(now), m.VelocityAt(now), now, b, b == Base.First && RunnerBrain.RunsThroughFirst(this, r));
+            return RunnerPlanner.ArrivalTime(Profile, leg, m.DistanceAt(now), m.VelocityAt(now), now, b, b == Base.First && RunnerBrain.RunsThroughFirst(this, r), Kind == BallKind.Hit);
         }
 
         /// <summary>Order of a base for this runner (home counts as 4 once he has left it).</summary>
@@ -883,7 +884,7 @@ namespace Pitchlab.Gameplay.Play
                     double start = r.Id.IsBatter ? _contact + play.Profile.BatterStartDelay : _contact + (intents[r.Id].Immediate ? 0.0 : play.Profile.ReadDelay);
                     Base next = r.Id.Next;
                     bool through = next == Base.First && RunnerBrain.RunsThroughFirst(play, r);
-                    _plans[r.Id] = RunnerPlanner.Plan(play.Profile, r.Current.Leg, r.Current.Motion.D0, 0.0, start, next, through);
+                    _plans[r.Id] = RunnerPlanner.Plan(play.Profile, r.Current.Leg, r.Current.Motion.D0, 0.0, start, next, through, play.Kind == BallKind.Hit);
                 }
             }
 
