@@ -62,6 +62,9 @@ namespace Pitchlab.Tests
 
         private Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
+        private static Lineup RightHanded(string team) =>
+            new Lineup(team, Enumerable.Range(1, 9).Select(i => new PlayerProfile($"{team}{i}", $"{team} {i}", BatterSide.Right, 73.0, "")).ToArray());
+
         /// <summary>Throws the next pitch at <paramref name="location"/> and takes it; returns once its result is applied.</summary>
         private void Take(string location)
         {
@@ -71,7 +74,9 @@ namespace Pitchlab.Tests
             double end = _lab.CurrentPitch.Flight.Final.Time;
             At(end - 0.01);
             Assert.IsNull(_lab.LastOutcome, "not decided before the pitch is over");
-            At(end + 0.01);
+            At(end + HittingLabController.InputGrace - 0.01);
+            Assert.IsNull(_lab.LastOutcome, "nor while a late swing event may still arrive");
+            At(end + HittingLabController.InputGrace + 0.01);
         }
 
         [UnityTest]
@@ -90,13 +95,26 @@ namespace Pitchlab.Tests
             At(decided + 0.01);
             Assert.AreEqual((PitchOutcome.SwingingStrike, new Count(0, 1)), (_lab.LastOutcome.Value, game.Count), "a swing at a ball is a strike");
 
-            // A take is counted at the end of the pitch; a press stamped just before it but handled afterwards does not swing.
+            // A press stamped just before the end of the pitch but delivered a frame after it still swings (the take waits
+            // InputGrace); one delivered after the take was counted cannot swing.
             At(decided + BattingStateMachine.ResultPause + 0.5);
-            Take("Middle");
+            _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == "Ball high");
+            _lab.PressSwingButton(_now);
+            _release = _now + _lab.DeliveryLead;
             double end = _lab.CurrentPitch.Flight.Final.Time;
+            At(end + 0.02);
             _lab.PressSwingButton(_release + end - 0.005);
-            Assert.IsNull(_lab.LastSwing, "too late: the take stands");
-            Assert.AreEqual(new Count(0, 2), game.Count);
+            Assert.IsTrue(_lab.LastSwing.HasValue, "a late event for an in-time press still swings");
+            At(end + _lab.Swing.SwingDuration + HittingLabController.InputGrace + 0.05);
+            Assert.AreEqual((PitchOutcome.SwingingStrike, new Count(0, 2)), (_lab.LastOutcome.Value, game.Count));
+
+            At(end + BattingStateMachine.ResultPause + 1.0);
+            Take("Ball high");
+            Assert.AreEqual(new Count(1, 2), game.Count);
+            double end2 = _lab.CurrentPitch.Flight.Final.Time;
+            _lab.PressSwingButton(_release + end2 - 0.005);
+            Assert.IsNull(_lab.LastSwing, "too late: the take was counted");
+            Assert.AreEqual(new Count(1, 2), game.Count);
         }
 
         [UnityTest]
@@ -111,10 +129,170 @@ namespace Pitchlab.Tests
             At(_lab.LastResult.Value.BattedBall.Time + HittingLabController.DoublePressGrace + 0.05);
             Assert.Less(_now - _release, play.EndTime, "still in play");
             _lab.PressSwingButton(_now);   // the next pitch: the play's result stands
-            Assert.AreEqual((1, play.ResultingBases()), (game.PlateAppearance, game.Bases));
+            Assert.AreEqual((1, play.ResultingBases()), (game.CompletedPlateAppearances, game.Bases));
             _release = _now + _lab.DeliveryLead;
-            At(_lab.CurrentPitch.Flight.Final.Time + 0.01);
-            Assert.AreEqual((1, PitchOutcome.CalledStrike, new Count(0, 1)), (game.PlateAppearance, _lab.LastOutcome.Value, game.Count), "applied once; the next pitch counts for the next batter");
+            At(_lab.CurrentPitch.Flight.Final.Time + HittingLabController.InputGrace + 0.01);
+            Assert.AreEqual((1, PitchOutcome.CalledStrike, new Count(0, 1)), (game.CompletedPlateAppearances, _lab.LastOutcome.Value, game.Count), "applied once; the next pitch counts for the next batter");
+        }
+
+        [UnityTest]
+        public IEnumerator TheNextBatterComesUpFromHisSideWithHisZone()
+        {
+            yield return null;
+            GameState game = _lab.Game;
+            PlayerProfile first = game.Batter, second = game.LineupOf(TeamSide.Away)[2];
+            Assert.AreEqual((BatterSide.Left, BatterSide.Right), (first.Bats, second.Bats), "the generic order alternates here");
+            for (int i = 0; i < 4; i++)
+            {
+                Take("Ball high");
+                Assert.AreSame(first, _lab.PitchBatter, "the same batter throughout his plate appearance");
+                Assert.IsTrue(_view.Batter.LeftHanded, "a left-handed batter stands on the first-base side");
+                Assert.Greater(_view.Batter.transform.position.x, 0f);
+                Assert.AreEqual(BatterSide.Left, _lab.Swing.Side);
+            }
+
+            Assert.AreEqual((PlateAppearanceEnd.Walk, second), (_lab.LastEnd, game.Batter));
+            Assert.IsTrue(_view.Batter.LeftHanded, "the walk shows with the batter who drew it");
+            At(_lab.CurrentPitch.Flight.Final.Time + BattingStateMachine.ResultPause + 0.05);
+            Assert.IsFalse(_view.Batter.LeftHanded, "then the next batter steps in, before the next pitch");
+            Assert.Less(_view.Batter.transform.position.x, 0f);
+            Take("Middle");
+            Assert.AreSame(second, _lab.PitchBatter);
+            Assert.AreEqual(BatterSide.Right, _lab.Swing.Side, "the swing is his");
+            Assert.IsFalse(_view.Batter.LeftHanded);
+            Assert.Less(_view.Batter.transform.position.x, 0f, "on the third-base side");
+            Assert.AreEqual((second.ZoneBottom, second.ZoneTop), _lab.Zone, "called against his zone");
+            Assert.AreNotEqual(first.ZoneTop, second.ZoneTop);
+            Assert.AreEqual(new Count(0, 1), game.Count);
+        }
+
+        [UnityTest]
+        public IEnumerator ANewBatterFromTheSameSideStepsInInHisStance()
+        {
+            yield return null;
+            _lab.NewGame(new GameState(RightHanded("Away"), RightHanded("Home")));
+            Frame(_now);
+            Vector3 stance = _view.Batter.GloveAnchor.position;
+            // The first batter swings through three pitches: his finish is still up when the loop is ready again.
+            for (int i = 0; i < 3; i++)
+            {
+                _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == "Ball high");
+                _lab.PressSwingButton(_now);
+                _release = _now + _lab.DeliveryLead;
+                HittingPitch pitch = _lab.CurrentPitch;
+                Assert.IsFalse(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration - 0.25).IsContact);
+                double ready = BattingStateMachine.OutcomeTime(pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration) + BattingStateMachine.ResultPause;
+                At(ready - 0.05);
+                if (i < 2) Assert.Greater(Vector3.Distance(stance, _view.Batter.GloveAnchor.position), 0.1f, "still in his finish");
+                At(ready + 0.05);
+            }
+
+            Assert.AreEqual((PlateAppearanceEnd.Strikeout, "Away2"), (_lab.LastEnd, _lab.Game.Batter.Id));
+            Assert.Less(Vector3.Distance(stance, _view.Batter.GloveAnchor.position), 1e-3f, "the next batter (same side) in his stance, not the last one's finish");
+        }
+
+        [UnityTest]
+        public IEnumerator TheNextBatterComesUpOnlyWhenThePlayIsOver()
+        {
+            yield return null;
+            _lab.NewGame(new GameState(RightHanded("Away"), RightHanded("Home")));
+            GameState game = _lab.Game;
+            PlayerProfile batter = game.Batter;
+            LivePlay play = Swing(0.0, 0.0);
+            Assert.AreEqual(LivePlay.BallKind.Hit, play.Kind);
+            At(play.EndTime - 0.01);
+            Assert.AreEqual((batter, 0, 0), (game.Batter, game.CompletedPlateAppearances, game.Current.Pitches.Count), "still his plate appearance while the ball is live (the pitch is recorded with its play)");
+            At(play.EndTime + 0.01);
+            Assert.AreEqual((1, 2), (game.CompletedPlateAppearances, game.Current.Slot));
+            Assert.AreEqual(PlateAppearanceEnd.InPlay, game.Completed[0].End);
+            Assert.AreEqual(1, game.Completed[0].Pitches.Count);
+            Assert.AreEqual(Units.MetersPerSecondToMph(_lab.CurrentPitch.Flight.First.Velocity.Length), game.Completed[0].Pitches[0].Info.SpeedMph, 1e-9, "the pitch is recorded as thrown");
+        }
+
+        [UnityTest]
+        public IEnumerator ThePlateAppearanceDoesNotDependOnTheFrameSchedule()
+        {
+            yield return null;
+            string Run(double frame)
+            {
+                _lab.NewGame(new GameState(RightHanded("Away"), RightHanded("Home")));
+                GameState game = _lab.Game;
+                foreach (string location in new[] { "Ball high", "Middle", "Ball low", "Down", "Ball in", "Ball away", "Up", "Middle", "Middle", "Middle", "Middle", "Middle" })
+                {
+                    _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == location);
+                    _lab.PressSwingButton(_now);
+                    _release = _now + _lab.DeliveryLead;
+                    HittingPitch pitch = _lab.CurrentPitch;
+                    double end = _release + pitch.Flight.Final.Time + BattingStateMachine.ResultPause + 0.2;
+                    if (game.Current.Pitches.Count == 0 && (game.CompletedPlateAppearances == 2 || game.CompletedPlateAppearances == 3))
+                    {
+                        // Swing (contact) at the third and fourth batters' first pitches; the fourth's play is cut short by
+                        // the next press, mid-play.
+                        _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z);
+                        Assert.IsTrue(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration).IsContact);
+                        end = game.CompletedPlateAppearances == 2 ? _release + _lab.PlayEnd + BattingStateMachine.ResultPause + 0.2
+                            : _release + _lab.LastResult.Value.BattedBall.Time + 1.0;
+                    }
+
+                    while (_now < end) Frame(_now + frame);
+                }
+
+                return string.Join("|", game.Log) + "#" + game + "#" + string.Join(",", game.Completed.SelectMany(p => p.Pitches).Concat(game.Current.Pitches).Select(p => p.ToString()));
+            }
+
+            string at30 = Run(1.0 / 30.0), at144 = Run(1.0 / 144.0);
+            StringAssert.Contains("walk", at30);
+            StringAssert.Contains("in play", at30);
+            Assert.AreEqual(at30, at144);
+        }
+
+        [UnityTest]
+        public IEnumerator ThePitchIsRecordedAsThrownEvenIfTheSelectionChanges()
+        {
+            yield return null;
+            _lab.PresetIndex = 0;
+            _lab.PressSwingButton(_now);
+            _release = _now + _lab.DeliveryLead;
+            string thrown = HittingLabController.PresetLabel(0);
+            At(0.2);
+            _lab.PresetIndex = 3;   // the next pitch chosen while this one is in flight
+            At(_lab.CurrentPitch.Flight.Final.Time + HittingLabController.InputGrace + 0.01);
+            Assert.AreEqual(thrown, _lab.Game.Current.Pitches[0].Info.Label);
+            Assert.AreNotEqual(thrown, HittingLabController.PresetLabel(3));
+        }
+
+        [UnityTest]
+        public IEnumerator ANewGameDropsThePitchInFlight()
+        {
+            yield return null;
+            _lab.PressSwingButton(_now);
+            _release = _now + _lab.DeliveryLead;
+            At(0.2);
+            var next = new GameState();
+            _lab.NewGame(next);
+            At(3.0);
+            _lab.PressSwingButton(_now);   // the first pitch of the new game
+            Assert.AreEqual((0, 0, new Count()), (next.Current.Pitches.Count, next.CompletedPlateAppearances, next.Count), "the old pitch never reaches it");
+            _release = _now + _lab.DeliveryLead;
+            At(_lab.CurrentPitch.Flight.Final.Time + HittingLabController.InputGrace + 0.01);
+            Assert.AreEqual(1, next.Current.Pitches.Count);
+            Assert.AreEqual(1, next.Current.Pitches[0].Number);
+        }
+
+        [UnityTest]
+        public IEnumerator TheCallUsesTheBattersOwnZone()
+        {
+            yield return null;
+            // A short leadoff man and a tall second batter: "Up" is above the first one's zone and inside the second's.
+            PlayerProfile Make(string id, double height) => new PlayerProfile(id, id, BatterSide.Right, height, "");
+            var away = new Lineup("Away", new[] { Make("S", 60.0), Make("T", 86.0) }.Concat(Enumerable.Range(3, 7).Select(i => Make($"A{i}", 73.0))).ToArray());
+            _lab.NewGame(new GameState(away, RightHanded("Home")));
+            Take("Up");
+            Assert.AreEqual(PitchOutcome.Ball, _lab.LastOutcome);
+            for (int i = 0; i < 3; i++) Take("Ball high");   // walk the short batter
+            Assert.AreEqual("T", _lab.Game.Batter.Id);
+            Take("Up");
+            Assert.AreEqual(PitchOutcome.CalledStrike, _lab.LastOutcome);
         }
 
         [UnityTest]
@@ -138,7 +316,7 @@ namespace Pitchlab.Tests
             Assert.IsFalse(_lab.EditorLocked, "between pitches the editor works");
             Take("Ball in");
             Assert.AreEqual(PlateAppearanceEnd.Walk, _lab.LastEnd);
-            Assert.AreEqual((1, new BaseOccupancy(true, true, false), 1, new Count()), (game.Outs, game.Bases, game.PlateAppearance, game.Count), "walked: the runner forced to second");
+            Assert.AreEqual((1, new BaseOccupancy(true, true, false), 1, new Count()), (game.Outs, game.Bases, game.CompletedPlateAppearances, game.Count), "walked: the runner forced to second");
 
             // The next batter strikes out looking; the runners lead off again from where the walk put them.
             foreach (string strike in new[] { "Up", "Down", "Away" })
@@ -148,7 +326,7 @@ namespace Pitchlab.Tests
             }
 
             Assert.AreEqual(PlateAppearanceEnd.Strikeout, _lab.LastEnd);
-            Assert.AreEqual((2, new BaseOccupancy(true, true, false), 2), (game.Outs, game.Bases, game.PlateAppearance));
+            Assert.AreEqual((2, new BaseOccupancy(true, true, false), 2), (game.Outs, game.Bases, game.CompletedPlateAppearances));
         }
 
         [UnityTest]
@@ -166,10 +344,10 @@ namespace Pitchlab.Tests
 
             // Applied exactly when the play is over, not before.
             At(play.EndTime - 0.01);
-            Assert.AreEqual(0, game.PlateAppearance);
+            Assert.AreEqual(0, game.CompletedPlateAppearances);
             Assert.IsTrue(_lab.EditorLocked);
             At(play.EndTime + 0.01);
-            Assert.AreEqual(1, game.PlateAppearance);
+            Assert.AreEqual(1, game.CompletedPlateAppearances);
             Assert.AreEqual(play.ResultingBases(), game.Bases);
             Assert.AreEqual(play.Outs, game.Outs);
 
@@ -227,6 +405,8 @@ namespace Pitchlab.Tests
         public IEnumerator TheThirdOutChangesTheHalfInning()
         {
             yield return null;
+            // A right-handed batter (the scripted swing's liner is his).
+            _lab.NewGame(new GameState(RightHanded("Away"), RightHanded("Home")));
             GameState game = _lab.Game;
             game.Set(4, Half.Top, 1, BaseOccupancy.Loaded, 2, 3);
             Frame(_now);
