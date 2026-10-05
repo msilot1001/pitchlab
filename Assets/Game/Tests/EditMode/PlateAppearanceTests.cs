@@ -59,6 +59,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(new Count(2, 2), pa.Pitches[5].Before, "a two-strike foul");
             Assert.AreEqual(new Count(2, 2), pa.Pitches[5].After, "leaves the count");
             Assert.AreEqual("Four-Seam-like", pa.Pitches[0].Info.Label);
+            Assert.AreEqual("2. — BALL", pa.Pitches[1].ToString(), "a pitch recorded without its info still reads");
             Assert.AreEqual(1, game.UpNext(TeamSide.Away), "the order has not moved");
             Assert.IsFalse(pa.IsComplete);
         }

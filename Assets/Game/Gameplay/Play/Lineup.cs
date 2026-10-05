@@ -98,13 +98,15 @@ namespace Pitchlab.Gameplay.Play
     {
         public PitchInfo(string label, double speedMph, double plateX, double plateZ)
         {
-            Label = label ?? string.Empty;
+            _label = label;
             SpeedMph = speedMph;
             PlateX = plateX;
             PlateZ = plateZ;
         }
 
-        public string Label { get; }
+        private readonly string _label;
+        /// <summary>The pitch type as called for (empty when not given — also for <c>default</c>).</summary>
+        public string Label => _label ?? string.Empty;
         /// <summary>Release speed (mph).</summary>
         public double SpeedMph { get; }
         /// <summary>Where it crossed the front plane of the plate (m; NaN if it never did).</summary>

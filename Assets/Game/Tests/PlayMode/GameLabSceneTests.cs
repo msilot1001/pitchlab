@@ -167,6 +167,31 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator ANewBatterFromTheSameSideStepsInInHisStance()
+        {
+            yield return null;
+            _lab.NewGame(new GameState(RightHanded("Away"), RightHanded("Home")));
+            Frame(_now);
+            Vector3 stance = _view.Batter.GloveAnchor.position;
+            // The first batter swings through three pitches: his finish is still up when the loop is ready again.
+            for (int i = 0; i < 3; i++)
+            {
+                _lab.LocationIndex = System.Array.FindIndex(PitchLocation.All, l => l.Name == "Ball high");
+                _lab.PressSwingButton(_now);
+                _release = _now + _lab.DeliveryLead;
+                HittingPitch pitch = _lab.CurrentPitch;
+                Assert.IsFalse(_lab.SwingAtSimTime(pitch.IdealContactTime - _lab.Swing.SwingDuration - 0.25).IsContact);
+                double ready = BattingStateMachine.OutcomeTime(pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration) + BattingStateMachine.ResultPause;
+                At(ready - 0.05);
+                if (i < 2) Assert.Greater(Vector3.Distance(stance, _view.Batter.GloveAnchor.position), 0.1f, "still in his finish");
+                At(ready + 0.05);
+            }
+
+            Assert.AreEqual((PlateAppearanceEnd.Strikeout, "Away2"), (_lab.LastEnd, _lab.Game.Batter.Id));
+            Assert.Less(Vector3.Distance(stance, _view.Batter.GloveAnchor.position), 1e-3f, "the next batter (same side) in his stance, not the last one's finish");
+        }
+
+        [UnityTest]
         public IEnumerator TheNextBatterComesUpOnlyWhenThePlayIsOver()
         {
             yield return null;

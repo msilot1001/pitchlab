@@ -171,11 +171,13 @@ namespace Pitchlab.Sandbox
             double t = _lab.CurrentPitch == null ? double.NegativeInfinity : _lab.RenderedSimTime;
             // The next batter steps in (from his side) once the last plate appearance is over and the loop is ready: a new
             // person, in his stance — never the last batter's follow-through mirrored into the other box.
-            BatterSide side = _lab.BatterSideAt(_lab.RenderedRealtime);
-            if (_batter.LeftHanded != (side == BatterSide.Left))
+            PlayerProfile atBat = _lab.BatterAt(_lab.RenderedRealtime);
+            BatterSide side = atBat?.Bats ?? _lab.Swing.Side;
+            if (!ReferenceEquals(atBat, _shownBatter) || _batter.LeftHanded != (side == BatterSide.Left))
             {
                 PlaceBatter(side);
                 _freshBatter = true;
+                _shownBatter = atBat;
             }
 
             if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
@@ -399,6 +401,7 @@ namespace Pitchlab.Sandbox
 
         /// <summary>A batter who has just stepped in shows his stance until the next pitch (not the last batter's motion).</summary>
         private bool _freshBatter;
+        private PlayerProfile _shownBatter;
 
         private void PlaceBatter(BatterSide side)
         {

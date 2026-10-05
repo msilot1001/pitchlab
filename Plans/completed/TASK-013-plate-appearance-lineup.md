@@ -37,8 +37,15 @@ Claude Code (sole writer); rules / Unity / test reviewers and Codex read-only.
 ## Milestones
 - [x] Gameplay types + GameState rewrite + EditMode tests (PlateAppearanceTests, updated GameStateTests).
 - [x] GameLab integration (side, zone, pitch info, NewGame, panel) + PlayMode tests.
-- [ ] check.sh, runtime verification, reviews, Codex, merge.
+- [x] check.sh (EditMode 578/584, 6 skipped; PlayMode 76/76); runtime (GameLab: lefty A1 walks from the first-base
+  side, righty A2 called out on strikes, lefty A3 singles, A4 up; next batter steps in at Ready).
+- [x] Reviews — rules: citations 5.04(a)(1)/(3), zone summary; Unity: pitch info latched at throw, batter swap from the
+  rendered time as a new person in stance, take counted after InputGrace (0.1 s) so a late-delivered in-time swing still
+  counts, zone outline follows the batter, panel result read from the game; test: zone-dependent call, reset/NewGame,
+  applied-once over all plays, both cursors restored, determinism with contact and a mid-play press. Codex B: same-side
+  batter change (identity tracked), null label of default PitchInfo — fixed and tested (mutations caught).
 
 ## Limitations / deferred
+- A runner-only third out (caught stealing) would not complete the batter's PA (5.04(a)(3)); not reachable yet.
 - Dropped third strike (strike three always held), HBP, check swings, bunts, substitutions, pinch hitters.
 - Zone by height is a convention (no stance model). Switch hitters not modelled.
