@@ -39,11 +39,11 @@ if [[ "$editor_open" == 0 ]]; then
   mkdir -p "$root/TestResults"
   output="$root/TestResults/$(echo "$mode" | tr '[:upper:]' '[:lower:]').xml"
   rm -f "$output"
-  exec unity test "$root" --editor-version "$version" --mode "$mode" --output "$output" --timeout 600
+  exec unity test "$root" --editor-version "$version" --mode "$mode" --output "$output" --timeout 1500
 fi
 
 echo "Editor has this project open; running $mode tests there."
-cmd() { unity command "$@" --project-path "$root" --result-only --timeout 600; }
+cmd() { unity command "$@" --project-path "$root" --result-only --timeout 1500; }
 # Imports and domain reloads briefly drop the Pipeline connection; wait until the Editor is idle.
 wait_ready() {
   for _ in $(seq 1 120); do

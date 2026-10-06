@@ -24,6 +24,9 @@ namespace Pitchlab.Gameplay.Play
         FieldersChoice,
         DoublePlay,
         TriplePlay,
+        /// <summary>A bunt with fewer than two out on which the batter is put out and every other runner advances (OBR 9.08(a);
+        /// TASK-025).</summary>
+        SacrificeBunt,
     }
 
     /// <summary>
@@ -110,8 +113,27 @@ namespace Pitchlab.Gameplay.Play
             PlayResultKind.SacrificeFly => "sacrifice fly",
             PlayResultKind.FieldersChoice => "fielder's choice",
             PlayResultKind.DoublePlay => "double play",
+            PlayResultKind.SacrificeBunt => "sacrifice bunt",
             _ => "triple play",
         };
+
+        /// <summary>
+        /// The result of a bunt (TASK-025): a groundout with fewer than two out on which no other runner is put out and at least
+        /// one advances is a sacrifice (OBR 9.08(a); descriptive — the scorer's judgement of a bunt for a hit is not modelled).
+        /// </summary>
+        public static PlayResultKind Bunted(PlayResultKind kind, LivePlay play)
+        {
+            if (kind != PlayResultKind.Groundout || play.Situation.Outs >= 2) return kind;
+            bool advanced = false;
+            foreach (LiveRunner r in play.Runners)
+            {
+                if (r.Id.IsBatter) continue;
+                if (r.IsOut) return kind;
+                if (r.HasScored || r.LastTouched > r.Id.From) advanced = true;
+            }
+
+            return advanced ? PlayResultKind.SacrificeBunt : kind;
+        }
 
         /// <summary>The batted ball's launch angle (°) off the bat.</summary>
         public static double LaunchAngle(LivePlay play)

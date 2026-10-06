@@ -132,6 +132,7 @@ namespace Pitchlab.Gameplay.Hitting
             PitchOutcome.Foul => "FOUL",
             PitchOutcome.HitByPitch => "HIT BY PITCH",
             PitchOutcome.FoulTip => "FOUL TIP",
+            PitchOutcome.FoulBunt => "FOUL BUNT",
             _ => "IN PLAY",
         };
     }

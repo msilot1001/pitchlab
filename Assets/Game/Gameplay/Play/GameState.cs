@@ -244,7 +244,7 @@ namespace Pitchlab.Gameplay.Play
         /// </summary>
         public PlateAppearanceEnd Pitch(PitchOutcome result, PitchInfo info = default)
         {
-            if (result == PitchOutcome.Foul || result == PitchOutcome.InPlay) throw new ArgumentException("A batted ball is applied with its play.", nameof(result));
+            if (result == PitchOutcome.Foul || result == PitchOutcome.FoulBunt || result == PitchOutcome.InPlay) throw new ArgumentException("A batted ball is applied with its play.", nameof(result));
             if (IsOver) throw new InvalidOperationException("The game is over.");
             return Record(result, info, null);
         }
@@ -254,7 +254,9 @@ namespace Pitchlab.Gameplay.Play
         /// completes the plate appearance: runs to the batting team (the play has already applied OBR 5.08(a)), the outs, the
         /// bases — or, on the third out, the half-inning changes (bases cleared, no outs; after the bottom half the next inning).
         /// </summary>
-        public PlateAppearanceEnd Apply(LivePlay play, PitchInfo info = default)
+        /// <param name="bunt">The ball was bunted (TASK-025): a foul is a strike even on two strikes (OBR 5.09(a)(4)), and a
+        /// groundout that advances the runners is a sacrifice (9.08(a)).</param>
+        public PlateAppearanceEnd Apply(LivePlay play, PitchInfo info = default, bool bunt = false)
         {
             if (play == null) throw new ArgumentNullException(nameof(play));
             if (IsOver) throw new InvalidOperationException("The game is over.");
@@ -264,10 +266,10 @@ namespace Pitchlab.Gameplay.Play
             // A play made with this game's players belongs to the plate appearance it was made in (not one recreated later).
             if (play.Personnel.Game != null && (!ReferenceEquals(play.Personnel.Game, this) || play.Personnel.GameVersion != Version))
                 throw new InvalidOperationException("The play was made for another batter or other runners.");
-            return Record(play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay, info, play);
+            return Record(play.IsFoul ? bunt ? PitchOutcome.FoulBunt : PitchOutcome.Foul : PitchOutcome.InPlay, info, play, bunt);
         }
 
-        private PlateAppearanceEnd Record(PitchOutcome result, PitchInfo info, LivePlay play)
+        private PlateAppearanceEnd Record(PitchOutcome result, PitchInfo info, LivePlay play, bool bunt = false)
         {
             if (Current.Pitches.Count == 0) _paStart = Capture(clearPitches: false);   // the first pitch: where RESET PA returns
             _started = true;
@@ -282,12 +284,14 @@ namespace Pitchlab.Gameplay.Play
                     End(e.End, e.End == PlateAppearanceEnd.Walk ? "walk" : "hit by pitch", runs, 0, walked, null, null);
                     break;
                 case PlateAppearanceEnd.Strikeout:
-                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : result == PitchOutcome.FoulTip ? "strikeout swinging (foul tip)" : "strikeout swinging", 0, 1, Bases, null, null);
+                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : result == PitchOutcome.FoulTip ? "strikeout swinging (foul tip)"
+                        : result == PitchOutcome.FoulBunt ? "strikeout (foul bunt)" : "strikeout swinging", 0, 1, Bases, null, null);
                     break;
                 case PlateAppearanceEnd.InPlay:
                     PlayResultKind kind = PlayResults.Classify(play);
+                    if (bunt) kind = PlayResults.Bunted(kind, play);
                     // A play with a misplay says so (descriptive; TASK-021 — no official error scoring).
-                    string described = PlayResults.Describe(kind) + (play.Misplays.Count > 0 ? $" (misplay: {LivePlay.Abbrev(play.Misplays[0].Fielder)} {play.Misplays[0].What})" : "");
+                    string described = PlayResults.Describe(kind) + (bunt && kind != PlayResultKind.SacrificeBunt ? " (bunt)" : "") + (play.Misplays.Count > 0 ? $" (misplay: {LivePlay.Abbrev(play.Misplays[0].Fielder)} {play.Misplays[0].What})" : "");
                     End(e.End, described, play.Runs, play.OutsMade, play.ResultingBases(), kind, play);
                     break;
             }

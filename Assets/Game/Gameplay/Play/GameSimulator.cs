@@ -38,6 +38,8 @@ namespace Pitchlab.Gameplay.Play
         private readonly List<Misplay> _misplays = new List<Misplay>();
         /// <summary>The last pitch's swing and its contact result (null: a take) — calibration and diagnostics (TASK-023).</summary>
         public ContactResult? LastContact { get; private set; }
+        /// <summary>The batter bunted at the last pitch (TASK-025).</summary>
+        public bool LastBunt { get; private set; }
         /// <summary>The last pitch as thrown (diagnostics).</summary>
         public HittingPitch LastPitch { get; private set; }
         /// <summary>The last ball in play (null before the first).</summary>
@@ -68,10 +70,15 @@ namespace Pitchlab.Gameplay.Play
             LastPitch = pitch;
 
             // The CPU batter (TASK-019): sees the pitch only as it flies, decides, and swings through the contact model.
-            SwingParameters swing = SwingParameters.For(batter);
+            // Or he bunts (TASK-025: a sacrifice in the textbook spot).
+            bool bunt = BuntStrategy.Sacrifice(Game);
+            LastBunt = bunt;
+            SwingParameters swing = bunt ? SwingParameters.Bunt(batter) : SwingParameters.For(batter);
             SeedStream stream = CpuBatter.StreamFor(Game.Seed, batter.Id, pa.Number, number);
-            BatterPlan plan = CpuBatter.Plan(CpuBatter.Observe(pitch), batter, Game.Count, swing, pitch.ContactPlaneY, ref stream);
-            SwingInput? input = plan.Input;
+            BatterPlan plan = bunt
+                ? CpuBatter.PlanBunt(CpuBatter.Observe(pitch), batter, swing, pitch.ContactPlaneY, BuntStrategy.Aim(Game), ref stream)
+                : CpuBatter.Plan(CpuBatter.Observe(pitch), batter, Game.Count, swing, pitch.ContactPlaneY, ref stream);
+            SwingInput? input = plan.InputFor(pitch);
             ContactResult? result = input is SwingInput s ? ContactResolver.Resolve(pitch, s, swing) : (ContactResult?)null;
             LastContact = result;
 
@@ -92,8 +99,8 @@ namespace Pitchlab.Gameplay.Play
             play.RunToEnd();
             LastPlay = play;
             _misplays.AddRange(play.Misplays);
-            Game.Apply(play, info);
-            return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
+            Game.Apply(play, info, bunt);
+            return play.IsFoul ? bunt ? PitchOutcome.FoulBunt : PitchOutcome.Foul : PitchOutcome.InPlay;
         }
 
         /// <summary>Plays until the game is over (or <paramref name="maxPitches"/> pitches, a safety stop).</summary>

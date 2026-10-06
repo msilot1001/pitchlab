@@ -54,8 +54,24 @@ namespace Pitchlab.Gameplay.Hitting
         public double PredictedContactTime { get; internal set; } = double.NaN;
         public double StrikeBelief { get; internal set; } = double.NaN;
         public double SwingChance { get; internal set; } = double.NaN;
-        /// <summary>When he tried to stop the swing (TASK-024; NaN: he did not) — only ever before the offer point.</summary>
+        /// <summary>When he tried to stop the swing (TASK-024; NaN: he did not) — only ever before the offer point. For a bunt,
+        /// when he pulled it back.</summary>
         public double CheckTime { get; internal set; } = double.NaN;
+        /// <summary>He bunts (TASK-025): <see cref="SwingStart"/> is when he squared; his bat follows his aim until the ball
+        /// arrives; <see cref="BuntAim"/> is the bat's angle toward first base (rad).</summary>
+        public bool IsBunt { get; internal set; }
+        public double BuntAim { get; internal set; }
+
+        /// <summary>His input as the contact model takes it for <paramref name="pitch"/> (null for a take): a swing's
+        /// (<see cref="Input"/>), or a bunt's, whose bat is where his aim put it when the ball arrives — as in the labs, where the
+        /// PCI is read at that moment (TASK-025).</summary>
+        public SwingInput? InputFor(HittingPitch pitch)
+        {
+            if (!IsBunt) return Input;
+            double arrival = pitch.ReachesContactPlane ? pitch.IdealContactTime : pitch.Flight.Final.Time;
+            (double x, double z) = PciAt(arrival);
+            return SwingInput.Bunt(SwingStart, x, z, BuntAim, CheckTime);
+        }
 
         /// <summary>The PCI (contact-plane m) at <paramref name="time"/>: the latest placement at or before it.</summary>
         public (double X, double Z) PciAt(double time)
@@ -72,6 +88,7 @@ namespace Pitchlab.Gameplay.Hitting
             get
             {
                 if (!Swing) return null;
+                if (IsBunt) throw new InvalidOperationException("A bunt's input depends on when the ball arrives: use InputFor.");
                 (double x, double z) = PciAt(SwingStart);
                 return new SwingInput(SwingStart, x, z, CheckTime);
             }
@@ -256,6 +273,64 @@ namespace Pitchlab.Gameplay.Hitting
 
             return plan;
         }
+
+        /// <summary>
+        /// His bunt (TASK-025; a sacrifice — <see cref="BuntStrategy"/>): he squares as soon as he sees the pitch released, his bat
+        /// follows his prediction of where the ball will cross the contact plane (plus his bunting error, and over the ball's
+        /// centre by <see cref="BuntOverIntent"/>, to keep it down) until his last look before it arrives, and at the swing
+        /// decision's moment he pulls back a pitch he judges a ball (strike belief below ½). Same perception as
+        /// <see cref="Plan"/>; <paramref name="aim"/> is where he squares the bat (rad toward first base).
+        /// </summary>
+        public static BatterPlan PlanBunt(Func<double, Vector3d> ballAt, PlayerProfile batter, SwingParameters bunt, double contactPlaneY, double aim, ref SeedStream stream)
+        {
+            PlayerRatings r = batter.Ratings;
+            double latency = Latency(r), noise = AngleNoise(r);
+            double aimX = BuntAimAlong * stream.Normal(), aimZ = BuntAimVertical * stream.Normal();
+            double zoneMid = 0.5 * (batter.ZoneBottom + batter.ZoneTop);
+            var plan = new BatterPlan { Swing = true, IsBunt = true, BuntAim = aim, SwingStart = latency };   // squares on seeing the release
+            plan.Events.Add(new AimEvent(0.0, 0.0, zoneMid));
+            var fit = new PathFit();
+            bool decided = false;
+            for (int i = 0; i * Tick < HittingPitch.MaxFlightTime; i++)
+            {
+                double seen = i * Tick, now = seen + latency;
+                Vector3d p = ballAt(seen);
+                double d = (p - Eye).Length, sigma = noise * d, sigmaDepth = DepthScale * noise * d * d / (2.0 * BallProperties.Baseball.Radius);
+                Vector3d look = p + new Vector3d(sigma * stream.Normal(), sigmaDepth * stream.Normal(), sigma * stream.Normal());
+                if (look.Y < contactPlaneY) break;
+                fit.Add(seen, look, sigma, sigmaDepth);
+                if (fit.Count < MinSamples || !fit.Solve()) continue;
+                double contactTime = fit.TimeAtY(contactPlaneY, seen);
+                if (double.IsNaN(contactTime) || now >= contactTime) continue;
+                Vector3d atContact = fit.At(contactTime);
+                plan.Events.Add(new AimEvent(now, atContact.X + aimX, atContact.Z + BuntOverIntent + aimZ, atContact.X, atContact.Z));
+                plan.LastObservation = seen;
+                if (decided || now < contactTime - bunt.SwingDuration) continue;   // he decides when he would commit a swing
+
+                decided = true;
+                Vector3d atPlate = fit.At(fit.TimeAtY(PitchingGeometry.PlateFrontY, seen));
+                if (double.IsNaN(atPlate.X)) continue;
+                plan.DecisionTime = now;
+                plan.PredictedX = atPlate.X;
+                plan.PredictedZ = atPlate.Z;
+                plan.PredictedContactTime = contactTime;
+                plan.StrikeBelief = StrikeBelief(atPlate.X, atPlate.Z, batter, r);
+                if (plan.StrikeBelief < 0.5)
+                {
+                    plan.CheckTime = now;   // a ball: he pulls the bat back
+                    break;
+                }
+            }
+
+            return plan;
+        }
+
+        /// <summary>His bunting error at the contact plane (m): along the bat (ASSUMED: the still bat is easy to place) and across
+        /// it (TUNED: ≈ 10 % of attempts missed — MLB 2024 ≈ 8 %).</summary>
+        public const double BuntAimAlong = 0.03, BuntAimVertical = 0.045;
+
+        /// <summary>He holds the bat this far above the ball's centre (m; TUNED: MLB sacrifice bunts leave at ≈ −35°): a bunt is kept on the ground.</summary>
+        public const double BuntOverIntent = 0.004;
 
         /// <summary>He checks a swing he committed to as a strike when his strike belief falls below this (TASK-024; TUNED:
         /// a clear ball, ≈ 4 cm outside for an average eye).</summary>
