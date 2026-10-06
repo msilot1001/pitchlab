@@ -213,6 +213,8 @@ namespace Pitchlab.Sandbox
             }
 
             DrawScorebug(new Rect(12f, Screen.height - Band - 134f, 300f, 134f));
+            // The mode (TASK-022; F cycles it).
+            GUI.Label(new Rect(12f, Screen.height - Band - 154f, 300f, 18f), $"{HittingLabController.Describe(_lab.Mode)}  (F)", _small);
             if (FinalText.Length > 0)
             {
                 var final = new Rect(Screen.width * 0.5f - 210f, Screen.height * 0.5f - 110f, 420f, 190f);

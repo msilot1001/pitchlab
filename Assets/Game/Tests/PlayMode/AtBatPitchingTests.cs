@@ -277,6 +277,52 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator CpuVsCpuPlaysAHalfInningOnTheProductionPath()
+        {
+            yield return null;
+            // TASK-022 Mode C in the GameLab: the CPU pitcher's calls, executed pitches, the CPU batter's timestamped PCI and
+            // swing, the contact model, the live play with defensive execution — a whole half inning, no stand-in.
+            _lab.ExecutionVariance = true;
+            _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 21));
+            _lab.Mode = HittingLabController.LabMode.CpuVsCpu;
+            Assert.AreEqual(HittingLabController.LabMode.CpuVsCpu, _lab.Mode);
+            double start = _now;
+            int calls = 0, plans = 0;
+            while (_lab.Game.Half == Half.Top && _lab.Game.Inning == 1 && _now < start + 1200.0)
+            {
+                PitchDecision? call = _lab.LastDecision;
+                Frame(_now + 0.1);
+                if (_lab.LastDecision.HasValue && !Equals(call, _lab.LastDecision)) calls++;
+                if (_lab.LastBatterPlan != null) plans++;
+            }
+
+            GameState g = _lab.Game;
+            Assert.AreEqual(Half.Bottom, g.Half, "the top of the first ended");
+            var top = g.Completed.Where(pa => pa.Inning == 1 && pa.Half == Half.Top).ToList();
+            Assert.AreEqual(3, top.Sum(pa => pa.OutsMade), "three outs");
+            Assert.Greater(calls, 3, "the CPU pitcher called the pitches");
+            Assert.Greater(plans, 0, "the CPU batter batted");
+            Assert.IsTrue(top.SelectMany(pa => pa.Pitches).All(p => p.Info.HasTarget), "every pitch was a CPU call with a target");
+            Assert.IsTrue(top.SelectMany(pa => pa.Pitches).Any(p => p.Outcome == PitchOutcome.SwingingStrike || p.Outcome == PitchOutcome.Foul || p.Outcome == PitchOutcome.InPlay), "he swung");
+        }
+
+        [UnityTest]
+        public IEnumerator TheModeSetsWhoPlays()
+        {
+            yield return null;
+            foreach (HittingLabController.LabMode m in new[] { HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.CpuVsCpu, HittingLabController.LabMode.Manual })
+            {
+                _lab.Mode = m;
+                Assert.AreEqual(m, _lab.Mode);
+                Assert.AreEqual(m == HittingLabController.LabMode.HumanBatting || m == HittingLabController.LabMode.CpuVsCpu, _lab.AutoPitch, $"{m}: CPU pitcher");
+                Assert.AreEqual(m == HittingLabController.LabMode.HumanPitching || m == HittingLabController.LabMode.CpuVsCpu, _lab.CpuBatting, $"{m}: CPU batter");
+            }
+
+            _lab.OnPitchingKey("f");   // cycles: Manual → HumanBatting
+            Assert.AreEqual(HittingLabController.LabMode.HumanBatting, _lab.Mode);
+        }
+
+        [UnityTest]
         public IEnumerator TheExecutionToggleIsHonoured()
         {
             yield return null;

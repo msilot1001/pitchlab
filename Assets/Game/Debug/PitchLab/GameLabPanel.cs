@@ -35,7 +35,7 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>The editor's screen area when open (GUI coordinates, origin top-left): clicks there are not swings.</summary>
-        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 430) : Rect.zero;
+        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 460) : Rect.zero;
 
         private void Update()
         {
@@ -54,6 +54,12 @@ namespace Pitchlab.Sandbox
             PlayerProfile batter = game.Batter, pitcher = game.TeamOf(game.Fielding).Pitcher;
             GUILayout.Label($"{batter.Name} {batter.Position}: Con {batter.Ratings.Contact} Pow {batter.Ratings.Power} Vis {batter.Ratings.Vision} Dis {batter.Ratings.Discipline} Spd {batter.Ratings.Speed}");
             if (pitcher != null) GUILayout.Label($"{pitcher.Name}: Vel {pitcher.Ratings.Velocity} Cmd {pitcher.Ratings.Command} Mov {pitcher.Ratings.Movement} Sta {pitcher.Ratings.Stamina}");
+            // The mode (TASK-022).
+            GUILayout.BeginHorizontal();
+            foreach (HittingLabController.LabMode m in new[] { HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.CpuVsCpu, HittingLabController.LabMode.Manual })
+                if (GUILayout.Toggle(_lab.Mode == m, m == HittingLabController.LabMode.HumanBatting ? "Bat" : m == HittingLabController.LabMode.HumanPitching ? "Pitch" : m == HittingLabController.LabMode.CpuVsCpu ? "CPU v CPU" : "Manual", GUI.skin.button) && _lab.Mode != m)
+                    _lab.Mode = m;
+            GUILayout.EndHorizontal();
             // The CPU batter (TASK-019, B): his decision once he has made it (the plan exists from the throw).
             BatterPlan plan = _lab.LastBatterPlan;
             string cpu = plan == null ? (_lab.CpuBatting ? "on from the next pitch" : "off")
