@@ -95,22 +95,34 @@ namespace Pitchlab.Gameplay.Play
         private int _seq;
         private double _now;
 
+        /// <param name="profile">One running profile for every runner (tests; otherwise each runner's from
+        /// <paramref name="personnel"/>).</param>
         /// <param name="runsOnContact">Scripted runners who run on contact whatever their read (lab/test scenarios).</param>
+        /// <param name="personnel">The players on the field (TASK-017): defenders' and runners' profiles; generic if null.</param>
         public LivePlay(FieldingPlay fielding, Situation situation, RunnerProfile? profile = null,
-            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null)
+            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null, PlayPersonnel personnel = null)
         {
             Fielding = fielding;
             Situation = situation;
-            Profile = profile ?? RunnerProfile.Standard;
+            Personnel = personnel ?? PlayPersonnel.Standard;
+            // The ball was fielded by the same players: every fielder of the solve has this personnel's profile.
+            if (!Personnel.FieldedBy(p => fielding.Motion(p).Profile))
+                throw new ArgumentException("The fielding play was solved with other fielders than this personnel.", nameof(personnel));
             ContactTime = fielding.Ball.First.Time;
             _now = ContactTime;
             Kind = Classify(fielding);
             AwardedBases = Award(fielding);
-            if (AwardedBases > 0) Profile = Profile.Trot();   // an awarded advance is a trot, not a sprint (TASK-011.7)
+            RunnerProfile Running(Runner id)
+            {
+                RunnerProfile p = profile ?? Personnel.Runner(id);
+                return AwardedBases > 0 ? p.Trot() : p;   // an awarded advance is a trot, not a sprint (TASK-011.7)
+            }
+
+            Profile = Running(Runner.Batter);
 
             // Runners: on their bases at their leads; the batter-runner at home once the ball is fair in play.
             foreach (Runner r in situation.Bases.Runners)
-                _runners.Add(new LiveRunner(r, Profile, r.From, BaseLeg.Of(r.From, Kind == BallKind.Hit), Lead(r.From), ContactTime));
+                _runners.Add(new LiveRunner(r, Running(r), r.From, BaseLeg.Of(r.From, Kind == BallKind.Hit), Lead(r.From), ContactTime));
             if (Kind != BallKind.Dead || AwardedBases > 0)
                 _runners.Insert(0, new LiveRunner(Runner.Batter, Profile, Base.Home, BaseLeg.Of(Base.Home, Kind == BallKind.Hit), 0.0, ContactTime));
 
@@ -131,7 +143,7 @@ namespace Pitchlab.Gameplay.Play
             {
                 LiveRunner runner = r;
                 Intent intent = intents[r.Id];
-                double start = runner.Id.IsBatter ? ContactTime + Profile.BatterStartDelay : ContactTime + (intent.Immediate ? 0.0 : Profile.ReadDelay);
+                double start = runner.Id.IsBatter ? ContactTime + runner.Profile.BatterStartDelay : ContactTime + (intent.Immediate ? 0.0 : runner.Profile.ReadDelay);
                 Schedule(start, () => Apply(runner, intent, _now), $"{runner.Id} starts");
             }
 
@@ -140,7 +152,10 @@ namespace Pitchlab.Gameplay.Play
 
         public FieldingPlay Fielding { get; }
         public Situation Situation { get; }
+        /// <summary>The batter-runner's running profile (each runner has his own: <see cref="LiveRunner.Profile"/>).</summary>
         public RunnerProfile Profile { get; }
+        /// <summary>The players on the field (TASK-017).</summary>
+        public PlayPersonnel Personnel { get; }
         public double ContactTime { get; }
         public BallKind Kind { get; }
         /// <summary>Bases awarded to every runner and the batter (OBR 5.05(a)): 4 for a fair ball over the fence on the fly, 2 for
@@ -524,7 +539,7 @@ namespace Pitchlab.Gameplay.Play
 
             r.Phase = RunnerPhase.Standing;
             r.Target = b;
-            r.Add(leg, new PathMotion(Profile, t, leg.Length, 0.0, leg.Length, 0.0));
+            r.Add(leg, new PathMotion(r.Profile, t, leg.Length, 0.0, leg.Length, 0.0));
         }
 
         private void ReturnAfterOverrun(LiveRunner r)
@@ -533,7 +548,7 @@ namespace Pitchlab.Gameplay.Play
             BaseLeg leg = r.Current.Leg;
             r.Phase = RunnerPhase.Returning;
             // Back to the bag, ending on it: a jog when protected (ASSUMED 3 m/s), otherwise as fast as he can.
-            r.Add(leg, new PathMotion(Profile, _now, r.Current.Motion.DistanceAt(_now), 0.0, leg.Length, 0.0, r.OverrunProtected ? 3.0 : double.NaN));
+            r.Add(leg, new PathMotion(r.Profile, _now, r.Current.Motion.DistanceAt(_now), 0.0, leg.Length, 0.0, r.OverrunProtected ? 3.0 : double.NaN));
             r.Continue = null;
             r.Target = leg.To;
             LiveRunner runner = r;
@@ -564,7 +579,7 @@ namespace Pitchlab.Gameplay.Play
             BaseLeg leg = r.Current.Leg;
             r.Target = leg.From;
             r.Phase = RunnerPhase.Standing;
-            r.Add(leg, new PathMotion(Profile, _now, 0.0, 0.0, 0.0, 0.0));
+            r.Add(leg, new PathMotion(r.Profile, _now, 0.0, 0.0, 0.0, 0.0));
         }
 
         // ------------------------------------------------------------------ ball events (from the live defense)
@@ -651,7 +666,7 @@ namespace Pitchlab.Gameplay.Play
                 case IntentKind.Freeze:
                     r.Phase = r.TouchingBaseAt(t, out _) ? RunnerPhase.Standing : RunnerPhase.Reading;
                     r.Continue = null;
-                    r.Add(leg, new PathMotion(Profile, t, d, v, d + (Math.Abs(v) > 1e-6 ? Math.Sign(v) * v * v / (2.0 * Profile.BrakeDeceleration) : 0.0), 0.0));
+                    r.Add(leg, new PathMotion(r.Profile, t, d, v, d + (Math.Abs(v) > 1e-6 ? Math.Sign(v) * v * v / (2.0 * r.Profile.BrakeDeceleration) : 0.0), 0.0));
                     return;
                 case IntentKind.Return:
                 case IntentKind.TagUp:
@@ -666,13 +681,13 @@ namespace Pitchlab.Gameplay.Play
                     r.Continue = null;
                     r.Target = leg.From;
                     Note(t, PlayLogKind.Decision, r.Id, leg.From, null, $"{r.Id}: back to {Bases.Name(leg.From)}");
-                    r.Add(leg, new PathMotion(Profile, t, d, v, 0.0, 0.0));
+                    r.Add(leg, new PathMotion(r.Profile, t, d, v, 0.0, 0.0));
                     return;
                 case IntentKind.Halfway:
                     r.Phase = RunnerPhase.Reading;
                     r.Continue = null;
                     Note(t, PlayLogKind.Decision, r.Id, leg.To, null, $"{r.Id}: halfway");
-                    r.Add(leg, new PathMotion(Profile, t, d, v, Math.Max(d, HalfwayFraction * leg.Length), 0.0));
+                    r.Add(leg, new PathMotion(r.Profile, t, d, v, Math.Max(d, HalfwayFraction * leg.Length), 0.0));
                     return;
             }
         }
@@ -693,7 +708,7 @@ namespace Pitchlab.Gameplay.Play
             r.Phase = RunnerPhase.Running;
             r.OverrunProtected = false;   // heading on: no longer returning from an overrun (OBR 5.09(b)(11))
             bool throughFirst = destination == Base.First && RunnerBrain.RunsThroughFirst(this, r);
-            List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(Profile, leg, d, v, t, destination, throughFirst, Kind == BallKind.Hit);
+            List<RunnerPlanner.PlannedLeg> plan = RunnerPlanner.Plan(r.Profile, leg, d, v, t, destination, throughFirst, Kind == BallKind.Hit);
             PathMotion m = plan[0].Motion;
             r.Add(leg, m);
             r.Continue = leg.To != destination ? destination : (Base?)null;
@@ -701,7 +716,7 @@ namespace Pitchlab.Gameplay.Play
 
             // Decision: go on past the destination? Made when he would have to start braking for it (both plans are the
             // same motion until then).
-            var rounding = new PathMotion(Profile, t, d, v, leg.Length, Profile.RoundingSpeed);
+            var rounding = new PathMotion(r.Profile, t, d, v, leg.Length, r.Profile.RoundingSpeed);
             double decide = Math.Min(m.BrakeTime, rounding.BrakeTime);
             LiveRunner runner = r;
             int legsAt = r.Segments.Count;
@@ -721,7 +736,7 @@ namespace Pitchlab.Gameplay.Play
         {
             PathMotion m = r.Current.Motion;
             double d = m.DistanceAt(t), v = m.VelocityAt(t);
-            return new PathMotion(Profile, t, d, v, d + (Math.Abs(v) > 1e-6 ? Math.Sign(v) * v * v / (2.0 * Profile.BrakeDeceleration) : 0.0), 0.0);
+            return new PathMotion(r.Profile, t, d, v, d + (Math.Abs(v) > 1e-6 ? Math.Sign(v) * v * v / (2.0 * r.Profile.BrakeDeceleration) : 0.0), 0.0);
         }
 
         // ------------------------------------------------------------------ the end
@@ -837,7 +852,7 @@ namespace Pitchlab.Gameplay.Play
             BaseLeg leg = r.Current.Leg;
             PathMotion m = r.Current.Motion;
             if (Progress(r, b) <= Progress(r, leg.From)) return double.PositiveInfinity;
-            return RunnerPlanner.ArrivalTime(Profile, leg, m.DistanceAt(now), m.VelocityAt(now), now, b, b == Base.First && RunnerBrain.RunsThroughFirst(this, r), Kind == BallKind.Hit);
+            return RunnerPlanner.ArrivalTime(r.Profile, leg, m.DistanceAt(now), m.VelocityAt(now), now, b, b == Base.First && RunnerBrain.RunsThroughFirst(this, r), Kind == BallKind.Hit);
         }
 
         /// <summary>Order of a base for this runner (home counts as 4 once he has left it).</summary>

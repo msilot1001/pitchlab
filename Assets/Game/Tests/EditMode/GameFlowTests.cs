@@ -278,18 +278,28 @@ namespace Pitchlab.Tests
 
         // ------------------------------------------------------------------ whole games
 
-        // Seeds chosen to exercise each ending: 1 visitors after nine, 4 home ahead after the top of the 9th, 12 a walk-off in
-        // the 9th, 33 extra innings ending in a walk-off in the 12th (asserted below).
+        // Seeds pinned to exercise each ending with the current rosters and simulator (regression pins — re-chosen when either
+        // changes): 1 visitors after nine, 3 home ahead after the top of the 9th, 14 a walk-off in the 9th, 33 extra innings
+        // ending in a walk-off (asserted below).
         [TestCase(1, "nine innings")]
-        [TestCase(4, "the home team leads after the top of the 9th")]
-        [TestCase(12, "walk-off")]
+        [TestCase(3, "the home team leads after the top of the 9th")]
+        [TestCase(14, "walk-off")]
         [TestCase(33, "walk-off")]
         public void ASimulatedGameIsAValidGame(int seed, string ending)
         {
             var g = new GameState();
             var sim = new GameSimulator(g, seed);
             var timer = Stopwatch.StartNew();
-            sim.PlayToEnd();
+            while (!g.IsOver)
+            {
+                sim.PlayPitch();
+                // Who is on base always matches the bases: one distinct player per occupied base (TASK-017).
+                foreach (Base b in new[] { Base.First, Base.Second, Base.Third })
+                    Assert.AreEqual(g.Bases.IsOccupied(b), g.RunnerOn(b) != null, $"{b} after pitch {sim.Pitches}");
+                var on = new[] { g.RunnerOn(Base.First), g.RunnerOn(Base.Second), g.RunnerOn(Base.Third) }.Where(x => x != null).ToArray();
+                Assert.AreEqual(on.Length, on.Distinct().Count(), "distinct runners");
+            }
+
             timer.Stop();
             TestContext.WriteLine($"seed {seed}: {g.Result}, {g.Result.Inning} innings, {g.CompletedPlateAppearances} PA, {sim.Pitches} pitches, {timer.ElapsedMilliseconds} ms");
             Assert.IsTrue(g.IsOver, "it ends");

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Simulation.Core;
 using Pitchlab.Simulation.Pitching;
@@ -15,31 +17,53 @@ namespace Pitchlab.Gameplay.Play
     }
 
     /// <summary>
-    /// A generic player (TASK-013): a stable identity, how he bats and his height (which sets his strike zone). Deliberately
-    /// minimal — no ratings, no real players.
+    /// A generic player (TASK-013, TASK-017): a stable identity, how he bats and throws, his height (which sets his strike
+    /// zone), his fielding position and his ratings. Immutable; no real players.
     /// </summary>
     public sealed class PlayerProfile
     {
         /// <summary>The height the default strike zone (1.5–3.5 ft) is drawn for (in).</summary>
         public const double ReferenceHeightInches = 73.0;
 
+        /// <summary>An unrated player (all 50) with a display-only position label (TASK-013 lineups and tests).</summary>
         public PlayerProfile(string id, string name, BatterSide bats, double heightInches, string position)
+            : this(id, name, bats, Hand.Right, heightInches, null, PlayerRatings.Average50)
+        {
+            Position = position ?? string.Empty;
+        }
+
+        /// <param name="fieldingPosition">Where he plays (null: designated hitter, or no assignment).</param>
+        public PlayerProfile(string id, string name, BatterSide bats, Hand throws, double heightInches, DefensivePosition? fieldingPosition, PlayerRatings ratings)
         {
             if (string.IsNullOrEmpty(id)) throw new ArgumentException("A player needs an id.", nameof(id));
             if (!(heightInches > 48.0 && heightInches < 96.0)) throw new ArgumentOutOfRangeException(nameof(heightInches));
             Id = id;
             Name = name ?? id;
             Bats = bats;
+            Throws = throws;
             HeightInches = heightInches;
-            Position = position ?? string.Empty;
+            FieldingPosition = fieldingPosition;
+            Ratings = ratings ?? throw new ArgumentNullException(nameof(ratings));
+            Position = fieldingPosition is DefensivePosition p ? PositionName(p) : "DH";
         }
 
         public string Id { get; }
         public string Name { get; }
         public BatterSide Bats { get; }
+        public Hand Throws { get; }
         public double HeightInches { get; }
-        /// <summary>Placeholder fielding position (display only; no substitutions or defensive assignment yet).</summary>
+        /// <summary>Position label for display ("SS", "DH", …).</summary>
         public string Position { get; }
+        /// <summary>The position he fields (null: designated hitter or unassigned).</summary>
+        public DefensivePosition? FieldingPosition { get; }
+        public PlayerRatings Ratings { get; }
+
+        public static string PositionName(DefensivePosition p) => p switch
+        {
+            DefensivePosition.P => "P", DefensivePosition.C => "C", DefensivePosition.FirstBase => "1B", DefensivePosition.SecondBase => "2B",
+            DefensivePosition.ThirdBase => "3B", DefensivePosition.Shortstop => "SS", DefensivePosition.LeftField => "LF",
+            DefensivePosition.CenterField => "CF", _ => "RF",
+        };
 
         /// <summary>
         /// His strike zone's bottom and top (m): the default zone scaled with height. REFERENCE CONVENTION — the rulebook zone
@@ -73,24 +97,9 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The player batting in <paramref name="slot"/> (1–9).</summary>
         public PlayerProfile this[int slot] => slot >= 1 && slot <= Size ? _players[slot - 1] : throw new ArgumentOutOfRangeException(nameof(slot));
 
-        /// <summary>A generic nine with a mix of right- and left-handed batters and three heights.</summary>
-        public static Lineup Generic(string team, string prefix, bool leftyLeadoff)
-        {
-            var players = new PlayerProfile[Size];
-            string[] positions = { "CF", "SS", "RF", "1B", "LF", "3B", "C", "2B", "DH" };
-            double[] heights = { 70.0, 73.0, 76.0 };
-            for (int i = 0; i < Size; i++)
-            {
-                // Left-handed batters in slots 1, 3, 6 (or 2, 4, 7 for the other side): consecutive batters change sides.
-                bool left = leftyLeadoff ? i == 0 || i == 2 || i == 5 : i == 1 || i == 3 || i == 6;
-                players[i] = new PlayerProfile($"{prefix}{i + 1}", $"{team} #{i + 1}", left ? BatterSide.Left : BatterSide.Right, heights[i % heights.Length], positions[i]);
-            }
-
-            return new Lineup(team, players);
-        }
-
-        public static Lineup GenericAway() => Generic("Away", "A", leftyLeadoff: true);
-        public static Lineup GenericHome() => Generic("Home", "H", leftyLeadoff: false);
+        /// <summary>The generic teams' batting orders (TASK-017 rosters: rated players, a mix of sides and three heights).</summary>
+        public static Lineup GenericAway() => GenericRosters.Away().Lineup;
+        public static Lineup GenericHome() => GenericRosters.Home().Lineup;
     }
 
     /// <summary>The pitch as thrown, for the record: what was called for and what the flight did (TASK-013).</summary>
