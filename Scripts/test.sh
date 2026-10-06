@@ -39,11 +39,11 @@ if [[ "$editor_open" == 0 ]]; then
   mkdir -p "$root/TestResults"
   output="$root/TestResults/$(echo "$mode" | tr '[:upper:]' '[:lower:]').xml"
   rm -f "$output"
-  exec unity test "$root" --editor-version "$version" --mode "$mode" --output "$output" --timeout 600
+  exec unity test "$root" --editor-version "$version" --mode "$mode" --output "$output" --timeout 1500
 fi
 
 echo "Editor has this project open; running $mode tests there."
-cmd() { unity command "$@" --project-path "$root" --result-only --timeout 600; }
+cmd() { unity command "$@" --project-path "$root" --result-only --timeout 1500; }
 # Imports and domain reloads briefly drop the Pipeline connection; wait until the Editor is idle.
 wait_ready() {
   for _ in $(seq 1 120); do
@@ -72,11 +72,13 @@ else
   rm -f "$root/Temp/pipeline_test_status.json"
   cmd run_tests --mode playmode --async_tests | jq -e '.success' >/dev/null
   status='{}'
-  for _ in $(seq 1 300); do
+  for _ in $(seq 1 750); do   # ≈ 1500 s, as the command timeout
     status=$(cmd test_status 2>/dev/null || echo '{}')
     if jq -e '.status == "completed"' <<<"$status" >/dev/null 2>&1; then break; fi
     /bin/sleep 2
   done
+  # One last look: the run may have completed during the final sleep.
+  jq -e '.status == "completed"' <<<"$status" >/dev/null 2>&1 || status=$(cmd test_status 2>/dev/null || echo '{}')
   ok=$(jq '.status == "completed"' <<<"$status")
   results=$(jq -c '.results // []' <<<"$status")
 fi

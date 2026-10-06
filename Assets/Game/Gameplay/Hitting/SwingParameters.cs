@@ -123,6 +123,28 @@ namespace Pitchlab.Gameplay.Hitting
             return p;
         }
 
+        /// <summary>
+        /// <paramref name="batter"/>'s bunt (TASK-025): the same bat, squared and held level across the plate (no attack angle,
+        /// no tilt), pushed gently toward the field — <see cref="BuntPushSpeed"/> — and set
+        /// <see cref="BuntSetTime"/> after he squares. <see cref="SwingDuration"/> holds that set-up time.
+        /// </summary>
+        public static SwingParameters Bunt(PlayerProfile batter) => For(batter).AsBunt();
+
+        /// <summary>This swing's bat and batter, bunting (<see cref="Bunt(PlayerProfile)"/>).</summary>
+        public SwingParameters AsBunt()
+        {
+            SwingParameters p = this;
+            p.BatSpeed = BuntPushSpeed;
+            p.AttackAngle = 0.0;
+            p.VerticalBatAngle = 0.0;
+            p.SwingDuration = BuntSetTime;
+            return p;
+        }
+
+        /// <summary>How fast the bunter pushes the bat toward the ball (m/s; TUNED: MLB sacrifice bunts leave at ≈ 34 mph) and
+        /// how long squaring around takes (s; ASSUMED).</summary>
+        public const double BuntPushSpeed = 3.0, BuntSetTime = 0.25;
+
         /// <summary>A typical MLB right-handed hitter's swing (see Docs/HITTING.md).</summary>
         public static SwingParameters Default => new SwingParameters
         {

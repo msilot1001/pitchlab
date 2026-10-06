@@ -339,6 +339,38 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator ABuntIsRecordedWhenTheNextPitchComesBeforeAFrame()
+        {
+            yield return null;
+            // TASK-025: the bunt meets the ball at its arrival whatever the frames: no update between squaring and the next press.
+            _lab.ExecutionVariance = false;
+            _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 41));
+            _lab.Mode = HittingLabController.LabMode.Manual;
+            _lab.PressSwingButton(_now);                                        // throw
+            HittingPitch pitch = _lab.CurrentPitch;
+            double RealtimeAt(double simTime) => _now + (simTime - _lab.ToSimTime(_now));
+            _lab.PressBuntButton(RealtimeAt(0.1));                              // square
+            _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z + 0.004);
+            int recorded = _lab.Game.Completed.Sum(pa => pa.Pitches.Count) + _lab.Game.Current.Pitches.Count;
+            // After the ball's arrival, long aiming before any frame (more than the PCI track keeps): the bunt still uses the bat
+            // where it was at the arrival.
+            _now = RealtimeAt(pitch.IdealContactTime + 0.01);
+            for (int i = 0; i < 300; i++)
+            {
+                _now += 0.005;
+                _lab.SetPci(0.4, 0.3);
+            }
+
+            Assert.IsTrue(_lab.LastSwing.Value.IsBunt);
+            Assert.AreEqual(pitch.IdealContactState.Position.X, _lab.LastSwing.Value.PciX, 1e-6, "the bat at the arrival");
+            _now = RealtimeAt(pitch.Flight.Final.Time + 20.0);                  // long after: no frame in between
+            _lab.PressSwingButton(_now);                                        // the next pitch
+            Assert.AreEqual(recorded + 1, _lab.Game.Completed.Sum(pa => pa.Pitches.Count) + _lab.Game.Current.Pitches.Count, "the bunted pitch recorded");
+            PitchEvent last = _lab.Game.Current.Pitches.Count > 0 ? _lab.Game.Current.Pitches[_lab.Game.Current.Pitches.Count - 1] : _lab.Game.Completed.Last().Pitches.Last();
+            Assert.That(last.Outcome, Is.EqualTo(PitchOutcome.InPlay).Or.EqualTo(PitchOutcome.FoulBunt).Or.EqualTo(PitchOutcome.FoulTip), "the bunt, not a take");
+        }
+
+        [UnityTest]
         public IEnumerator TheModeSetsWhoPlays()
         {
             yield return null;

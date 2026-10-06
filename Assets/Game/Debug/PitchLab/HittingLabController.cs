@@ -64,7 +64,7 @@ namespace Pitchlab.Sandbox
         [SerializeField] private Camera _camera;
 
         private static readonly PitchInput[] Presets = PitchPresets.All;
-        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _upLocationAction, _downLocationAction, _pitchingAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction, _checkAction,
+        private InputAction _swingAction, _aimAction, _nextPresetAction, _previousPresetAction, _upLocationAction, _downLocationAction, _pitchingAction, _normalSpeedAction, _slowSpeedAction, _slowestSpeedAction, _pathsAction, _panelAction, _checkAction, _buntAction,
             _clickAction, _releaseCursorAction;
         private int _presetIndex;
         private PciTrack _pciTrack;
@@ -253,7 +253,15 @@ namespace Pitchlab.Sandbox
         public static readonly FieldLayout Field = FieldLayout.Standard;
         public SwingInput? LastSwing { get; private set; }
         public int PitchesThrown { get; private set; }
-        public SwingParameters Swing => _swing;
+        public SwingParameters Swing => PitchSwing;
+        /// <summary>The current pitch's swing parameters: the batter's swing, or his bunt (TASK-025).</summary>
+        private SwingParameters PitchSwing => Bunting ? _swing.AsBunt() : _swing;
+        /// <summary>He squared to bunt at this pitch (TASK-025): at <see cref="BuntSquareTime"/> (sim s); pulled back at
+        /// <see cref="BuntPullBackTime"/> (NaN: not); the bunt is resolved when the ball arrives.</summary>
+        public bool Bunting { get; private set; }
+        public double BuntSquareTime { get; private set; } = double.NaN;
+        public double BuntPullBackTime { get; private set; } = double.NaN;
+        private double _buntAim;
         public EnvironmentState Environment => EnvironmentState.Standard;
         public double SimTime => ToSimTime(Clock());
         public Transform BallTransform => _ball;
@@ -265,6 +273,12 @@ namespace Pitchlab.Sandbox
 
         /// <summary>Simulation time (s after release) of a moment on the real-time clock shared with input events.</summary>
         public double ToSimTime(double realtime) => double.IsNaN(_pitchStartRealtime) ? 0.0 : (realtime - _pitchStartRealtime) * _pitchPlaybackSpeed;
+
+        /// <summary>The real-time clock moment of simulation time <paramref name="simTime"/> on the current pitch.</summary>
+        public double ToRealtime(double simTime) => _pitchStartRealtime + simTime / _pitchPlaybackSpeed;
+
+        /// <summary>The bunt's bat angle toward first base (rad; TASK-025).</summary>
+        public double BuntAim => _buntAim;
 
         /// <summary>PCI position at a moment on the real-time clock (exact, from timestamped aim input).</summary>
         public (double X, double Z) PciAt(double realtime)
@@ -345,6 +359,7 @@ namespace Pitchlab.Sandbox
             _pathsAction = Button("<Keyboard>/t", null, _ => SetDebugPaths(!_showDebugPaths));
             _panelAction = Button("<Keyboard>/h", null, _ => _showPanel = !_showPanel);
             _checkAction = Button("<Keyboard>/c", "<Gamepad>/buttonEast", c => PressCheckButton(c.time));   // check swing (TASK-024)
+            _buntAction = Button("<Keyboard>/q", "<Gamepad>/buttonWest", c => PressBuntButton(c.time));     // square / pull back (TASK-025)
             _clickAction = Button("<Mouse>/leftButton", null, context =>
             {
                 if (!MouseCaptured && Mouse.current != null && ClickBlocked != null && ClickBlocked(Mouse.current.position.ReadValue())) return;
@@ -383,6 +398,7 @@ namespace Pitchlab.Sandbox
             if (LastBatterPlan != null) return;   // the CPU batter has the PCI
             if (!eventPtr.IsA<StateEvent>() && !eventPtr.IsA<DeltaStateEvent>()) return;
             if (!mouse.delta.ReadValueFromEvent(eventPtr, out Vector2 delta) || delta == Vector2.zero) return;
+            ResolveBunt(eventPtr.time);   // aim input after the ball's arrival: the bunt is read from the track first
             _pciTrack.Move(eventPtr.time, delta.x * _mouseSensitivity, delta.y * _mouseSensitivity);
         }
 
@@ -440,6 +456,7 @@ namespace Pitchlab.Sandbox
             _pathsAction?.Enable();
             _panelAction?.Enable();
             _checkAction?.Enable();
+            _buntAction?.Enable();
             _clickAction?.Enable();
             _releaseCursorAction?.Enable();
             if (_pciTrack == null) return;
@@ -467,6 +484,7 @@ namespace Pitchlab.Sandbox
             _pathsAction?.Disable();
             _panelAction?.Disable();
             _checkAction?.Disable();
+            _buntAction?.Disable();
             _clickAction?.Disable();
             _releaseCursorAction?.Disable();
             InputSystem.onEvent -= OnInputEvent;
@@ -489,6 +507,7 @@ namespace Pitchlab.Sandbox
             _pathsAction?.Dispose();
             _panelAction?.Dispose();
             _checkAction?.Dispose();
+            _buntAction?.Dispose();
             _clickAction?.Dispose();
             _releaseCursorAction?.Dispose();
         }
@@ -534,6 +553,7 @@ namespace Pitchlab.Sandbox
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
             DriveCpuBatter(Clock());   // the CPU batter's due events first: a throw never pre-empts his swing
+            ResolveBunt(double.PositiveInfinity);   // a squared bunt meets the ball at its arrival, before the pitch is replaced
             ApplyResult();   // a press during a play skips its remainder: its result stands
             if (Game != null && Game.IsOver) return;   // the game is over: no more pitches (NewGame starts the next)
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
@@ -589,6 +609,7 @@ namespace Pitchlab.Sandbox
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             ClearPitch();
+            (Bunting, BuntSquareTime, BuntPullBackTime, _buntAim) = (false, double.NaN, double.NaN, 0.0);
             LastTouch = BatterBody.FirstTouch(CurrentPitch, PitchBatter?.Bats ?? _swing.Side, PitchBatter?.HeightInches ?? PlayerProfile.ReferenceHeightInches);
             // The CPU batter's events for this pitch: made from what he sees of the flight up to each event's time.
             bool handBack = LastBatterPlan != null;
@@ -597,7 +618,9 @@ namespace Pitchlab.Sandbox
             if (CpuBatting && Game != null && PitchBatter != null)
             {
                 SeedStream stream = CpuBatter.StreamFor(Game.Seed, PitchBatter.Id, Game.Current.Number, Game.Current.Pitches.Count + 1);
-                LastBatterPlan = CpuBatter.Plan(CpuBatter.Observe(CurrentPitch), PitchBatter, Game.Count, _swing, CurrentPitch.ContactPlaneY, ref stream);
+                LastBatterPlan = BuntStrategy.Sacrifice(Game)   // a sacrifice in the textbook spot (TASK-025)
+                    ? CpuBatter.PlanBunt(CpuBatter.Observe(CurrentPitch), PitchBatter, _swing.AsBunt(), CurrentPitch.ContactPlaneY, BuntStrategy.Aim(Game), ref stream)
+                    : CpuBatter.Plan(CpuBatter.Observe(CurrentPitch), PitchBatter, Game.Count, _swing, CurrentPitch.ContactPlaneY, ref stream);
             }
             else if (handBack) ResyncAim();
             _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
@@ -631,6 +654,7 @@ namespace Pitchlab.Sandbox
         public void SetPci(double x, double z)
         {
             (double u, double v) = Pci.ToNormalized(x, z);
+            ResolveBunt(Clock());
             _pciTrack.Place(Clock(), u, v);
         }
 
@@ -642,7 +666,7 @@ namespace Pitchlab.Sandbox
         {
             (double x, double z) = PciAt(_pitchStartRealtime + startTime / _pitchPlaybackSpeed);
             var swing = new SwingInput(startTime, x, z);
-            ContactResult result = ContactResolver.Resolve(CurrentPitch, swing, _swing);
+            ContactResult result = ContactResolver.Resolve(CurrentPitch, swing, PitchSwing);
             LastSwing = swing;
             LastResult = result;
             ShowResult(result);
@@ -657,15 +681,61 @@ namespace Pitchlab.Sandbox
         public bool CheckSwingAtSimTime(double checkTime)
         {
             if (!(LastSwing is SwingInput swing) || !double.IsNaN(swing.CheckTime)) return false;
-            if (checkTime > swing.OfferTime(_swing.SwingDuration)) return false;
+            if (checkTime > swing.OfferTime(PitchSwing.SwingDuration)) return false;
             ClearPitch();
             LastSwing = swing.CheckedAt(checkTime);
-            LastResult = ContactResolver.Resolve(CurrentPitch, LastSwing.Value, _swing);
+            LastResult = ContactResolver.Resolve(CurrentPitch, LastSwing.Value, PitchSwing);
             ResultSummary = "Checked swing";
             _readout = $"{_pitchLabel}: checked swing — no offer";
             SetPath(_pitchPath, CurrentPitch.Flight);
             _pitchPath.enabled = _showDebugPaths;
             return true;
+        }
+
+        /// <summary>He squares to bunt at simulation time <paramref name="squareTime"/>, the bat angled <paramref name="aim"/> rad
+        /// toward first base (TASK-025).</summary>
+        public void SquareToBunt(double squareTime, double aim = 0.0)
+        {
+            if (Bunting || LastSwing.HasValue || CurrentPitch == null) return;
+            (Bunting, BuntSquareTime, _buntAim) = (true, squareTime, aim);
+            _readout = $"{_pitchLabel}: squared to bunt";
+        }
+
+        /// <summary>He pulls the bunt back at <paramref name="time"/> (in time: a take). Returns whether it counted.</summary>
+        public bool PullBackBunt(double time)
+        {
+            if (!Bunting || LastSwing.HasValue || !double.IsNaN(BuntPullBackTime)) return false;
+            if (time > SwingInput.PullBackDeadline(ContactResolver.BuntArrival(CurrentPitch))) return false;
+            BuntPullBackTime = time;
+            _readout = $"{_pitchLabel}: pulled the bunt back";
+            return true;
+        }
+
+        /// <summary>The bunt button (Q / West) at real time <paramref name="eventRealtime"/>: during the delivery or the pitch,
+        /// square to bunt; squared, pull it back.</summary>
+        public void PressBuntButton(double eventRealtime)
+        {
+            DriveCpuBatter(eventRealtime);
+            if (LastBatterPlan != null || CurrentPitch == null || !_resultPending && Game != null) return;   // the CPU batter has the bat
+            BattingState state = StateAt(eventRealtime);
+            if (state != BattingState.Windup && state != BattingState.PitchInFlight) return;
+            double t = Math.Max(0.0, ToSimTime(eventRealtime));
+            if (Bunting) PullBackBunt(t);
+            else SquareToBunt(t);
+        }
+
+        /// <summary>The bunt meets the ball (once) when it arrives: the bat where the PCI is then (TASK-025).</summary>
+        private void ResolveBunt(double now)
+        {
+            if (!Bunting || LastSwing.HasValue || CurrentPitch == null || !_resultPending && Game != null) return;
+            double arrival = ContactResolver.BuntArrival(CurrentPitch);
+            if (ToSimTime(now) < arrival) return;
+            (double x, double z) = PciAt(_pitchStartRealtime + arrival / _pitchPlaybackSpeed);
+            var bunt = SwingInput.Bunt(BuntSquareTime, x, z, _buntAim, BuntPullBackTime);
+            ContactResult result = ContactResolver.Resolve(CurrentPitch, bunt, PitchSwing);
+            LastSwing = bunt;
+            LastResult = result;
+            ShowResult(result);
         }
 
         /// <summary>The check-swing button (C / East) at real time <paramref name="eventRealtime"/>: during the swing, a check.</summary>
@@ -681,14 +751,14 @@ namespace Pitchlab.Sandbox
 
         /// <summary>How long (real s) the loop has been ready since the game's last pitch — the final shown (∞ with no pitch).</summary>
         private double ShowingFinalSince(double realtime) => CurrentPitch == null ? double.PositiveInfinity
-            : realtime - (_pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed);
+            : realtime - (_pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, PitchSwing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed);
 
         /// <summary>Presses this soon after contact are ignored (s): double clicks, switch bounce.</summary>
         public const double DoublePressGrace = 0.3;
 
         /// <summary>Batting loop state at real time <paramref name="realtime"/> (<see cref="BattingStateMachine"/>).</summary>
         public BattingState StateAt(double realtime) =>
-            CurrentPitch == null ? BattingState.Ready : BattingStateMachine.At(ToSimTime(realtime), CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration);
+            CurrentPitch == null ? BattingState.Ready : BattingStateMachine.At(ToSimTime(realtime), CurrentPitch, LastSwing, LastResult, PlayEnd, PitchSwing.SwingDuration);
 
         private bool PitchLive(double realtime) => StateAt(realtime) == BattingState.PitchInFlight && !LastSwing.HasValue;
 
@@ -707,8 +777,8 @@ namespace Pitchlab.Sandbox
                     // One swing per pitch: a second press stamped earlier than the first (another device's event handled
                     // later in the same update) reads as "before the swing" but must not swing again.
                     // A press stamped before the end of the pitch but handled after its take was counted is too late.
-                    // After the pitch has touched the batter the ball is dead: no swing (TASK-024).
-                    if (LastTouch is BodyHit touched && ToSimTime(eventRealtime) >= touched.Time) return;
+                    // After the pitch has touched the batter the ball is dead: no swing (TASK-024). Squared to bunt: no swing (TASK-025).
+                    if (LastTouch is BodyHit touched && ToSimTime(eventRealtime) >= touched.Time || Bunting) return;
                     if (LastBatterPlan == null && !LastSwing.HasValue && (Game == null || _resultPending)) SwingAtSimTime(ToSimTime(eventRealtime));
                     return;
                 case BattingState.Windup:
@@ -737,6 +807,7 @@ namespace Pitchlab.Sandbox
         {
             if (LastBatterPlan != null) return;   // the CPU batter has the PCI
             Vector2 aim = context.ReadValue<Vector2>();
+            ResolveBunt(context.time);
             _pciTrack.SetVelocity(context.time, aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
         }
 
@@ -755,11 +826,12 @@ namespace Pitchlab.Sandbox
                 DrawZone((atBat.ZoneBottom, atBat.ZoneTop));   // the outline follows the batter who steps in
             }
             DriveCpuBatter(now);
+            ResolveBunt(now);
             // The result of the pitch on screen, once decided (a take waits InputGrace for a late swing event).
             if (CurrentPitch != null && _resultPending)
             {
                 double grace = LastSwing.HasValue ? 0.0 : InputGrace * _pitchPlaybackSpeed;
-                if (ToSimTime(now) >= BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + grace) ApplyResult();
+                if (ToSimTime(now) >= BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, PitchSwing.SwingDuration) + grace) ApplyResult();
             }
 
             // The auto pitcher's next press: AutoPitchDelay after the loop is ready (or after auto was switched on, or a new game
@@ -768,7 +840,7 @@ namespace Pitchlab.Sandbox
             if (AutoPitch && Game != null && !Game.IsOver && !_resultPending)
             {
                 double ready = CurrentPitch == null ? double.NegativeInfinity
-                    : _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, _swing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
+                    : _pitchStartRealtime + (BattingStateMachine.OutcomeTime(CurrentPitch, LastSwing, LastResult, PlayEnd, PitchSwing.SwingDuration) + BattingStateMachine.ResultPause) / _pitchPlaybackSpeed;
                 double press = Math.Max(ready, _autoArmed) + AutoPitchDelay;
                 if (now - press > AutoHitchTolerance) press = now;
                 if (now >= press) ThrowPitch(_presetIndex, press + _deliveryLead / _playbackSpeed);
@@ -812,6 +884,7 @@ namespace Pitchlab.Sandbox
         {
             if (_aimAction == null) return;
             Vector2 aim = _aimAction.ReadValue<Vector2>();
+            ResolveBunt(Clock());
             _pciTrack.SetVelocity(Clock(), aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
         }
 
@@ -830,6 +903,14 @@ namespace Pitchlab.Sandbox
                 _pciTrack.Place(RealtimeOf(e.Time), u, v);
             }
 
+            if (plan.IsBunt)
+            {
+                // His bunt: squared, maybe pulled back; the bat follows his aim events and meets the ball when it arrives.
+                if (!Bunting && _resultPending && RealtimeOf(plan.SwingStart) <= now) SquareToBunt(plan.SwingStart, plan.BuntAim);
+                if (Bunting && double.IsNaN(BuntPullBackTime) && !double.IsNaN(plan.CheckTime) && RealtimeOf(plan.CheckTime) <= now) PullBackBunt(plan.CheckTime);
+                return;
+            }
+
             // Not after the pitch has touched him (dead ball), as for the player's press.
             bool dead = LastTouch is BodyHit touched && plan.SwingStart >= touched.Time;
             if (plan.Swing && !dead && !LastSwing.HasValue && _resultPending && RealtimeOf(plan.SwingStart) <= now) SwingAtSimTime(plan.SwingStart);
@@ -841,13 +922,16 @@ namespace Pitchlab.Sandbox
         private void ApplyResult()
         {
             if (!_resultPending) return;
+            ResolveBunt(double.PositiveInfinity);   // a squared bunt meets the ball at its arrival, whenever this runs (frame-independent)
             _resultPending = false;
             (double bottom, double top) = Zone;
             // At the plate (TASK-024: foul tip, hit by pitch, strike, ball) or the play's.
-            PitchOutcome outcome = PitchOutcomes.BeforePlay(CurrentPitch, LastSwing, LastResult, _swing.SwingDuration, LastTouch, bottom, top)
+            PitchOutcome outcome = PitchOutcomes.BeforePlay(CurrentPitch, LastSwing, LastResult, PitchSwing.SwingDuration, LastTouch, bottom, top)
                                    ?? PitchOutcomes.Of(CurrentPitch, LastSwing, LastResult, LastLive, bottom, top);
+            bool bunted = LastSwing is SwingInput { IsBunt: true };
+            if (bunted && outcome == PitchOutcome.Foul) outcome = PitchOutcome.FoulBunt;
             LastOutcome = outcome;
-            LastEnd = outcome == PitchOutcome.Foul || outcome == PitchOutcome.InPlay ? Game.Apply(LastLive, _pitchInfo) : Game.Pitch(outcome, _pitchInfo);
+            LastEnd = outcome == PitchOutcome.Foul || outcome == PitchOutcome.FoulBunt || outcome == PitchOutcome.InPlay ? Game.Apply(LastLive, _pitchInfo, bunted) : Game.Pitch(outcome, _pitchInfo);
         }
 
         private void ShowResult(ContactResult r)
@@ -903,10 +987,10 @@ namespace Pitchlab.Sandbox
                 _readout = $"{_pitchLabel}  timing {timing}\nMISS: {r.Outcome}" +
                            (double.IsNaN(r.VerticalOffset) ? "" : $" (barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in)");
                 // The pitch touched him before his swing reached the offer point: no swing, the rule's call (TASK-024).
-                if (LastTouch is BodyHit touched && LastSwing is SwingInput s && s.OfferTime(_swing.SwingDuration) > touched.Time)
+                if (LastTouch is BodyHit touched && LastSwing is SwingInput s && s.OfferTime(PitchSwing.SwingDuration) > touched.Time)
                 {
                     (double bottom, double top) = Zone;
-                    ResultSummary = PitchOutcomes.BeforePlay(CurrentPitch, s, r, _swing.SwingDuration, touched, bottom, top) == PitchOutcome.HitByPitch
+                    ResultSummary = PitchOutcomes.BeforePlay(CurrentPitch, s, r, PitchSwing.SwingDuration, touched, bottom, top) == PitchOutcome.HitByPitch
                         ? "Hit by pitch (before his swing was an offer)" : "Hit by the pitch in the zone · strike";
                 }
             }
@@ -1008,7 +1092,7 @@ namespace Pitchlab.Sandbox
             if (LastSwing is SwingInput swing && LastResult is ContactResult r && CurrentPitch != null)
             {
                 (double su, double sv) = Pci.ToNormalized(swing.PciX, swing.PciZ);
-                var ball = CurrentPitch.Flight.StateAt(swing.StartTime + _swing.SwingDuration).Position;
+                var ball = CurrentPitch.Flight.StateAt(ContactResolver.ContactTime(CurrentPitch, swing, PitchSwing)).Position;
                 text += $"\nSwing @ {swing.StartTime:0.0000} s: PCI ({su:+0.000;-0.000}, {sv:+0.000;-0.000}) = ({swing.PciX:+0.000;-0.000}, {swing.PciZ:0.000}) m" +
                         $"\nBall at contact time ({ball.X:+0.000;-0.000}, {ball.Y:0.000}, {ball.Z:0.000}) m   timing {(double.IsNaN(r.TimingError) ? "-" : $"{r.TimingError * 1000.0:+0.0;-0.0} ms")}" +
                         (r.IsContact ? $"\nContact point ({r.BattedBall.Position.X:+0.000;-0.000}, {r.BattedBall.Position.Y:0.000}, {r.BattedBall.Position.Z:0.000}) m" : $"\nMiss: {r.Outcome}");

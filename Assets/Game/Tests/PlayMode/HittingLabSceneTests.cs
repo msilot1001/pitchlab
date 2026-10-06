@@ -125,6 +125,52 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheBuntButtonSquaresAndPullsBack()
+        {
+            // TASK-025: Q / West squares during the pitch; the bat meets the ball when it arrives, where the PCI is then. A second
+            // press before the deadline pulls the bunt back: a take. The swing button does nothing while squared.
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            double RealtimeAt(double simTime) => now + (simTime - _lab.ToSimTime(now));
+            foreach (bool pullBack in new[] { false, true })
+            {
+                _lab.PressSwingButton(now);                                     // throw
+                HittingPitch pitch = _lab.CurrentPitch;
+                now = RealtimeAt(0.1);
+                _lab.PressBuntButton(now);                                      // square
+                Assert.IsTrue(_lab.Bunting);
+                Assert.AreEqual(0.1, _lab.BuntSquareTime, 1e-9);
+                _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z + 0.004);
+                _lab.PressSwingButton(now);
+                Assert.IsFalse(_lab.LastSwing.HasValue, "no swing while squared");
+                if (pullBack)
+                {
+                    now = RealtimeAt(SwingInput.PullBackDeadline(pitch.IdealContactTime) - 0.01);
+                    _lab.PressBuntButton(now);
+                    Assert.AreEqual(_lab.ToSimTime(now), _lab.BuntPullBackTime, 1e-9);
+                }
+
+                now = RealtimeAt(pitch.IdealContactTime + 0.01);
+                _lab.FrameUpdate(now);                                          // the ball has arrived
+                Assert.IsTrue(_lab.LastSwing.Value.IsBunt);
+                if (pullBack)
+                {
+                    Assert.AreEqual(ContactOutcome.CheckedSwing, _lab.LastResult.Value.Outcome, "pulled back: no attempt");
+                    Assert.IsNull(_lab.LastLive);
+                }
+                else
+                {
+                    Assert.IsTrue(_lab.LastResult.Value.IsContact, "the squared bat meets the ball");
+                    Assert.AreEqual(pitch.IdealContactTime, _lab.LastResult.Value.BattedBall.Time, 1e-12);
+                    Assert.Less(_lab.LastResult.Value.ExitSpeed, Simulation.Core.Units.MphToMetersPerSecond(50.0), "a bunt");
+                }
+
+                yield return null;
+                now += 8.0;                                                     // the outcome shown; ready for the next pitch
+            }
+        }
+
+        [UnityTest]
         public IEnumerator PressDuringTheWindupIsIgnored()
         {
             // Wind-up policy B: a press before release can never connect (contact is ~0.4 s after release), so it is

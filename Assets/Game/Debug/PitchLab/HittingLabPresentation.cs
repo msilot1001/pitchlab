@@ -314,12 +314,13 @@ namespace Pitchlab.Sandbox
             bool zone = StrikeZone.IsStrike(_pitch, _lab.Zone.Bottom, _lab.Zone.Top);
             if (!(_lab.LastResult is ContactResult r) || r.Outcome == ContactOutcome.CheckedSwing)
             {
-                string take = _lab.LastResult.HasValue ? "Check swing" : "Take";
+                string take = !_lab.LastResult.HasValue ? "Take" : _lab.LastSwing is SwingInput { IsBunt: true } ? "Bunt pulled back" : "Check swing";
                 return state == BattingState.Result ? (zone ? $"{take} · called strike" : $"{take} · ball") : string.Empty;
             }
 
             if (_lab.LastFoulTip) return t >= r.BattedBall.Time ? "Foul tip · strike" : string.Empty;
             string timing = ContactFeedback.Timing(r);
+            if (!r.IsContact && _lab.LastSwing.Value.IsBunt) return t >= ContactResolver.ContactTime(_pitch, _lab.LastSwing.Value, _lab.Swing) ? "Missed bunt · strike" : string.Empty;
             if (!r.IsContact)
                 return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;
             if (t < r.BattedBall.Time) return string.Empty;
@@ -525,6 +526,7 @@ namespace Pitchlab.Sandbox
         private void OnSwing(SwingInput swing, ContactResult result)
         {
             _swing = swing;
+            if (swing.IsBunt) return;   // a bunt's bat is posed by BuntPose (no swing to target)
             // Presentation reflects the authoritative swing: timing turns the body (early = more open, pulled), the vertical
             // offset tilts the finish (undercut = higher, topped = lower).
             double timing = double.IsNaN(result.TimingError) ? 0.0 : result.TimingError;
@@ -546,6 +548,32 @@ namespace Pitchlab.Sandbox
             _adjust = SwingTargeting.Solve(_batter, _sweetSpot, _swingClip, _uContact, target, swingYaw, _pose, out _targetResidual);
         }
 
+        /// <summary>
+        /// Squared to bunt (TASK-025; presentation of the authoritative bunt): from his stance the bat comes level across the
+        /// plate over the set-up time, its sweet spot on the PCI at the contact plane — where gameplay's bunt meets the ball —
+        /// and angled by his aim; pulled back, or a while after the ball arrived, he returns to his stance.
+        /// </summary>
+        private void BuntPose(double t)
+        {
+            _swingClip.Sample(_uStance, _pose);
+            Vector3 stanceGrip = _pose.GripPoint, stanceDir = _pose.GripDirection;
+            double square = _lab.BuntSquareTime, pull = _lab.BuntPullBackTime;
+            double arrival = _pitch.ReachesContactPlane ? _pitch.IdealContactTime : _pitch.Flight.Final.Time;
+            float w = Ease((t - square) / SwingParameters.BuntSetTime);
+            if (!double.IsNaN(pull)) w *= 1f - Ease((t - pull) / 0.25);
+            w *= 1f - Ease((t - arrival - 0.6) / 0.6);
+            (double x, double z) = _lab.PciAt(_lab.ToRealtime(Math.Min(t, arrival)));
+            Vector3 sweet = SimulationSpace.ToUnity(new Vector3d(x, _pitch.ContactPlaneY, z));
+            // The barrel toward the plate's far side (+X for a right-handed hitter), angled by his aim toward first base.
+            // Squared to the ball's incoming path, then his aim — as the contact model squares it.
+            Vector3d incoming = _pitch.Flight.StateAt(arrival).Velocity;
+            double side = _lab.BatterSideAt(_lab.RenderedRealtime) == BatterSide.Right ? 1.0 : -1.0, aim = Math.Atan2(-incoming.X, -incoming.Y) + _lab.BuntAim;
+            Vector3 dir = SimulationSpace.ToUnity(new Vector3d(side * Math.Cos(aim), -side * Math.Sin(aim), 0.0)) - SimulationSpace.ToUnity(Vector3d.Zero);
+            Vector3 grip = sweet - dir.normalized * Equipment.SweetSpotFromGrip;
+            _pose.GripPoint = Vector3.Lerp(stanceGrip, _batter.WorldToFigurePoint(grip), w);
+            _pose.GripDirection = Vector3.Slerp(stanceDir, _batter.WorldToFigure(dir).normalized, w);
+        }
+
         /// <summary>How long (s) a checked bat keeps moving while it is braked (presentation).</summary>
         private const double CheckStop = 0.04;
 
@@ -554,6 +582,10 @@ namespace Pitchlab.Sandbox
             if (_pitch == null || double.IsNegativeInfinity(t) || _freshBatter)
             {
                 _swingClip.Sample(_uStance, _pose);
+            }
+            else if (_lab.Bunting && t >= _lab.BuntSquareTime)
+            {
+                BuntPose(t);
             }
             else if (!_swing.HasValue)
             {

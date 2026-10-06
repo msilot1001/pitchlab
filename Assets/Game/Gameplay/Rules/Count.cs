@@ -18,6 +18,8 @@ namespace Pitchlab.Gameplay.Rules
         /// <summary>Sharp and direct from the bat into the catcher's glove, caught: a strike, strike three included
         /// (Definitions, "Foul tip"; 5.09(a)(2)).</summary>
         FoulTip,
+        /// <summary>A bunt that ends foul: a strike, strike three included (OBR 5.09(a)(4); TASK-025).</summary>
+        FoulBunt,
     }
 
     /// <summary>How a pitch ended the plate appearance, if it did.</summary>
@@ -60,6 +62,7 @@ namespace Pitchlab.Gameplay.Rules
                 case PitchOutcome.CalledStrike:
                 case PitchOutcome.SwingingStrike:
                 case PitchOutcome.FoulTip:
+                case PitchOutcome.FoulBunt:
                     return Strikes + 1 == StrikesForOut ? (default, PlateAppearanceEnd.Strikeout) : (new Count(Balls, Strikes + 1), PlateAppearanceEnd.None);
                 case PitchOutcome.Foul:
                     return (new Count(Balls, Math.Min(Strikes + 1, StrikesForOut - 1)), PlateAppearanceEnd.None);

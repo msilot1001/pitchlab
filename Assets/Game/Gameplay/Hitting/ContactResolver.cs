@@ -43,22 +43,47 @@ namespace Pitchlab.Gameplay.Hitting
         public readonly double StartTime;
         /// <summary>PCI centre in the contact plane: X (catcher's view, + = first base) and Z (height), metres.</summary>
         public readonly double PciX, PciZ;
-        /// <summary>When the batter tried to stop the swing (s after release; NaN: he did not).</summary>
+        /// <summary>When the batter tried to stop the swing — or pulled a bunt back (s after release; NaN: he did not).</summary>
         public readonly double CheckTime;
+        /// <summary>A bunt (TASK-025): <see cref="StartTime"/> is when he squared around; the bat waits for the ball, which it
+        /// meets on its arrival at the contact plane with the PCI where it was then.</summary>
+        public readonly bool IsBunt;
+        /// <summary>A bunt's direction: the bat, squared to the ball's incoming path, angled this many radians toward first base
+        /// (+, right side) or third base (−).</summary>
+        public readonly double BuntAim;
 
-        public SwingInput(double startTime, double pciX, double pciZ, double checkTime = double.NaN)
+        public SwingInput(double startTime, double pciX, double pciZ, double checkTime = double.NaN, bool isBunt = false, double buntAim = 0.0)
         {
             StartTime = startTime;
             PciX = pciX;
             PciZ = pciZ;
             CheckTime = checkTime;
+            IsBunt = isBunt;
+            BuntAim = buntAim;
         }
 
-        /// <summary>The same swing, checked at <paramref name="time"/>.</summary>
-        public SwingInput CheckedAt(double time) => new SwingInput(StartTime, PciX, PciZ, time);
+        /// <summary>A bunt squared at <paramref name="squareTime"/> with the bat at the PCI (<paramref name="pciX"/>,
+        /// <paramref name="pciZ"/>) when the ball arrives, aimed <paramref name="aim"/> radians toward first base.</summary>
+        public static SwingInput Bunt(double squareTime, double pciX, double pciZ, double aim, double pullBack = double.NaN) =>
+            new SwingInput(squareTime, pciX, pciZ, pullBack, true, aim);
 
-        /// <summary>The latest check that still stops a swing of <paramref name="swingDuration"/> before the offer.</summary>
-        public double OfferTime(double swingDuration) => StartTime + swingDuration - OfferLead;
+        /// <summary>The same swing, checked (a bunt: pulled back) at <paramref name="time"/>.</summary>
+        public SwingInput CheckedAt(double time) => new SwingInput(StartTime, PciX, PciZ, time, IsBunt, BuntAim);
+
+        /// <summary>The same bunt with the bat at (<paramref name="pciX"/>, <paramref name="pciZ"/>).</summary>
+        public SwingInput WithPci(double pciX, double pciZ) => new SwingInput(StartTime, pciX, pciZ, CheckTime, IsBunt, BuntAim);
+
+        /// <summary>
+        /// When it became an attempt: a swing's offer point (the latest check that still stops it, <paramref name="swingDuration"/>
+        /// long); a bunt's, once he is set (squared <paramref name="swingDuration"/> earlier: the bunt's set-up time).
+        /// </summary>
+        public double OfferTime(double swingDuration) => IsBunt ? StartTime + swingDuration : StartTime + swingDuration - OfferLead;
+
+        /// <summary>The latest a bunt can be pulled back on a pitch arriving at <paramref name="arrival"/> (s).</summary>
+        public static double PullBackDeadline(double arrival) => arrival - OfferLead;
+
+        /// <summary>A bunt's bat angle must stay below this (rad, 45°): beyond it the ball glances off sideways or backward.</summary>
+        public static readonly double MaxBuntAim = Math.PI / 4.0;
 
         /// <summary>Whether the swing was stopped in time: no swing (a take).</summary>
         public bool IsChecked(double swingDuration) => CheckTime <= OfferTime(swingDuration);
@@ -116,13 +141,21 @@ namespace Pitchlab.Gameplay.Hitting
         public static ContactResult Resolve(HittingPitch pitch, SwingInput swing, SwingParameters p)
         {
             p.Validate();
+            // A bunt pulled back in time is no attempt, whether or not the pitch reaches the bat (TASK-025).
+            if (swing.IsBunt && swing.CheckTime <= SwingInput.PullBackDeadline(BuntArrival(pitch)))
+                return new ContactResult(ContactOutcome.CheckedSwing, 0.0, double.NaN, double.NaN, 0.0, default);
             if (!pitch.ReachesContactPlane) return new ContactResult(ContactOutcome.NoPitch, double.NaN, double.NaN, double.NaN, 0.0, default);
-            if (!Finite(swing.StartTime) || !Finite(swing.PciX) || !Finite(swing.PciZ))
+            if (!Finite(swing.StartTime) || !Finite(swing.PciX) || !Finite(swing.PciZ) || swing.IsBunt && !(Math.Abs(swing.BuntAim) < SwingInput.MaxBuntAim))
                 return new ContactResult(ContactOutcome.InvalidInput, double.NaN, double.NaN, double.NaN, 0.0, default);
 
-            double contactTime = swing.StartTime + p.SwingDuration;
+            double contactTime = ContactTime(pitch, swing, p);
             double timingError = contactTime - pitch.IdealContactTime;
-            if (swing.IsChecked(p.SwingDuration)) return new ContactResult(ContactOutcome.CheckedSwing, timingError, double.NaN, double.NaN, 0.0, default);
+            if (swing.IsBunt)
+            {
+                // A bunt (TASK-025): squared too late, the bat is not there.
+                if (swing.StartTime > contactTime - p.SwingDuration) return new ContactResult(ContactOutcome.MissTiming, swing.StartTime + p.SwingDuration - contactTime, double.NaN, double.NaN, 0.0, default);
+            }
+            else if (swing.IsChecked(p.SwingDuration)) return new ContactResult(ContactOutcome.CheckedSwing, timingError, double.NaN, double.NaN, 0.0, default);
             // Too early/late, or later than the recorded flight (the ball is already on the ground or past the catcher).
             if (!(Math.Abs(timingError) <= p.MaxTimingError) || contactTime > pitch.Flight.Final.Time)
                 return new ContactResult(ContactOutcome.MissTiming, timingError, double.NaN, double.NaN, 0.0, default);
@@ -132,7 +165,8 @@ namespace Pitchlab.Gameplay.Hitting
 
             // Swing direction: toward the field (+Y), yawed by timing (early → pull side), tilted up by the attack angle.
             double pullSign = p.Side == BatterSide.Right ? 1.0 : -1.0;  // right-handed hitters pull toward −X (third base)
-            double yaw = pullSign * p.SprayRate * timingError;
+            // A bunt: the bat squared to the ball's incoming path (horizontal), then angled by his aim.
+            double yaw = swing.IsBunt ? Math.Atan2(-ball.Velocity.X, -ball.Velocity.Y) + swing.BuntAim : pullSign * p.SprayRate * timingError;
             var horizontal = new Vector3d(Math.Sin(yaw), Math.Cos(yaw), 0.0);
             Vector3d swingDirection = Math.Cos(p.AttackAngle) * horizontal + Math.Sin(p.AttackAngle) * new Vector3d(0.0, 0.0, 1.0);
             Vector3d barrelAxis = Vector3d.Cross(horizontal, new Vector3d(0.0, 0.0, 1.0));      // horizontal, ⟂ swing
@@ -167,7 +201,8 @@ namespace Pitchlab.Gameplay.Hitting
             bool towardTip = alongBarrel * pullSign > 0.0;
             double q = Math.Max(towardTip ? p.MinTipEfficiency : 0.0, p.SweetSpotEfficiency - (towardTip ? p.EfficiencyFalloffTip : p.EfficiencyFalloffHandle) * Sq(alongBarrel));
             // The bat turns about its pivot: slower toward the hands, faster toward the tip (TASK-023).
-            Vector3d batVelocity = BatSpeedAt(p, towardTipDistance) * swingDirection;
+            // A bunt's bat is pushed straight, not turned about the swing's pivot: one speed along it (TASK-025).
+            Vector3d batVelocity = (swing.IsBunt ? p.BatSpeed : BatSpeedAt(p, towardTipDistance)) * swingDirection;
             double incomingNormal = -Vector3d.Dot(ball.Velocity, normal);   // > 0: ball moving into the bat
             double outNormal = q * incomingNormal + (1.0 + q) * Vector3d.Dot(batVelocity, normal);
 
@@ -202,7 +237,14 @@ namespace Pitchlab.Gameplay.Hitting
         /// from; presentation aims the visual bat here (hit or miss). Defined for any swing time within the pitch flight.
         /// </summary>
         public static Vector3d SweetSpotAtContact(HittingPitch pitch, SwingInput swing, SwingParameters p) =>
-            SweetSpot(pitch, swing, p, pitch.Flight.StateAt(swing.StartTime + p.SwingDuration).Position);
+            SweetSpot(pitch, swing, p, pitch.Flight.StateAt(ContactTime(pitch, swing, p)).Position);
+
+        /// <summary>When the pitch reaches a bunter's bat: at the contact plane, or (short of it) where its flight ends.</summary>
+        public static double BuntArrival(HittingPitch pitch) => pitch.ReachesContactPlane ? pitch.IdealContactTime : pitch.Flight.Final.Time;
+
+        /// <summary>When the bat meets the ball's path: a swing at its start + duration; a bunt when the ball arrives.</summary>
+        public static double ContactTime(HittingPitch pitch, SwingInput swing, SwingParameters p) =>
+            swing.IsBunt ? BuntArrival(pitch) : swing.StartTime + p.SwingDuration;
 
         private static Vector3d SweetSpot(HittingPitch pitch, SwingInput swing, SwingParameters p, Vector3d ball) =>
             new Vector3d(swing.PciX, ball.Y, swing.PciZ + (ball.Y - pitch.ContactPlaneY) * Math.Tan(p.AttackAngle));
