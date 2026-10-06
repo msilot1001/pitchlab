@@ -218,7 +218,7 @@ namespace Pitchlab.Sandbox
                 _shadow.localScale = new Vector3(2.5f * d, 0.005f, 2.5f * d);
             }
 
-            if (_lab.LastResult is ContactResult r && r.IsContact)
+            if (_lab.LastResult is ContactResult r && _lab.ContactStands)
             {
                 if (!_contactShown && t >= r.BattedBall.Time) ShowContact(r);
                 BallInPlay play = _lab.LastPlay;
@@ -242,8 +242,8 @@ namespace Pitchlab.Sandbox
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C || !_lab.CameraBehindPlate;
             // A pitch not put in play ends in the catcher's glove where he can be seen (TASK-014; presentation only).
             // Not after the pitch touched the batter (a dead ball); a caught foul tip is received like a pitch (TASK-024).
-            bool tipped = _lab.LastFoulTip, touched = _lab.LastTouch.HasValue && !(_lab.LastResult is ContactResult { IsContact: true });
-            bool received = _pitch != null && (!(_lab.LastResult is ContactResult { IsContact: true }) || tipped) && !touched && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
+            bool tipped = _lab.LastFoulTip, touched = _lab.LastTouch.HasValue && !_lab.ContactStands;
+            bool received = _pitch != null && (!_lab.ContactStands || tipped) && !touched && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
             _defense.CatcherGloveWeight = received ? Mathf.SmoothStep(0f, 1f, (float)((t - _catchTime + CatcherReach) / CatcherReach)) : 0f;
             // A caught foul tip: the mitt takes it where its direct path crosses his plane (within the mitt, FoulTips.GloveReach).
             Vector3 catchPoint = tipped && _lab.LastResult is ContactResult tipResult && FoulTips.DirectPathAt(tipResult.BattedBall) is Vector3d tipAt
@@ -301,17 +301,24 @@ namespace Pitchlab.Sandbox
             if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
             BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration);
             if (state == BattingState.Ready) return "Click to pitch";
+            // Touched (TASK-024): the call is the rule's (PitchOutcomes.BeforePlay), shown from the touch.
+            if (_lab.LastTouch is BodyHit touch && !_lab.ContactStands)
+            {
+                if (t < touch.Time) return string.Empty;
+                (double bottom, double top) = _lab.Zone;
+                PitchOutcome? touchCall = PitchOutcomes.BeforePlay(_pitch, _lab.LastSwing, _lab.LastResult, _lab.Swing.SwingDuration, touch, bottom, top);
+                return touchCall == PitchOutcome.HitByPitch ? "Hit by pitch"
+                    : touchCall == PitchOutcome.SwingingStrike ? "Swung · hit by the pitch · strike" : "Hit by the pitch in the zone · strike";
+            }
+
             bool zone = StrikeZone.IsStrike(_pitch, _lab.Zone.Bottom, _lab.Zone.Top);
-            bool hit = _lab.LastTouch is BodyHit touch && t >= touch.Time && !(_lab.LastResult is ContactResult { IsContact: true });
             if (!(_lab.LastResult is ContactResult r) || r.Outcome == ContactOutcome.CheckedSwing)
             {
                 string take = _lab.LastResult.HasValue ? "Check swing" : "Take";
-                if (hit) return zone ? $"{take} · hit by the pitch in the zone · strike" : "Hit by pitch";
                 return state == BattingState.Result ? (zone ? $"{take} · called strike" : $"{take} · ball") : string.Empty;
             }
 
             if (_lab.LastFoulTip) return t >= r.BattedBall.Time ? "Foul tip · strike" : string.Empty;
-            if (hit) return "Swung · hit by the pitch · strike";
             string timing = ContactFeedback.Timing(r);
             if (!r.IsContact)
                 return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;

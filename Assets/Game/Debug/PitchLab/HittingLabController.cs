@@ -241,6 +241,8 @@ namespace Pitchlab.Sandbox
         public (double Bottom, double Top) Zone => PitchBatter != null ? (PitchBatter.ZoneBottom, PitchBatter.ZoneTop) : (StrikeZone.Bottom, StrikeZone.Top);
         /// <summary>Where the current pitch touches the batter, if it does (TASK-024; from the authoritative flight).</summary>
         public BodyHit? LastTouch { get; private set; }
+        /// <summary>The swing's contact counts: it met the ball before the ball touched the batter (TASK-024).</summary>
+        public bool ContactStands => PitchOutcomes.ContactStands(LastResult, LastTouch);
         /// <summary>The last contact was caught as a foul tip (TASK-024): no play.</summary>
         public bool LastFoulTip { get; private set; }
         public PlateAppearanceEnd LastEnd { get; private set; }
@@ -796,7 +798,7 @@ namespace Pitchlab.Sandbox
                 return new Vector3d(p.X + v.X * dt, p.Y + v.Y * dt, p.Z + v.Z * dt - 0.5 * Environment.Gravity * dt * dt);
             }
 
-            if (LastTouch is BodyHit hit && t >= hit.Time && !(LastResult is ContactResult { IsContact: true }))
+            if (LastTouch is BodyHit hit && t >= hit.Time && !ContactStands)
             {
                 double fall = t - hit.Time, r = BallProperties.Baseball.Radius;
                 return new Vector3d(hit.BallCentre.X, hit.BallCentre.Y, Math.Max(r, hit.BallCentre.Z - 0.5 * Environment.Gravity * fall * fall));
@@ -850,13 +852,19 @@ namespace Pitchlab.Sandbox
         {
             double inches(double m) => Units.MetersToInches(m);
             string timing = double.IsNaN(r.TimingError) ? "-" : $"{r.TimingError * 1000.0:+0;-0} ms ({r.Timing})";
-            LastFoulTip = r.IsContact && FoulTips.IsCaught(CurrentPitch, r);
-            if (LastFoulTip)
+            bool stands = PitchOutcomes.ContactStands(r, LastTouch);
+            LastFoulTip = stands && FoulTips.IsCaught(CurrentPitch, r);
+            if (r.IsContact && !stands)
+            {
+                ResultSummary = "Hit by the pitch first";
+                _readout = $"{_pitchLabel}  timing {timing}\nThe pitch touched the batter before the bat met it: dead ball.";
+            }
+            else if (LastFoulTip)
             {
                 ResultSummary = "Foul tip";
                 _readout = $"{_pitchLabel}  timing {timing}\nFOUL TIP: caught by the catcher (q {r.CollisionEfficiency:0.00}, {Units.MetersPerSecondToMph(r.ExitSpeed):0} mph)";
             }
-            else if (r.IsContact)
+            else if (stands)
             {
                 LastBattedBall = BattedBallSimulation.Run(r.BattedBall, Environment);
                 LastPlay = BallInPlaySimulation.Run(r.BattedBall, Environment, Field);

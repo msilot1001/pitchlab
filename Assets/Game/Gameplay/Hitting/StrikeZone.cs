@@ -93,7 +93,7 @@ namespace Pitchlab.Gameplay.Hitting
         /// The pitch's result decided before any play (TASK-024), or null when a batted ball must be played out:
         /// <list type="bullet">
         /// <item>contact caught as a foul tip → <see cref="PitchOutcome.FoulTip"/> (Definitions, "Foul tip");</item>
-        /// <item>other contact → null (the play decides);</item>
+        /// <item>other contact → null (the play decides) — unless the pitch had touched the batter first (dead ball);</item>
         /// <item>the pitch touches the batter: the ball is dead at the touch, so only a swing that had already reached the
         /// offer point is a swing — then a strike; in the strike zone when it touches him a strike; otherwise
         /// <see cref="PitchOutcome.HitByPitch"/> (OBR 5.05(b)(2), Definitions "Strike" (e), (f));</item>
@@ -101,13 +101,18 @@ namespace Pitchlab.Gameplay.Hitting
         /// </list>
         /// </summary>
         public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, double swingDuration, BatterSide side, double heightInches, double zoneBottom, double zoneTop) =>
-            BeforePlay(pitch, swing, result, swingDuration, result is ContactResult r && r.IsContact ? null : BatterBody.FirstTouch(pitch, side, heightInches), zoneBottom, zoneTop);
+            BeforePlay(pitch, swing, result, swingDuration, BatterBody.FirstTouch(pitch, side, heightInches), zoneBottom, zoneTop);
+
+        /// <summary>Does the bat's contact count? Not when the pitch had already touched the batter: the ball was dead (a late
+        /// swing can meet the ball after it passed him).</summary>
+        public static bool ContactStands(ContactResult? result, BodyHit? touch) =>
+            result is ContactResult r && r.IsContact && !(touch is BodyHit hit && hit.Time < r.BattedBall.Time);
 
         /// <summary>The same with the batter's touch already found (<paramref name="touch"/>; null: the pitch missed him).</summary>
         public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, double swingDuration, BodyHit? touch, double zoneBottom, double zoneTop)
         {
             if (pitch == null) throw new ArgumentNullException(nameof(pitch));
-            if (result is ContactResult r && r.IsContact) return FoulTips.IsCaught(pitch, r) ? PitchOutcome.FoulTip : (PitchOutcome?)null;
+            if (ContactStands(result, touch)) return FoulTips.IsCaught(pitch, result.Value) ? PitchOutcome.FoulTip : (PitchOutcome?)null;
             bool swung = Offered(swing, result);
             if (touch is BodyHit hit)
             {

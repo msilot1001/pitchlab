@@ -120,6 +120,25 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void ContactAfterThePitchTouchedTheBatterDoesNotCount()
+        {
+            // A late swing can meet the ball after it touched him: the ball was dead at the touch.
+            HittingPitch ball = Aimed(-0.85, 1.2, PitchPresets.FourSeam);
+            const double touchTime = 0.45;
+            var touch = new BodyHit(touchTime, new Vector3d(-0.8, -0.2, 1.2), "torso");
+            ContactResult ContactAt(double time) => new ContactResult(ContactOutcome.Contact, 0.0, 0.0, 0.0, 0.5,
+                new BallState(time, new Vector3d(-0.6, 0.6, 1.0), new Vector3d(-5.0, 35.0, 8.0), Vector3d.Zero));
+            var swing = new SwingInput(touchTime - Duration + 0.01, -0.6, 1.0);   // reaches its offer point before the touch
+            Assert.IsFalse(PitchOutcomes.ContactStands(ContactAt(touchTime + 0.005), touch));
+            Assert.AreEqual(PitchOutcome.SwingingStrike, PitchOutcomes.BeforePlay(ball, swing, ContactAt(touchTime + 0.005), Duration, touch, StrikeZone.Bottom, StrikeZone.Top),
+                "he swung, the pitch hit him first: a strike, no batted ball");
+            var lateSwing = new SwingInput(touchTime - Duration + SwingInput.OfferLead + 0.01, -0.6, 1.0);   // offers after the touch
+            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(ball, lateSwing, ContactAt(touchTime + 0.07), Duration, touch, StrikeZone.Bottom, StrikeZone.Top));
+            Assert.IsTrue(PitchOutcomes.ContactStands(ContactAt(touchTime - 0.005), touch), "met before the touch: the batted ball counts");
+            Assert.IsNull(PitchOutcomes.BeforePlay(ball, swing, ContactAt(touchTime - 0.005), Duration, touch, StrikeZone.Bottom, StrikeZone.Top), "the play decides");
+        }
+
+        [Test]
         public void TheZoneVolumeIsOverThePlate()
         {
             double b = StrikeZone.Bottom, t = StrikeZone.Top, front = PitchingGeometry.PlateFrontY;

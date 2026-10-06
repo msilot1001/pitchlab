@@ -14,8 +14,10 @@ Labels: MEASURED / DERIVED / ASSUMED / TUNED (Docs/PLAYER_RATINGS.md).
 | Contact sharp and direct into the catcher's mitt | Definitions, "Foul tip"; 5.09(a)(2) | `FoulTip`: a strike, strike three included (unlike a foul) |
 | Swing stopped before the offer point | umpire's judgement ("struck at") | no swing: the zone call |
 
-The ball is dead at the touch, so a swing that reaches the offer point only after it is no swing; the lab ignores swing
-presses after the touch.
+The ball is dead at the touch:
+- a swing that reaches the offer point only after the touch is no swing;
+- bat contact after the touch (a late swing meeting the ball behind him) counts for nothing (`PitchOutcomes.ContactStands`);
+- the lab ignores swing presses after the touch.
 
 Not modelled:
 - the batter making no attempt to avoid the pitch (5.05(b)(2)(B)); he always tries;

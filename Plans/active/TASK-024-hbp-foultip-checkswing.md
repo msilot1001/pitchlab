@@ -99,4 +99,9 @@ Claude Code (sole writer); reviewers and Codex read-only.
   - no follow camera on a tip;
   - the debug pitch path is restored after a check.
 - [x] check.sh green (EditMode 718 passed, 6 skipped; PlayMode 105/105).
-- [ ] Codex round 2; merge.
+- [x] Codex round 2: grade C. Fixed:
+  - a late contact after the touch now counts for nothing (`PitchOutcomes.ContactStands`): the ball was dead;
+  - the lab no longer plays such contact out;
+  - the banner shows the rule's call for every touched pitch.
+- [x] check.sh green (EditMode 719 passed, 6 skipped; PlayMode 105/105).
+- [ ] Codex round 3; merge.
