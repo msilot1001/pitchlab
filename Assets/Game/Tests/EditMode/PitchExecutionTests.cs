@@ -89,7 +89,7 @@ namespace Pitchlab.Tests
             Assert.Less(elite, average);
             Assert.Less(average, poor);
             // Sanity (regression guard, not validation): an average pitcher's per-axis miss ≈ 6–8 in (Docs/PITCH_EXECUTION.md).
-            Assert.That(average / Math.Sqrt(2.0) * 39.37, Is.InRange(5.0, 9.0));
+            Assert.That(average / Math.Sqrt(2.0) * 39.37, Is.InRange(6.0, 9.0));
         }
 
         [Test]
@@ -119,6 +119,102 @@ namespace Pitchlab.Tests
             Assert.LessOrEqual(PitchExecution.AngleSigmaDeg(p, PitchType.FourSeam, 400), 1.25 * PitchExecution.AngleSigmaDeg(p, PitchType.FourSeam, 0) + 1e-12, "at most +25 %");
             Assert.LessOrEqual(PitchExecution.FatigueSpeedLossMph(p, 400), 1.5);
             Assert.Greater(PitchExecution.FatigueThreshold(Pitcher(50, stamina: 90)), PitchExecution.FatigueThreshold(Pitcher(50, stamina: 10)));
+        }
+
+        /// <summary>Execution errors only (no flight): n draws for <paramref name="pitcher"/> throwing <paramref name="type"/>.</summary>
+        private static ExecutionError[] Errors(PlayerProfile pitcher, PitchType type, int n, int pitchCount = 0)
+        {
+            PitchInput aimed = PitchExecution.PitcherPitch(pitcher, type);
+            var e = new ExecutionError[n];
+            for (int i = 0; i < n; i++)
+            {
+                SeedStream s = PitchExecution.StreamFor(9, pitcher.Id, i, 1);
+                PitchExecution.Execute(aimed, pitcher, type, pitchCount, ref s, out e[i]);
+            }
+
+            return e;
+        }
+
+        private static double Sd(double[] v)
+        {
+            double m = v.Average();
+            return Math.Sqrt(v.Average(x => (x - m) * (x - m)));
+        }
+
+        [Test]
+        public void MissesFollowTheArmSlotAndSpinVariesByType()
+        {
+            const int n = 3000;
+            foreach (Hand hand in new[] { Hand.Right, Hand.Left })
+            {
+                ExecutionError[] e = Errors(Pitcher(50, hand), PitchType.FourSeam, n);
+                double[] h = e.Select(x => x.HorizontalDeg).ToArray(), v = e.Select(x => x.VerticalDeg).ToArray();
+                double corr = h.Zip(v, (a, b) => (a - h.Average()) * (b - v.Average())).Average() / (Sd(h) * Sd(v));
+                // Up-and-arm-side / down-and-glove-side: a right-hander's arm side is −X (ρ < 0), a left-hander's +X.
+                if (hand == Hand.Right) Assert.Less(corr, -0.2, "right-hander");
+                else Assert.Greater(corr, 0.2, "left-hander");
+                Assert.That(Sd(e.Select(x => x.SpinRpm).ToArray()), Is.InRange(60.0, 80.0), "spin rate σ ≈ 70 rpm");
+                Assert.That(Sd(e.Select(x => x.SpeedMph).ToArray()), Is.InRange(0.8, 1.0), "speed σ ≈ 0.9 mph");
+                Assert.That(Math.Abs(e.Average(x => x.SpeedMph)), Is.LessThan(0.06), "zero-mean speed error (fatigue is in the aim, not the miss)");
+                Assert.That(e.Count(x => x.Wild) / (double)n, Is.InRange(0.015, 0.045), "≈ 3 % heavy tail");
+            }
+
+            PlayerProfile p = Pitcher(50);
+            Assert.That(Sd(Errors(p, PitchType.FourSeam, n).Select(x => x.AxisDeg).ToArray()), Is.InRange(3.6, 4.4), "fastball axis σ 4°");
+            Assert.That(Sd(Errors(p, PitchType.Slider, n).Select(x => x.AxisDeg).ToArray()), Is.InRange(7.2, 8.8), "breaking ball axis σ 8°");
+        }
+
+        [Test]
+        public void FamiliaritySpeedOffsetAndMovementAreHisOwn()
+        {
+            var repertoire = new Repertoire(new RepertoirePitch(PitchType.FourSeam, 1, 2.0, 50), new RepertoirePitch(PitchType.Changeup, 1, 0.0, -50));
+            var p = new PlayerProfile("F", "F", BatterSide.Right, Hand.Right, 75.0, Gameplay.Fielding.DefensivePosition.P, new PlayerRatings(movement: 100), repertoire);
+            double best = PitchExecution.AngleSigmaDeg(p, PitchType.FourSeam, 0), worst = PitchExecution.AngleSigmaDeg(p, PitchType.Changeup, 0);
+            Assert.AreEqual(0.85 / 1.15, best / worst, 1e-12, "familiarity ±50 → ∓15 %");
+            Assert.AreEqual(PitchExecution.LeagueSpeedMph(PitchType.FourSeam) + 2.0, PitchExecution.PitcherPitch(p, PitchType.FourSeam).SpeedMph, 1e-12, "his offset on the pitch");
+            Assert.AreEqual(PitchPresets.FourSeam.SpinRateRpm * (1.0 + PitchExecution.MovementSpinScale), PitchExecution.PitcherPitch(p, PitchType.FourSeam).SpinRateRpm, 1e-9, "Movement 100: +20 % spin");
+            // Fatigue lowers the speed he aims with, mildly and capped.
+            int tired = PitchExecution.FatigueThreshold(p) + 100;
+            Assert.AreEqual(1.5, PitchExecution.PitcherPitch(p, PitchType.FourSeam).SpeedMph - PitchExecution.PitcherPitch(p, PitchType.FourSeam, tired).SpeedMph, 1e-9);
+        }
+
+        [Test]
+        public void AGamePitchIsExactlyHisPitchAimedAtTheBattersZoneAndExecuted()
+        {
+            // A tall batter (his zone, not the default), some pitches already thrown (the pitch number, the pitch count).
+            var tall = new PlayerProfile("T", "T", BatterSide.Right, 86.0, "");
+            var lineup = new Lineup("Away", new[] { tall }.Concat(Enumerable.Range(2, 8).Select(i => new PlayerProfile($"A{i}", $"A{i}", BatterSide.Right, 73.0, ""))).ToArray());
+            Team home = GenericRosters.Home();
+            var game = new GameState(new Team("Away", lineup), home, 11);
+            game.Pitch(PitchOutcome.Ball);
+            game.Pitch(PitchOutcome.CalledStrike);
+            PlayerProfile p = game.Pitcher;
+            HittingPitch actual = GamePitches.Create(game, PitchType.Changeup, PitchTarget.UpLeft, true, Env, out PitchInfo info, out ExecutionError? error);
+            (double tx, double tz) = PitchTargets.Point(PitchTarget.UpLeft, tall.ZoneBottom, tall.ZoneTop);
+            PitchInput aimed = PitchTargets.Aim(PitchExecution.PitcherPitch(p, PitchType.Changeup, 2), tx, tz, Env);
+            SeedStream stream = PitchExecution.StreamFor(11, p.Id, game.Current.Number, 3);
+            HittingPitch expected = HittingPitch.Create(PitchExecution.Execute(aimed, p, PitchType.Changeup, 2, ref stream, out _), Env);
+            Assert.AreEqual(2, game.PitchCount(TeamSide.Home));
+            Assert.AreEqual(expected.Flight.First.Velocity, actual.Flight.First.Velocity, "intent → execution, exactly once");
+            Assert.AreEqual(StrikeZone.Crossing(expected), StrikeZone.Crossing(actual));
+            Assert.AreEqual((tx, tz), (info.TargetX, info.TargetZ), "his zone's target");
+            // The next pitch of the plate appearance, and the next plate appearance, draw differently.
+            game.Pitch(PitchOutcome.Ball);
+            GamePitches.Create(game, PitchType.Changeup, PitchTarget.UpLeft, true, Env, out _, out ExecutionError? next);
+            Assert.AreNotEqual(error.Value.HorizontalDeg, next.Value.HorizontalDeg);
+        }
+
+        [Test]
+        public void PitchCountsBelongToThePitchingTeam()
+        {
+            var game = new GameState();
+            for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);   // top 1: the home pitcher throws
+            game.Pitch(PitchOutcome.CalledStrike);
+            Assert.AreEqual((5, 0), (game.PitchCount(TeamSide.Home), game.PitchCount(TeamSide.Away)));
+            for (int k = 0; k < 8; k++) game.Pitch(PitchOutcome.SwingingStrike);   // 2 more for #2 (0–1), 3 each for #3 and #4: three outs
+            Assert.AreEqual((Half.Bottom, 13, 0), (game.Half, game.PitchCount(TeamSide.Home), game.PitchCount(TeamSide.Away)));
+            game.Pitch(PitchOutcome.Ball);
+            Assert.AreEqual((13, 1), (game.PitchCount(TeamSide.Home), game.PitchCount(TeamSide.Away)), "each count carries over");
         }
 
         [Test]

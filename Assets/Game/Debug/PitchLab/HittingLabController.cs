@@ -175,6 +175,10 @@ namespace Pitchlab.Sandbox
         /// </summary>
         public const double InputGrace = 0.1;
 
+        /// <summary>The seed of the next standard game NewGame starts (each new game its own seed: pitch execution and every
+        /// other seeded variation differ from game to game; the same seed replays the same game).</summary>
+        public int NextGameSeed { get; set; } = 2;
+
         /// <summary>The batter the current pitch is thrown to (GameLab; null in the HittingLab).</summary>
         public PlayerProfile PitchBatter { get; private set; }
         /// <summary>The current pitch's strike zone (bottom, top; m): the batter's, or the default one.</summary>
@@ -439,7 +443,7 @@ namespace Pitchlab.Sandbox
         public void NewGame(GameState game = null)
         {
             if (!_gameMode) throw new InvalidOperationException("Only the GameLab plays a game.");
-            Game = game ?? new GameState();
+            Game = game ?? new GameState(GenericRosters.Away(), GenericRosters.Home(), NextGameSeed++);
             _resultPending = false;
             _autoArmed = Clock();   // auto pitching (if on) resumes AutoPitchDelay from now
             ClearPitch();

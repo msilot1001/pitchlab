@@ -24,12 +24,21 @@ namespace Pitchlab.Gameplay.Play
             PlayerProfile pitcher = game.Pitcher, batter = game.Batter;
             bool rated = pitcher?.Repertoire != null;
             if (rated && !pitcher.Repertoire.Has(type)) throw new ArgumentException($"{pitcher.Name} does not throw a {type}.", nameof(type));
-            PitchInput intended = rated ? PitchExecution.PitcherPitch(pitcher, type) : PitchPresets.All[(int)type];
+            int pitchCount = game.PitchCount(game.Fielding);
+            PitchInput intended = rated ? PitchExecution.PitcherPitch(pitcher, type, pitchCount) : PitchPresets.All[(int)type];
             double tx = double.NaN, tz = double.NaN;
             if (target is PitchTarget t)
             {
                 (tx, tz) = PitchTargets.Point(t, batter.ZoneBottom, batter.ZoneTop);
                 intended = PitchTargets.Aim(intended, tx, tz, environment);
+            }
+            else if (rated)
+            {
+                // No target: where the type's preset itself goes (his speed, spin and side would move it otherwise).
+                PitchInput preset = PitchPresets.All[(int)type];
+                if (pitcher.Throws == Hand.Left) preset = PitchExecution.Mirror(preset);
+                (double px, double pz) = StrikeZone.Crossing(HittingPitch.Create(preset, environment));
+                if (!double.IsNaN(px)) intended = PitchTargets.Aim(intended, px, pz, environment);
             }
 
             PitchInput executed = intended;
@@ -37,7 +46,7 @@ namespace Pitchlab.Gameplay.Play
             if (rated && executionVariance)
             {
                 SeedStream stream = PitchExecution.StreamFor(game.Seed, pitcher.Id, game.Current.Number, game.Current.Pitches.Count + 1);
-                executed = PitchExecution.Execute(intended, pitcher, type, game.PitchCount(game.Fielding), ref stream, out ExecutionError e);
+                executed = PitchExecution.Execute(intended, pitcher, type, pitchCount, ref stream, out ExecutionError e);
                 error = e;
             }
 

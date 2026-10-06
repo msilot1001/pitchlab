@@ -30,4 +30,8 @@ Claude Code (sole writer); physics / test reviewers and Codex read-only.
 - [x] Tests: PitchExecutionTests (determinism, command ordering, speed/spin spread, familiarity, fatigue, mirror,
   repertoire, game seed), AtBat frame-rate determinism with variance on; scripted GameLab suites throw as intended
   (variance off — they test the at-bat loop); simulator seed pins re-chosen.
-- [ ] check.sh, runtime, reviews (physics, test), Codex, merge.
+- [x] Runtime: left/right-hander delivery figure releases at the ball (0.1 cm); lab throws vary per pitch.
+- [x] Reviews (physics, test) fixed: arm-slot ρ sign, σ 0.7°, Movement ±20 %, fatigue in the aim, unaimed pitch aimed
+  at the preset crossing, per-type axis σ, crosswind caveat; distribution/correlation/equivalence tests; per-game seeds.
+- [x] check.sh: EditMode 654 (648 passed, 6 skipped), PlayMode 97/97.
+- [ ] Codex, merge.

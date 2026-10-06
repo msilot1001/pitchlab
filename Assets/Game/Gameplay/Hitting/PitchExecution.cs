@@ -52,25 +52,31 @@ namespace Pitchlab.Gameplay.Hitting
         public static double SpeedMph(PlayerProfile pitcher, RepertoirePitch pitch) =>
             LeagueSpeedMph(pitch.Type) + 3.2 * RatingScale.Unit(pitcher.Ratings.Velocity) + pitch.VelocityOffsetMph;
 
+        /// <summary>Movement scales the spin rate 1 ± 20 % (TUNED: lift grows sublinearly with spin — dlnC_L/dlnS ≈ 0.56 —
+        /// so ± 20 % spin ≈ ± 11 % movement, ≈ ± 2 in of four-seam rise; a modest share of the real pitcher-to-pitcher spread).</summary>
+        public const double MovementSpinScale = 0.20;
+
         /// <summary>
-        /// The pitcher's own pitch: the type's preset (release point, angles, spin axis — Docs/PHYSICS.md) at his speed and with
-        /// his spin rate scaled 1 ± 8 % by Movement (ASSUMED; spin drives the movement through the physics); a left-hander's is
-        /// the mirror image (<see cref="Mirror"/>).
+        /// The pitcher's own pitch now: the type's preset (release point, angles, spin axis — Docs/PHYSICS.md) at his speed —
+        /// less any fatigue loss after <paramref name="pitchCount"/> pitches — and with his spin rate scaled by Movement; a
+        /// left-hander's is the mirror image (<see cref="Mirror"/>). The aim is solved with this speed, so fatigue costs
+        /// velocity, not a systematic miss.
         /// </summary>
-        public static PitchInput PitcherPitch(PlayerProfile pitcher, PitchType type)
+        public static PitchInput PitcherPitch(PlayerProfile pitcher, PitchType type, int pitchCount = 0)
         {
             if (pitcher?.Repertoire == null) throw new ArgumentException("A pitcher with a repertoire.", nameof(pitcher));
             RepertoirePitch pitch = pitcher.Repertoire.Get(type);
             PitchInput p = PitchPresets.All[(int)type];
-            p.SpeedMph = SpeedMph(pitcher, pitch);
-            p.SpinRateRpm *= 1.0 + 0.08 * RatingScale.Unit(pitcher.Ratings.Movement);
+            p.SpeedMph = SpeedMph(pitcher, pitch) - FatigueSpeedLossMph(pitcher, pitchCount);
+            p.SpinRateRpm *= 1.0 + MovementSpinScale * RatingScale.Unit(pitcher.Ratings.Movement);
             return pitcher.Throws == Hand.Left ? Mirror(p) : p;
         }
 
         /// <summary>
         /// The mirror image across the plane x = 0 (a left-hander's pitch from a right-hander's): release side and azimuth
         /// change sign; spin is a pseudovector, so under the reflection ω → (ωx, −ωy, −ωz): spin axis θ → −θ and gyro γ → −γ
-        /// (with ω̂ = (cos γ cos θ, −sin γ, cos γ sin θ), PitchInput.SpinDirection). The Magnus force then mirrors exactly.
+        /// (with ω̂ = (cos γ cos θ, −sin γ, cos γ sin θ), PitchInput.SpinDirection). In still air (or a head/tail wind) the
+        /// flight then mirrors exactly; a crosswind is not mirrored (physically right).
         /// </summary>
         public static PitchInput Mirror(PitchInput p)
         {
@@ -83,25 +89,36 @@ namespace Pitchlab.Gameplay.Hitting
 
         // ------------------------------------------------------------------ execution
 
-        /// <summary>Per-axis release-angle spread (°) of an average command (50): 0.6° ≈ 16 cm (6.4 in) at the plate — the
-        /// MLB per-axis miss ≈ 6–8 in (COMMANDf/x, Driveline, Inside Edge; Docs/PITCH_EXECUTION.md) and ≈ 27 cm per degree
-        /// (Nasu &amp; Kashino 2021, DERIVED).</summary>
-        public const double AverageAngleSigmaDeg = 0.6;
+        /// <summary>Per-axis release-angle spread (°) of an average command (50): 0.7° ≈ 19 cm (7.4 in) per axis at the plate
+        /// (≈ 27 cm per degree, Nasu &amp; Kashino 2021, DERIVED) — a mean radial miss ≈ 9 in. TUNED between the sources, which
+        /// disagree: a mean miss of 11–13 in from the catcher's target (COMMANDf/x, Driveline; glove drift inflates it) implies
+        /// ≈ 9–10 in per axis, Inside Edge's 58 % within ≈ 6 in implies ≈ 4.6 in (Docs/PITCH_EXECUTION.md).</summary>
+        public const double AverageAngleSigmaDeg = 0.7;
         /// <summary>Command scales the spread by 1 ∓ 35 % (0.39°–0.81° per axis; ASSUMED range — elite ≈ 4–5 in, poor ≈ 9 in).</summary>
         public const double CommandScale = 0.35;
         /// <summary>Familiarity (−50…+50) scales it a further ∓ 15 %.</summary>
         public const double FamiliarityScale = 0.15;
-        /// <summary>Arm-slot ellipse: horizontal and vertical errors correlate (a right-hander misses up-and-to-his-arm-side /
-        /// down-and-away, Shinya et al. 2017; sign mirrored for a left-hander). ASSUMED magnitude.</summary>
+        /// <summary>Arm-slot ellipse: horizontal and vertical errors correlate — a pitcher misses up-and-to-his-arm-side or
+        /// down-and-to-his-glove-side (Shinya et al. 2017). A right-hander's arm side is −X (third base): ρ &lt; 0 for him,
+        /// &gt; 0 for a left-hander. ASSUMED magnitude.</summary>
         public const double ArmSlotCorrelation = 0.3;
         /// <summary>A few pitches get away: with this probability the spread is <see cref="WildFactor"/> times larger (the
         /// heavy tail of misses beyond 18 in; ASSUMED share).</summary>
         public const double WildChance = 0.03, WildFactor = 2.2;
         /// <summary>Within-pitcher spread of speed (mph), spin rate (rpm) and spin axis (°): ≈ 1.0 mph, 70–90 rpm, 4° within a
         /// start (Statcast pitch-level data for one pitcher, DERIVED; Nasu 2021 spin SD 68 rpm).</summary>
-        public const double SpeedSigmaMph = 0.9, SpinSigmaRpm = 70.0, AxisSigmaDeg = 4.0;
+        public const double SpeedSigmaMph = 0.9, SpinSigmaRpm = 70.0;
+
+        /// <summary>Spin-axis spread (°) by type: ≈ 4° for fastballs (DERIVED, one pitcher), wider for the changeup (6°) and
+        /// breaking balls (8°; Statcast movement-based axis scatter is larger for them — ASSUMED values).</summary>
+        public static double AxisSigmaDeg(PitchType t) => t switch
+        {
+            PitchType.FourSeam or PitchType.Sinker => 4.0,
+            PitchType.Changeup => 6.0,
+            _ => 8.0,
+        };
         /// <summary>Fatigue (deliberately mild, ASSUMED): past 85 ± 25·r̂(Stamina) pitches the angle spread grows 0.5 % per
-        /// pitch (at most +25 %) and the speed drops 0.02 mph per pitch (at most 1.5 mph).</summary>
+        /// pitch (at most +25 %) and his speed drops 0.02 mph per pitch (at most 1.5 mph; in <see cref="PitcherPitch"/>).</summary>
         public static int FatigueThreshold(PlayerProfile pitcher) => (int)Math.Round(85.0 + 25.0 * RatingScale.Unit(pitcher.Ratings.Stamina));
 
         /// <summary>The per-axis release-angle spread (°) of <paramref name="pitcher"/> throwing <paramref name="type"/>
@@ -118,7 +135,7 @@ namespace Pitchlab.Gameplay.Hitting
 
         /// <summary>
         /// The pitch as executed from <paramref name="intended"/> (his pitch aimed at the target), with the deviates of
-        /// <paramref name="stream"/>: correlated release-angle errors, a speed error (and fatigue loss), spin-rate and
+        /// <paramref name="stream"/>: correlated release-angle errors (wider when tired), zero-mean speed, spin-rate and
         /// spin-axis errors. The physics of the returned input decides the location.
         /// </summary>
         public static PitchInput Execute(PitchInput intended, PlayerProfile pitcher, PitchType type, int pitchCount, ref SeedStream stream, out ExecutionError error)
@@ -126,11 +143,11 @@ namespace Pitchlab.Gameplay.Hitting
             double sigma = AngleSigmaDeg(pitcher, type, pitchCount);
             bool wild = stream.Unit() < WildChance;
             if (wild) sigma *= WildFactor;
-            double rho = pitcher.Throws == Hand.Left ? -ArmSlotCorrelation : ArmSlotCorrelation;
+            double rho = pitcher.Throws == Hand.Left ? ArmSlotCorrelation : -ArmSlotCorrelation;
             double z1 = stream.Normal(), z2 = stream.Normal();
             double dh = sigma * z1, dv = sigma * (rho * z1 + Math.Sqrt(1.0 - rho * rho) * z2);
-            double dSpeed = SpeedSigmaMph * stream.Normal() - FatigueSpeedLossMph(pitcher, pitchCount);
-            double dSpin = SpinSigmaRpm * stream.Normal(), dAxis = AxisSigmaDeg * stream.Normal();
+            double dSpeed = SpeedSigmaMph * stream.Normal();
+            double dSpin = SpinSigmaRpm * stream.Normal(), dAxis = AxisSigmaDeg(type) * stream.Normal();
             PitchInput p = intended;
             p.HorizontalAngleDegrees += dh;
             p.VerticalAngleDegrees += dv;
