@@ -21,17 +21,22 @@ namespace Pitchlab.Gameplay.Play
             out PitchInfo info, out ExecutionError? error)
         {
             if (game == null) throw new ArgumentNullException(nameof(game));
-            PlayerProfile pitcher = game.Pitcher, batter = game.Batter;
+            (double tx, double tz) = target is PitchTarget t ? PitchTargets.Point(t, game.Batter.ZoneBottom, game.Batter.ZoneTop) : (double.NaN, double.NaN);
+            return Create(game, type, tx, tz, executionVariance, environment, out info, out error);
+        }
+
+        /// <summary>The same aimed at a point (<paramref name="tx"/>, <paramref name="tz"/>) of the plate's front plane (m; NaN:
+        /// no target) — the CPU pitcher's locations (TASK-020).</summary>
+        public static HittingPitch Create(GameState game, PitchType type, double tx, double tz, bool executionVariance, EnvironmentState environment,
+            out PitchInfo info, out ExecutionError? error)
+        {
+            if (game == null) throw new ArgumentNullException(nameof(game));
+            PlayerProfile pitcher = game.Pitcher;
             bool rated = pitcher?.Repertoire != null;
             if (rated && !pitcher.Repertoire.Has(type)) throw new ArgumentException($"{pitcher.Name} does not throw a {type}.", nameof(type));
             int pitchCount = game.PitchCount(game.Fielding);
             PitchInput intended = rated ? PitchExecution.PitcherPitch(pitcher, type, pitchCount) : PitchPresets.All[(int)type];
-            double tx = double.NaN, tz = double.NaN;
-            if (target is PitchTarget t)
-            {
-                (tx, tz) = PitchTargets.Point(t, batter.ZoneBottom, batter.ZoneTop);
-                intended = PitchTargets.Aim(intended, tx, tz, environment);
-            }
+            if (!double.IsNaN(tx) && !double.IsNaN(tz)) intended = PitchTargets.Aim(intended, tx, tz, environment);
             else if (rated)
             {
                 // No target: where the type's preset itself goes (his speed, spin and side would move it otherwise).

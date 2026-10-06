@@ -280,12 +280,12 @@ namespace Pitchlab.Tests
         // ------------------------------------------------------------------ whole games
 
         // Seeds pinned to exercise each ending with the current rosters and simulator (regression pins — re-chosen when either
-        // changes; the seed drives the whole game): 4 visitors after nine, 54 home ahead after the top of the 9th, 1 a walk-off
-        // in the 9th, 3 a walk-off in the 10th (extra innings, asserted below).
-        [TestCase(4, "nine innings")]
-        [TestCase(54, "the home team leads after the top of the 9th")]
-        [TestCase(1, "walk-off")]
-        [TestCase(3, "walk-off")]
+        // changes; the seed drives the whole game): 5 visitors after nine, 2 home ahead after the top of the 9th, 10 a walk-off
+        // in the 9th, 20 a walk-off in the 11th (extra innings, asserted below).
+        [TestCase(5, "nine innings")]
+        [TestCase(2, "the home team leads after the top of the 9th")]
+        [TestCase(10, "walk-off")]
+        [TestCase(20, "walk-off")]
         public void ASimulatedGameIsAValidGame(int seed, string ending)
         {
             var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);   // the seed drives execution too
@@ -306,7 +306,7 @@ namespace Pitchlab.Tests
             Assert.IsTrue(g.IsOver, "it ends");
             GameResult r = g.Result;
             Assert.AreEqual(ending, r.Reason, "the seed's ending");
-            if (seed == 3) Assert.Greater(r.Inning, 9, "extra innings");
+            if (seed == 20) Assert.Greater(r.Inning, 9, "extra innings");
             Assert.AreEqual((g.AwayScore, g.HomeScore), (r.Away, r.Home));
             Assert.AreNotEqual(r.Away, r.Home, "never a tie");
             Assert.GreaterOrEqual(r.Inning, 9);

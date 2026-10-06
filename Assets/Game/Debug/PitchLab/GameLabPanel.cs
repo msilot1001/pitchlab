@@ -1,5 +1,6 @@
 using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Hitting;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -34,7 +35,7 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>The editor's screen area when open (GUI coordinates, origin top-left): clicks there are not swings.</summary>
-        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 400) : Rect.zero;
+        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 430) : Rect.zero;
 
         private void Update()
         {
@@ -59,6 +60,21 @@ namespace Pitchlab.Sandbox
                 : double.IsNaN(plan.DecisionTime) || _lab.SimTime < plan.DecisionTime ? "watching…"
                 : $"{(plan.Swing ? "SWING" : "TAKE")} · saw ({plan.PredictedX * 39.37:F0}, {plan.PredictedZ * 39.37:F0}) in · strike {plan.StrikeBelief:P0} · swing {plan.SwingChance:P0}";
             GUILayout.Label($"CPU batter (B): {cpu}");
+            // The CPU pitcher (TASK-020, P): his intent and reason, and — once the pitch is over, so it never tells the hitter
+            // where it is going — how the execution missed it (from the pitch record, computed at the throw).
+            if (_lab.LastDecision is PitchDecision call && _lab.CurrentPitch != null)
+            {
+                PitchInfo info = _lab.CurrentPitchInfo;
+                (double x, double z) = (info.PlateX, info.PlateZ);
+                string miss = "";
+                if (!double.IsNaN(x) && _lab.PitchPitcher != null && _lab.SimTime >= _lab.CurrentPitch.Flight.Final.Time)
+                {
+                    double dx = x - call.TargetX, dz = z - call.TargetZ, armSide = _lab.PitchPitcher.Throws == Hand.Right ? -dx : dx;
+                    miss = $" · missed {System.Math.Sqrt(dx * dx + dz * dz) * 39.37:F1} in {(armSide >= 0 ? "arm" : "glove")}-side, {(dz >= 0 ? "up" : "down")}";
+                }
+
+                GUILayout.Label($"CPU pitcher: {call.Type} {call.Location} ({call.Intent}) · {call.Reason}{miss}");
+            }
             GUI.enabled = !_lab.EditorLocked;
             int inning = game.Inning, outs = game.Outs, away = game.AwayScore, home = game.HomeScore;
             Half half = game.Half;
