@@ -179,6 +179,7 @@ namespace Pitchlab.Sandbox
         public static string EndText(PlateAppearance pa) => pa.End switch
         {
             PlateAppearanceEnd.Walk => "WALK",
+            PlateAppearanceEnd.HitByPitch => "HIT BY PITCH",
             PlateAppearanceEnd.Strikeout => "STRIKEOUT",
             PlateAppearanceEnd.InPlay => pa.PlayResult is PlayResultKind k ? PlayResults.DescribeUpper(k) : "IN PLAY",
             _ => string.Empty,

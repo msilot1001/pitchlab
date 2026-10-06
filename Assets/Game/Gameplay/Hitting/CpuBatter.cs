@@ -44,7 +44,8 @@ namespace Pitchlab.Gameplay.Hitting
         public double SwingStart { get; internal set; } = double.NaN;
         /// <summary>When he decided (s after release; NaN if he never got to decide — then he took).</summary>
         public double DecisionTime { get; internal set; } = double.NaN;
-        /// <summary>The latest instant of the ball's flight he had seen when his last event was made (s).</summary>
+        /// <summary>The latest instant of the ball's flight he had seen when his last event was made — or, during a swing, his
+        /// last look deciding whether to check it (s).</summary>
         public double LastObservation { get; internal set; } = double.NaN;
         /// <summary>At the decision: where he expected the pitch to cross the front of the plate (m) and to reach the contact
         /// plane (s), how sure he was it is a strike, and his chance of swinging.</summary>
@@ -53,6 +54,8 @@ namespace Pitchlab.Gameplay.Hitting
         public double PredictedContactTime { get; internal set; } = double.NaN;
         public double StrikeBelief { get; internal set; } = double.NaN;
         public double SwingChance { get; internal set; } = double.NaN;
+        /// <summary>When he tried to stop the swing (TASK-024; NaN: he did not) — only ever before the offer point.</summary>
+        public double CheckTime { get; internal set; } = double.NaN;
 
         /// <summary>The PCI (contact-plane m) at <paramref name="time"/>: the latest placement at or before it.</summary>
         public (double X, double Z) PciAt(double time)
@@ -70,7 +73,7 @@ namespace Pitchlab.Gameplay.Hitting
             {
                 if (!Swing) return null;
                 (double x, double z) = PciAt(SwingStart);
-                return new SwingInput(SwingStart, x, z);
+                return new SwingInput(SwingStart, x, z, CheckTime);
             }
         }
     }
@@ -189,9 +192,29 @@ namespace Pitchlab.Gameplay.Hitting
                 Vector3d p = ballAt(seen);
                 double d = (p - Eye).Length, sigma = noise * d, sigmaDepth = DepthScale * noise * d * d / (2.0 * BallProperties.Baseball.Radius);
                 Vector3d look = p + new Vector3d(sigma * stream.Normal(), sigmaDepth * stream.Normal(), sigma * stream.Normal());
-                if (look.Y < contactPlaneY || (plan.Swing && now > plan.SwingStart)) break;   // past him, or the swing is under way
+                if (look.Y < contactPlaneY) break;   // past him
+                bool swinging = plan.Swing && now > plan.SwingStart;
+                if (swinging && now > plan.SwingStart + swing.SwingDuration - SwingInput.OfferLead) break;   // past the offer: the swing goes on
                 fit.Add(seen, look, sigma, sigmaDepth);
                 if (fit.Count < MinSamples || !fit.Solve()) continue;
+                if (swinging)
+                {
+                    // The swing is under way and can still be stopped (TASK-024): he checks it when a pitch he swung at as a
+                    // strike now looks clearly a ball. A chase (he swung though he judged it a ball) is not reconsidered.
+                    double plate = fit.TimeAtY(PitchingGeometry.PlateFrontY, seen);
+                    if (double.IsNaN(plate)) continue;
+                    Vector3d seenAt = fit.At(plate);
+                    double strikeNow = StrikeBelief(seenAt.X, seenAt.Z, batter, r);
+                    plan.LastObservation = seen;   // this look decides whether he checks
+                    if (plan.StrikeBelief >= 0.5 && strikeNow < CheckBelief)
+                    {
+                        plan.CheckTime = now;
+                        break;
+                    }
+
+                    continue;
+                }
+
                 double contactTime = fit.TimeAtY(contactPlaneY, seen);
                 if (double.IsNaN(contactTime)) continue;   // no usable path yet
                 Vector3d atContact = fit.At(contactTime);
@@ -218,7 +241,7 @@ namespace Pitchlab.Gameplay.Hitting
                 Vector3d atPlate = fit.At(fit.TimeAtY(PitchingGeometry.PlateFrontY, seen));
                 if (double.IsNaN(atPlate.X)) break;   // no prediction at the plate: he takes
                 double edge = SignedZoneDistance(atPlate.X, atPlate.Z, batter.ZoneBottom, batter.ZoneTop);
-                double strike = 1.0 / (1.0 + Math.Exp(-1.702 * edge / JudgementSigma(r)));   // logistic ≈ normal CDF
+                double strike = StrikeBelief(atPlate.X, atPlate.Z, batter, r);
                 double chase = Math.Min(1.0, ChaseSwingRate(count, r) * ChaseScale * Math.Exp(-Math.Max(0.0, -edge) / ChaseFalloff));
                 plan.DecisionTime = now;
                 plan.PredictedX = atPlate.X;
@@ -233,6 +256,15 @@ namespace Pitchlab.Gameplay.Hitting
 
             return plan;
         }
+
+        /// <summary>He checks a swing he committed to as a strike when his strike belief falls below this (TASK-024; TUNED:
+        /// a clear ball, ≈ 4 cm outside for an average eye).</summary>
+        public const double CheckBelief = 0.1;
+
+        /// <summary>How sure he is that a pitch he expects at (<paramref name="x"/>, <paramref name="z"/>) is a strike:
+        /// logistic ≈ the normal CDF of its distance inside the zone over his judgement σ.</summary>
+        private static double StrikeBelief(double x, double z, PlayerProfile batter, PlayerRatings r) =>
+            1.0 / (1.0 + Math.Exp(-1.702 * SignedZoneDistance(x, z, batter.ZoneBottom, batter.ZoneTop) / JudgementSigma(r)));
 
         /// <summary>Distance (m) from the edge of the zone (widened by the ball's radius, as the call): + inside, − outside.</summary>
         public static double SignedZoneDistance(double x, double z, double bottom, double top)

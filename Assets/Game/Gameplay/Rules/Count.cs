@@ -2,17 +2,22 @@ using System;
 
 namespace Pitchlab.Gameplay.Rules
 {
-    /// <summary>What one pitch did (TASK-012). Hit-by-pitch, check swings and bunts are not modelled; the catcher always
-    /// holds strike three (no dropped third strike, OBR 5.05(a)(2)).</summary>
+    /// <summary>What one pitch did (TASK-012; hit by pitch and foul tips TASK-024 — a checked swing is a take). Bunts are not
+    /// modelled; the catcher always holds strike three (no dropped third strike, OBR 5.05(a)(2)).</summary>
     public enum PitchOutcome
     {
         Ball,
         CalledStrike,
         SwingingStrike,
-        /// <summary>A batted ball that ends foul (no foul catches or foul tips into the catcher's glove are modelled).</summary>
+        /// <summary>A batted ball that ends foul (no foul fly catches are modelled).</summary>
         Foul,
         /// <summary>A fair ball (in play or out of the park): the play decides the plate appearance.</summary>
         InPlay,
+        /// <summary>The pitch touched the batter, who did not swing, outside the strike zone: first base (OBR 5.05(b)(2)).</summary>
+        HitByPitch,
+        /// <summary>Sharp and direct from the bat into the catcher's glove, caught: a strike, strike three included
+        /// (Definitions, "Foul tip"; 5.09(a)(2)).</summary>
+        FoulTip,
     }
 
     /// <summary>How a pitch ended the plate appearance, if it did.</summary>
@@ -22,6 +27,7 @@ namespace Pitchlab.Gameplay.Rules
         Walk,
         Strikeout,
         InPlay,
+        HitByPitch,
     }
 
     /// <summary>The ball/strike count of a plate appearance.</summary>
@@ -53,18 +59,21 @@ namespace Pitchlab.Gameplay.Rules
                     return Balls + 1 == BallsForWalk ? (default, PlateAppearanceEnd.Walk) : (new Count(Balls + 1, Strikes), PlateAppearanceEnd.None);
                 case PitchOutcome.CalledStrike:
                 case PitchOutcome.SwingingStrike:
+                case PitchOutcome.FoulTip:
                     return Strikes + 1 == StrikesForOut ? (default, PlateAppearanceEnd.Strikeout) : (new Count(Balls, Strikes + 1), PlateAppearanceEnd.None);
                 case PitchOutcome.Foul:
                     return (new Count(Balls, Math.Min(Strikes + 1, StrikesForOut - 1)), PlateAppearanceEnd.None);
                 case PitchOutcome.InPlay:
                     return (default, PlateAppearanceEnd.InPlay);
+                case PitchOutcome.HitByPitch:
+                    return (default, PlateAppearanceEnd.HitByPitch);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(pitch));
             }
         }
 
         /// <summary>
-        /// The bases after a walk: the batter to first and every forced runner up one base (OBR 5.05(b)(1), 5.06(b)(3)(B)); with the bases
+        /// The bases after a walk (or a hit by pitch, OBR 5.05(b)(2)): the batter to first and every forced runner up one base (OBR 5.05(b)(1), 5.06(b)(3)(B)); with the bases
         /// loaded the runner on third scores (<paramref name="runs"/> = 1).
         /// </summary>
         public static BaseOccupancy Walk(BaseOccupancy before, out int runs)

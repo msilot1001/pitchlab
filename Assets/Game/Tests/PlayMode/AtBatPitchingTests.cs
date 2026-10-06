@@ -307,6 +307,38 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheCpuBattersCheckedSwingIsATakeInTheLab()
+        {
+            yield return null;
+            // TASK-024: CPU vs CPU until the CPU batter checks a swing. Coarse frames (0.25 s), so his swing and its check fall
+            // due in the same update: the swing's play is computed at the press and must be withdrawn by the check.
+            _lab.ExecutionVariance = true;
+            _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 31));
+            _lab.Mode = HittingLabController.LabMode.CpuVsCpu;
+            double start = _now;
+            int thrown = _lab.PitchesThrown;
+            BatterPlan checkedPlan = null;
+            while (checkedPlan == null && _now < start + 6000.0)
+            {
+                if (_lab.Game.IsOver) _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 31 + _lab.PitchesThrown));
+                Frame(_now + 0.25);
+                if (_lab.PitchesThrown != thrown && _lab.LastBatterPlan != null && !double.IsNaN(_lab.LastBatterPlan.CheckTime)) checkedPlan = _lab.LastBatterPlan;
+                thrown = _lab.PitchesThrown;
+            }
+
+            Assert.IsNotNull(checkedPlan, "a checked swing within the run");
+            int completed = _lab.Game.Completed.Sum(pa => pa.Pitches.Count) + _lab.Game.Current.Pitches.Count;
+            while (ReferenceEquals(_lab.LastBatterPlan, checkedPlan) && _lab.LastOutcome == null) Frame(_now + 0.25);
+            Assert.AreSame(checkedPlan, _lab.LastBatterPlan, "the same pitch");
+            Assert.AreEqual(ContactOutcome.CheckedSwing, _lab.LastResult.Value.Outcome);
+            Assert.AreEqual(checkedPlan.CheckTime, _lab.LastSwing.Value.CheckTime, 1e-12);
+            Assert.IsNull(_lab.LastLive, "no play");
+            Assert.IsNull(_lab.LastBattedBall);
+            Assert.That(_lab.LastOutcome, Is.EqualTo(PitchOutcome.Ball).Or.EqualTo(PitchOutcome.CalledStrike).Or.EqualTo(PitchOutcome.HitByPitch), "a take");
+            Assert.AreEqual(completed + 1, _lab.Game.Completed.Sum(pa => pa.Pitches.Count) + _lab.Game.Current.Pitches.Count, "recorded once");
+        }
+
+        [UnityTest]
         public IEnumerator TheModeSetsWhoPlays()
         {
             yield return null;

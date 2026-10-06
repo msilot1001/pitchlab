@@ -83,6 +83,48 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheCheckButtonStopsTheSwingOnlyBeforeTheOffer()
+        {
+            // TASK-024: C / East during the swing. Before the offer point: no swing — the swing that would have hit the ball
+            // and its play are withdrawn; after it: too late, the swing (and its contact) stands.
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            double RealtimeAt(double simTime) => now + (simTime - _lab.ToSimTime(now));   // playback speed 1
+            foreach (bool inTime in new[] { true, false })
+            {
+                _lab.PressSwingButton(now);                                     // throw
+                HittingPitch pitch = _lab.CurrentPitch;
+                now = RealtimeAt(pitch.IdealContactTime - _lab.Swing.SwingDuration);
+                _lab.SetPci(pitch.IdealContactState.Position.X, pitch.IdealContactState.Position.Z);
+                _lab.PressSwingButton(now);                                     // a swing on time, at the ball
+                ContactResult swung = _lab.LastResult.Value;
+                Assert.IsTrue(swung.IsContact, "the swing would hit it");
+                double offer = _lab.LastSwing.Value.OfferTime(_lab.Swing.SwingDuration);
+                _lab.PressCheckButton(RealtimeAt(inTime ? offer - 0.005 : offer + 0.005));
+                if (inTime)
+                {
+                    Assert.AreEqual(ContactOutcome.CheckedSwing, _lab.LastResult.Value.Outcome, "stopped in time");
+                    Assert.AreEqual(offer - 0.005, _lab.LastSwing.Value.CheckTime, 1e-9);
+                    Assert.IsNull(_lab.LastLive, "no play");
+                    Assert.IsNull(_lab.LastPlay);
+                    Assert.IsNull(_lab.LastBattedBall);
+                    Assert.IsFalse(_lab.LastFoulTip);
+                    _lab.PressCheckButton(RealtimeAt(offer - 0.002));
+                    Assert.AreEqual(offer - 0.005, _lab.LastSwing.Value.CheckTime, 1e-9, "one check");
+                }
+                else
+                {
+                    Assert.AreEqual(swung.Outcome, _lab.LastResult.Value.Outcome, "too late: the swing stands");
+                    Assert.IsTrue(_lab.LastResult.Value.IsContact);
+                    Assert.IsTrue(double.IsNaN(_lab.LastSwing.Value.CheckTime));
+                }
+
+                yield return null;
+                now += 3.0;                                                     // the outcome shown; ready for the next pitch
+            }
+        }
+
+        [UnityTest]
         public IEnumerator PressDuringTheWindupIsIgnored()
         {
             // Wind-up policy B: a press before release can never connect (contact is ~0.4 s after release), so it is

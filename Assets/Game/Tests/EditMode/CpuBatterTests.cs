@@ -127,8 +127,11 @@ namespace Pitchlab.Tests
             return CpuBatter.Plan(ballAt, batter, count, SwingParameters.For(batter), pitch.ContactPlaneY, ref stream);
         }
 
+        private static string DescribeSwing(BatterPlan p) =>
+            $"{p.Swing} {p.SwingStart:R} {p.DecisionTime:R} {p.PredictedX:R} {p.PredictedZ:R} {p.Input?.PciX:R} {p.Input?.PciZ:R}";
+
         private static string Describe(BatterPlan p) =>
-            $"{p.Swing} {p.SwingStart:R} {p.DecisionTime:R} {p.PredictedX:R} {p.PredictedZ:R} " + string.Join(";", System.Linq.Enumerable.Select(p.Aim, e => $"{e.Time:R},{e.X:R},{e.Z:R}"));
+            $"{p.Swing} {p.SwingStart:R} {p.CheckTime:R} {p.DecisionTime:R} {p.PredictedX:R} {p.PredictedZ:R} " + string.Join(";", System.Linq.Enumerable.Select(p.Aim, e => $"{e.Time:R},{e.X:R},{e.Z:R}"));
 
         private static List<(HittingPitch Pitch, Count Count)> _set;
         private static List<(HittingPitch Pitch, Count Count)> Set => _set ??= PitchSet();
@@ -176,7 +179,9 @@ namespace Pitchlab.Tests
                     return CpuBatter.Observe(pitch)(t);
                 };
                 BatterPlan plan = Plan(watched, pitch, b, new Count(1, 1), k);
-                double lastEvent = plan.Swing ? plan.SwingStart : plan.Aim[plan.Aim.Count - 1].Time;
+                // A swing's last event is its check, or (no check) the offer point — the last moment one could come (TASK-024).
+                double lastEvent = !plan.Swing ? plan.Aim[plan.Aim.Count - 1].Time
+                    : !double.IsNaN(plan.CheckTime) ? plan.CheckTime : plan.SwingStart + SwingParameters.For(b).SwingDuration - SwingInput.OfferLead;
                 Assert.LessOrEqual(plan.LastObservation, lastEvent, "a look precedes the event it informs");
                 Assert.LessOrEqual(latest, plan.LastObservation + CpuBatter.Tick + 1e-12, "at most one look past his last event (the one that ends his watching)");
                 Func<double, Vector3d> otherFuture = t => CpuBatter.Observe(pitch)(t) + (t > plan.LastObservation ? new Vector3d(1.0, -2.0, 1.0) : Vector3d.Zero);
@@ -184,7 +189,18 @@ namespace Pitchlab.Tests
                 // The future differs from just after the last look that produced an event; later looks (after the swing
                 // started, or past him) may be made but change nothing.
                 Assert.AreEqual(Describe(plan), Describe(replay), $"pitch {k}");
-                Assert.Less(plan.LastObservation, pitch.IdealContactTime - 0.15, "he commits well before the ball arrives");
+                if (plan.Swing)
+                {
+                    Assert.Less(plan.DecisionTime, pitch.IdealContactTime - 0.1, "he commits well before the ball arrives");
+                    double offer = plan.SwingStart + SwingParameters.For(b).SwingDuration - SwingInput.OfferLead;
+                    Assert.LessOrEqual(plan.LastObservation + CpuBatter.Latency(b.Ratings), offer + 1e-12, "he stops watching for a check by the offer point");
+                    // The swing itself (its start and the PCI at the press — he aims until he presses) uses nothing seen after the
+                    // press: another future from then on changes at most whether he checks.
+                    double pressLook = plan.SwingStart - CpuBatter.Latency(b.Ratings);
+                    Func<double, Vector3d> afterDecision = t => CpuBatter.Observe(pitch)(t) + (t > pressLook + 1e-9 ? new Vector3d(1.0, -2.0, 1.0) : Vector3d.Zero);
+                    BatterPlan swingReplay = Plan(afterDecision, pitch, b, new Count(1, 1), k);
+                    Assert.AreEqual(DescribeSwing(plan), DescribeSwing(swingReplay), $"pitch {k}: the swing");
+                }
                 if (plan.Swing) swings++;
             }
 

@@ -13,6 +13,8 @@ namespace Pitchlab.Gameplay.Hitting
         MissOffBarrel,
         /// <summary>Bat and ball touch but are not approaching along the line of centres (grazing): no batted ball.</summary>
         MissGlancing,
+        /// <summary>Stopped before the offer point (TASK-024): no swing — the pitch is called as a take.</summary>
+        CheckedSwing,
         NoPitch,
         /// <summary>Non-finite swing time or PCI.</summary>
         InvalidInput,
@@ -31,16 +33,35 @@ namespace Pitchlab.Gameplay.Hitting
     /// <summary>The player's swing: when it started (simulation seconds since release) and where the PCI was.</summary>
     public readonly struct SwingInput
     {
+        /// <summary>
+        /// The offer point (TASK-024): a swing stopped this long (s) or more before its contact time is no swing. No rule
+        /// defines the offer; umpires judge whether the bat head passed the front of the plate — with the 150 ms swing, about
+        /// its last 60 ms (ASSUMED). A check after it is too late: the swing goes on.
+        /// </summary>
+        public const double OfferLead = 0.060;
+
         public readonly double StartTime;
         /// <summary>PCI centre in the contact plane: X (catcher's view, + = first base) and Z (height), metres.</summary>
         public readonly double PciX, PciZ;
+        /// <summary>When the batter tried to stop the swing (s after release; NaN: he did not).</summary>
+        public readonly double CheckTime;
 
-        public SwingInput(double startTime, double pciX, double pciZ)
+        public SwingInput(double startTime, double pciX, double pciZ, double checkTime = double.NaN)
         {
             StartTime = startTime;
             PciX = pciX;
             PciZ = pciZ;
+            CheckTime = checkTime;
         }
+
+        /// <summary>The same swing, checked at <paramref name="time"/>.</summary>
+        public SwingInput CheckedAt(double time) => new SwingInput(StartTime, PciX, PciZ, time);
+
+        /// <summary>The latest check that still stops a swing of <paramref name="swingDuration"/> before the offer.</summary>
+        public double OfferTime(double swingDuration) => StartTime + swingDuration - OfferLead;
+
+        /// <summary>Whether the swing was stopped in time: no swing (a take).</summary>
+        public bool IsChecked(double swingDuration) => CheckTime <= OfferTime(swingDuration);
     }
 
     public readonly struct ContactResult
@@ -101,6 +122,7 @@ namespace Pitchlab.Gameplay.Hitting
 
             double contactTime = swing.StartTime + p.SwingDuration;
             double timingError = contactTime - pitch.IdealContactTime;
+            if (swing.IsChecked(p.SwingDuration)) return new ContactResult(ContactOutcome.CheckedSwing, timingError, double.NaN, double.NaN, 0.0, default);
             // Too early/late, or later than the recorded flight (the ball is already on the ground or past the catcher).
             if (!(Math.Abs(timingError) <= p.MaxTimingError) || contactTime > pitch.Flight.Final.Time)
                 return new ContactResult(ContactOutcome.MissTiming, timingError, double.NaN, double.NaN, 0.0, default);
