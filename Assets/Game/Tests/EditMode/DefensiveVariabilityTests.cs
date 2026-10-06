@@ -327,6 +327,23 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void ARunnerOverrunningFirstStillGetsTheAward()
+        {
+            // The ball goes out while the batter-runner overruns first: he walks back, then takes his two bases — third.
+            BallInPlay ball = Hit(95.0, -10.0, 24.0, -900.0);   // the FieldingLab's "1B ranges right: safe at 1B"
+            LivePlay probe = Play(ball, PlayPersonnel.Standard, null);
+            double touch = probe.Log.First(e => e.Text.Contains("batter-runner touches 1B")).Time;
+            var live = new LivePlay(probe.Fielding, probe.Situation, personnel: probe.Personnel);
+            double t = touch + 0.15;
+            live.AdvanceTo(t);
+            Assert.AreEqual(RunnerPhase.Overrunning, live.RunnerOf(Runner.Batter).Phase, "overrunning when the ball goes out");
+            typeof(LivePlay).GetMethod("OnBallOutOfPlay", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                .Invoke(live, new object[] { t, 2 });
+            live.RunToEnd();
+            Assert.AreEqual(new BaseOccupancy(false, false, true), live.ResultingBases());
+        }
+
+        [Test]
         public void SimulatedGamesLabelTheirMisplays()
         {
             var g = new GameState(Gameplay.Players.GenericRosters.Away(), Gameplay.Players.GenericRosters.Home(), 7);

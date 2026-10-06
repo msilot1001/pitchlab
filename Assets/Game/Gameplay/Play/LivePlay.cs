@@ -701,7 +701,21 @@ namespace Pitchlab.Gameplay.Play
             _scheduled.RemoveAll(s => s.Name.StartsWith(DefensePrefix, StringComparison.Ordinal));   // nothing more to do with a dead ball
             Note(t, PlayLogKind.Decision, null, null, null, bases == 4 ? "OVER THE FENCE OFF THE GLOVE: HOME RUN" : "BALL OUT OF PLAY: two bases");
             foreach (LiveRunner r in _runners)
-                if (!r.IsDone) Apply(r, new Intent(IntentKind.Go, AwardedBase(r.LastTouched, bases), true), t);
+                if (!r.IsDone) Award(r, AwardedBase(r.LastTouched, bases), t);
+        }
+
+        /// <summary>Sends <paramref name="r"/> to his awarded base — once he can go: a batter-runner overrunning first walks back
+        /// first, a runner returning to retouch gets back first (checked every 0.1 s).</summary>
+        private void Award(LiveRunner r, Base to, double t)
+        {
+            if (r.IsDone) return;
+            if (r.Phase == RunnerPhase.Overrunning || r.MustRetouch)
+            {
+                Schedule(t + 0.1, () => Award(r, to, _now), $"{r.Id} awaits his award");
+                return;
+            }
+
+            Apply(r, new Intent(IntentKind.Go, to, true), t);
         }
 
         /// <summary>The ball left the field after a misplay: dead, runners advancing on the award (TASK-021).</summary>

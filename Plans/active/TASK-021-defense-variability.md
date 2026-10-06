@@ -75,3 +75,5 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
 
   Not changed: a two-base out-of-play award after a misplay is classified by where the batter ends, not as a ground-rule
   double (OBR: that is a fair ball bouncing over the fence). This is documented and tested.
+- [x] Codex round 5: C — fixed: an overrunning or retouching runner still receives the out-of-play award (it waits until he
+  can go), with a live-state test. Codex accepted the classification of a two-base award by the batter's final base.
