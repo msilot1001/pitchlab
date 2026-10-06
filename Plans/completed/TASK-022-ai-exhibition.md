@@ -33,4 +33,5 @@ Claude Code (sole writer); Unity and test reviewers and Codex read-only.
   - matchup guards with margins, plus a defense guard; caps on the known discrepancies;
   - a full F-cycle and behavioural mode test;
   - doc wording.
-- [ ] Merge; final regression.
+- [x] Codex round 2: B — fixed: a pending mode change (pitcher or batter) is noted on the HUD. check.sh green (EditMode
+  699 passed, 6 skipped; PlayMode 103/103). Merged.

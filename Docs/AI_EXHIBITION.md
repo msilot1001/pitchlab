@@ -15,8 +15,8 @@ The player attributes and gameplay AI of TASK-017–021 come together in the Gam
 | Manual | pitching and batting (the pre-AI sandbox) | — | gameplay |
 
 The mode only sets the two existing switches (`AutoPitch`, `CpuBatting`); the rules are unchanged. The HUD shows the mode.
-A switch during a pitch changes the batter from the next pitch, and the HUD says so; the pitcher switch acts on the next
-throw.
+A switch during a pitch takes effect from the next pitch, for the pitcher and for the batter. The pitch on screen is
+finished as it was thrown, and the HUD says so.
 The situation editor shows the AI debug view:
 - the batter's ratings, and the pitcher's;
 - the CPU batter's decision, prediction, strike belief and swing chance, once he has made it;

@@ -178,8 +178,10 @@ namespace Pitchlab.Sandbox
             _ => "MANUAL — you pitch and bat  (F / Select)",
         };
 
-        /// <summary>The batter changes with the next pitch: the current one is still batted by whoever was batting it.</summary>
-        public bool BatterChangePending => CurrentPitch != null && CpuBatting != (LastBatterPlan != null) && StateAt(Clock()) != BattingState.Ready;
+        /// <summary>The mode changed during a pitch: the pitch on screen is still pitched and batted as it was thrown; the new
+        /// mode plays from the next pitch.</summary>
+        public bool ModeChangePending => CurrentPitch != null && StateAt(Clock()) != BattingState.Ready
+            && (CpuBatting != (LastBatterPlan != null) || (AutoPitch && Game?.Pitcher?.Repertoire != null) != LastDecision.HasValue);
 
         /// <summary>
         /// The CPU batter (TASK-019, GameLab; B): he bats instead of the player — his aim and swing events enter the same
