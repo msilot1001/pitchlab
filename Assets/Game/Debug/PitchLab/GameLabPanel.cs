@@ -17,6 +17,9 @@ namespace Pitchlab.Sandbox
         [SerializeField] private HittingLabController _lab;
         [SerializeField] private bool _showEditor;
 
+        private static readonly HittingLabController.LabMode[] Modes =
+            { HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.CpuVsCpu, HittingLabController.LabMode.Manual };
+
         private void Awake()
         {
             GameHud hud = GetComponent<GameHud>();
@@ -56,7 +59,7 @@ namespace Pitchlab.Sandbox
             if (pitcher != null) GUILayout.Label($"{pitcher.Name}: Vel {pitcher.Ratings.Velocity} Cmd {pitcher.Ratings.Command} Mov {pitcher.Ratings.Movement} Sta {pitcher.Ratings.Stamina}");
             // The mode (TASK-022).
             GUILayout.BeginHorizontal();
-            foreach (HittingLabController.LabMode m in new[] { HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.CpuVsCpu, HittingLabController.LabMode.Manual })
+            foreach (HittingLabController.LabMode m in Modes)
                 if (GUILayout.Toggle(_lab.Mode == m, m == HittingLabController.LabMode.HumanBatting ? "Bat" : m == HittingLabController.LabMode.HumanPitching ? "Pitch" : m == HittingLabController.LabMode.CpuVsCpu ? "CPU v CPU" : "Manual", GUI.skin.button) && _lab.Mode != m)
                     _lab.Mode = m;
             GUILayout.EndHorizontal();

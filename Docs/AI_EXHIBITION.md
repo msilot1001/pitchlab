@@ -6,7 +6,7 @@ The player attributes and gameplay AI of TASK-017–021 come together in the Gam
 - the CPU batter (Docs/BATTER_AI.md);
 - defensive execution (Docs/DEFENSIVE_VARIABILITY.md).
 
-## Modes (GameLab; F cycles, or the situation editor's buttons, G)
+## Modes (GameLab; F or the gamepad's Select cycles them, or the situation editor's buttons, G)
 | Mode | Human | CPU | Defense / runners |
 |---|---|---|---|
 | Human batting | PCI and swing | pitcher (calls, executed pitches) | gameplay |
@@ -15,6 +15,8 @@ The player attributes and gameplay AI of TASK-017–021 come together in the Gam
 | Manual | pitching and batting (the pre-AI sandbox) | — | gameplay |
 
 The mode only sets the two existing switches (`AutoPitch`, `CpuBatting`); the rules are unchanged. The HUD shows the mode.
+A switch during a pitch changes the batter from the next pitch, and the HUD says so; the pitcher switch acts on the next
+throw.
 The situation editor shows the AI debug view:
 - the batter's ratings, and the pitcher's;
 - the CPU batter's decision, prediction, strike belief and swing chance, once he has made it;
@@ -31,9 +33,11 @@ chain:
 6. `GameState`.
 
 There is no stand-in result generator. A PlayMode test (`CpuVsCpuPlaysAHalfInningOnTheProductionPath`) plays a whole half
-inning in the GameLab with rendered frames.
+inning in the GameLab. The test clock advances in 0.1 s steps, updating the lab and its presentation, and every pitch of
+the half must be a CPU call batted by the CPU, with at least one ball in play.
 
 ## Statistical sanity (30 games, standard rosters, seeds 1001–1030; regression check, not calibration)
+Regenerate with `Pitchlab.Tests.ExhibitionSanityTests.Report(30, 12)` (EditMode assembly, e.g. through an Editor eval).
 | | Sim | MLB 2024–25 (approx.) | Verdict |
 |---|---|---|---|
 | Runs per game (both teams) | 15.9 | ≈ 9 | too high |
@@ -53,7 +57,7 @@ vertically, for an average hitter: the aim and perception errors are TUNED for c
   Statcast EV/LA distributions. This was deliberately not tuned in this milestone.
 - The low strikeout rate has the same root: Z-Contact is close to MLB, but too few weak swings miss.
 
-## Archetype matchups (12 games each; the line of the side at bat — one team per game)
+## Archetype matchups (12 games each; the line of the side at bat — one team per game; its misplays are the defense's it faced)
 | Matchup | R/g | BB % | K % | HR/g | misplays/g |
 |---|---|---|---|---|---|
 | power pitcher vs contact hitters | 9.3 | 12.9 | 11.3 | 3.50 | 1.08 |
@@ -66,16 +70,22 @@ vertically, for an average hitter: the aim and perception errors are TUNED for c
 | balanced hitters vs poor defense | 9.0 | 13.2 | 14.9 | 4.42 | 1.08 |
 
 Directions are sensible:
-- free swingers strike out twice as often as contact hitters;
+- free swingers strike out ≈ 1.5–2× as often as contact hitters;
 - a poor-command pitcher walks patient hitters almost five times as often as a command pitcher;
 - power hitters hit more home runs off a wild pitcher than contact hitters;
 - a poor defense misplays 2.6× as often as an elite one, though runs differ little because home runs dominate scoring.
 
 The poor-command pitcher's walk rate (≈ 25–31 %) is extreme: command 15 is beyond any MLB starter.
-`ExhibitionSanityTests` guards two directions (walks by command, strikeouts by hitter type) and broad bounds on a standard
-game.
+`ExhibitionSanityTests` guards with margins:
+- walks by command (more than 2×);
+- strikeouts by hitter type (more than 1.3×; a 10-game sample gives 15.1 % vs 22.5 %, so the report's 2.2× is partly a
+  favourable sample);
+- misplays by defense.
 
-## Performance (per event, Editor, Apple silicon)
+It also bounds a standard game broadly and caps the known discrepancies (runs, home runs), so they cannot get worse
+unnoticed.
+
+## Performance (one-off Editor measurements, Apple silicon, per event)
 | | Cost |
 |---|---|
 | CPU pitcher's call | ≈ 1 µs |

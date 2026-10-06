@@ -104,8 +104,8 @@ namespace Pitchlab.Gameplay.Players
                 Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, archetype), repertoire);
 
         /// <summary>
-        /// A uniform team (TASK-022 matchups): nine hitters of one batting archetype and one defence, average runners, hands
-        /// alternating left and right, every position filled (the ninth a designated hitter), and <paramref name="pitcher"/>.
+        /// A uniform team (TASK-022 matchups): nine hitters of one batting archetype and one defence, average runners, batting
+        /// sides alternating left and right (all throw right), every position filled (the ninth a designated hitter), and <paramref name="pitcher"/>.
         /// </summary>
         public static Team Uniform(string team, string prefix, Batting batting, Defense defense, PlayerProfile pitcher)
         {

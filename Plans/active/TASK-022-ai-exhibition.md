@@ -25,4 +25,12 @@ Claude Code (sole writer); Unity and test reviewers and Codex read-only.
 ## Milestones
 - [x] Modes, uniform teams, sanity harness, tests.
 - [x] Sanity sample, matchups, performance, runtime walkthrough (Docs/AI_EXHIBITION.md).
-- [ ] check.sh; reviews (Unity, test); Codex; merge; final regression.
+- [x] Reviews (Unity, test) and Codex B fixed:
+  - the half-inning test asserts that every pitch is a CPU call batted by the CPU, and a ball in play;
+  - the HUD notes a pending batter change;
+  - the gamepad's Select cycles the mode;
+  - no per-frame label allocations;
+  - matchup guards with margins, plus a defense guard; caps on the known discrepancies;
+  - a full F-cycle and behavioural mode test;
+  - doc wording.
+- [ ] Merge; final regression.

@@ -172,11 +172,14 @@ namespace Pitchlab.Sandbox
 
         public static string Describe(LabMode m) => m switch
         {
-            LabMode.HumanBatting => "HUMAN BATTING · CPU pitcher",
-            LabMode.HumanPitching => "HUMAN PITCHING · CPU batter",
-            LabMode.CpuVsCpu => "CPU vs CPU",
-            _ => "MANUAL (you pitch and bat)",
+            LabMode.HumanBatting => "HUMAN BATTING · CPU pitcher  (F / Select)",
+            LabMode.HumanPitching => "HUMAN PITCHING · CPU batter  (F / Select)",
+            LabMode.CpuVsCpu => "CPU vs CPU  (F / Select)",
+            _ => "MANUAL — you pitch and bat  (F / Select)",
         };
+
+        /// <summary>The batter changes with the next pitch: the current one is still batted by whoever was batting it.</summary>
+        public bool BatterChangePending => CurrentPitch != null && CpuBatting != (LastBatterPlan != null) && StateAt(Clock()) != BattingState.Ready;
 
         /// <summary>
         /// The CPU batter (TASK-019, GameLab; B): he bats instead of the player — his aim and swing events enter the same
@@ -323,6 +326,7 @@ namespace Pitchlab.Sandbox
             _pitchingAction.AddBinding("<Gamepad>/leftShoulder");
             _pitchingAction.AddBinding("<Gamepad>/rightShoulder");
             _pitchingAction.AddBinding("<Gamepad>/buttonNorth");
+            _pitchingAction.AddBinding("<Gamepad>/select");   // the mode (TASK-022)
             _pitchingAction.performed += c => OnPitchingKey(c.control.name);
             _normalSpeedAction = Button("<Keyboard>/1", null, _ => _playbackSpeed = 1f);
             _slowSpeedAction = Button("<Keyboard>/2", null, _ => _playbackSpeed = 0.5f);
@@ -382,7 +386,7 @@ namespace Pitchlab.Sandbox
             else if (control == "x" || control == "rightShoulder") StepPitchType(1);
             else if (control == "p" || control == "buttonNorth") AutoPitch = !AutoPitch;
             else if (control == "b") CpuBatting = !CpuBatting;
-            else if (control == "f") Mode = (LabMode)(((int)Mode + 1) % 4);
+            else if (control == "f" || control == "select") Mode = (LabMode)(((int)Mode + 1) % 4);
         }
 
         /// <summary>The pitch type keys: through the pitcher's repertoire in the GameLab, through every preset otherwise.</summary>
