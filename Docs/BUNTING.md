@@ -11,9 +11,14 @@ sacrifice and the labs build on that. Labels: MEASURED / DERIVED / ASSUMED / TUN
   CPU's aim at that moment (`BatterPlan.InputFor`).
 - **Bat.**
   - Level and with no attack angle.
-  - Pushed toward the ball at `BuntPushSpeed = 3 m/s` (TUNED to the measured exit speed below).
+  - Pushed straight toward the ball at `BuntPushSpeed = 3 m/s`, one speed along the bat (no pivot). This is a TUNED knob
+    to the measured exit speed below, not a measured push. It also absorbs the swing's collision efficiency (q = 0.21)
+    understating a bunt's: e rises at a bunt's lower impact speed. A bat drawn back ("give") is not modelled.
+  - The bat angle must be finite and below 45°; otherwise the input is invalid.
   - Squared to the ball's incoming path, then angled by the batter's aim (`BuntAim`, rad toward first base).
-- **Direction is physics, not a script.** Against a nearly still bat the ball keeps much of its speed along the bat's face,
+- **Direction is physics, not a script** (physics-reviewed). Along the bat's face the ball keeps 1 − (2/7)(1 + e_x)/(1 + r_x)
+  ≈ 0.71 of its speed, while its speed off the face is only q·v·cosθ plus the push. So the deflection is about
+  2.3–3.4·tanθ and depends on e_x and r_x; friction does not bind. Against a nearly still bat the ball keeps much of its speed along the bat's face,
   so a few degrees steer it: about 5° of bat angle sends a bunt 25° toward a line. Twenty degrees would send it foul.
 - **Pulling back.** Up to `OfferLead` (60 ms) before the ball arrives, a pulled-back bunt is no attempt
   (`ContactOutcome.CheckedSwing`), and the pitch is called as a take.
@@ -62,12 +67,12 @@ production pieces.
 | | Sim | MLB 2024 (MEASURED, Baseball Savant search) |
 |---|---|---|
 | Pitches pulled back | 55 % | (not measured) |
-| Missed, of attempts | 10 % | 202 missed of ≈ 2,400 attempts ≈ 8 % |
+| Missed, of attempts | 9 % | 202 missed of ≈ 2,400 attempts ≈ 8 % |
 | Foul, of contact | ≈ 17 % | 1,233 foul bunts ≈ 55 % of contact |
 | Fair bunt exit speed / launch angle | 33 mph / −26° | sacrifice bunts 33.8 mph / −35° (452) |
 
 ## Discrepancies (documented, handed on)
-- **Sacrifices rarely succeed: the pitcher forces the lead runner at second.** Two reasons:
+- **Sacrifices don't succeed (0 of 134 fair bunts in the forced sample): the pitcher forces the lead runner at second.** Two reasons:
   - In a play the runner on first starts from a 12-ft lead with no secondary lead and no "break on the bunt". In MLB he is
     already moving when the ball is bunted.
   - No bunt defense: the corners do not charge, and the first baseman is not holding.

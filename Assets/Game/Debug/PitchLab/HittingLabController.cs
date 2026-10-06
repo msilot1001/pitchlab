@@ -552,6 +552,7 @@ namespace Pitchlab.Sandbox
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
             DriveCpuBatter(Clock());   // the CPU batter's due events first: a throw never pre-empts his swing
+            ResolveBunt(double.PositiveInfinity);   // a squared bunt meets the ball at its arrival, before the pitch is replaced
             ApplyResult();   // a press during a play skips its remainder: its result stands
             if (Game != null && Game.IsOver) return;   // the game is over: no more pitches (NewGame starts the next)
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
@@ -701,8 +702,8 @@ namespace Pitchlab.Sandbox
         /// <summary>He pulls the bunt back at <paramref name="time"/> (in time: a take). Returns whether it counted.</summary>
         public bool PullBackBunt(double time)
         {
-            if (!Bunting || LastSwing.HasValue || !double.IsNaN(BuntPullBackTime) || !CurrentPitch.ReachesContactPlane) return false;
-            if (time > SwingInput.PullBackDeadline(CurrentPitch.IdealContactTime)) return false;
+            if (!Bunting || LastSwing.HasValue || !double.IsNaN(BuntPullBackTime)) return false;
+            if (time > SwingInput.PullBackDeadline(ContactResolver.BuntArrival(CurrentPitch))) return false;
             BuntPullBackTime = time;
             _readout = $"{_pitchLabel}: pulled the bunt back";
             return true;
@@ -725,7 +726,7 @@ namespace Pitchlab.Sandbox
         private void ResolveBunt(double now)
         {
             if (!Bunting || LastSwing.HasValue || CurrentPitch == null || !_resultPending && Game != null) return;
-            double arrival = CurrentPitch.ReachesContactPlane ? CurrentPitch.IdealContactTime : CurrentPitch.Flight.Final.Time;
+            double arrival = ContactResolver.BuntArrival(CurrentPitch);
             if (ToSimTime(now) < arrival) return;
             (double x, double z) = PciAt(_pitchStartRealtime + arrival / _pitchPlaybackSpeed);
             var bunt = SwingInput.Bunt(BuntSquareTime, x, z, _buntAim, BuntPullBackTime);
@@ -917,6 +918,7 @@ namespace Pitchlab.Sandbox
         private void ApplyResult()
         {
             if (!_resultPending) return;
+            ResolveBunt(double.PositiveInfinity);   // a squared bunt meets the ball at its arrival, whenever this runs (frame-independent)
             _resultPending = false;
             (double bottom, double top) = Zone;
             // At the plate (TASK-024: foul tip, hit by pitch, strike, ball) or the play's.

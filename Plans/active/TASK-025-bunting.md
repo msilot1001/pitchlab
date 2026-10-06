@@ -34,7 +34,17 @@ See Docs/BUNTING.md.
 - [x] Found and fixed: the simulator used the CPU's last aim event, the labs the PCI at the arrival; both now use the aim at
   the arrival.
 - [x] Tests: BuntTests (11) and the lab bunt PlayMode test. Runtime: the squared pose in the HittingLab.
-- [ ] check.sh; reviews; Codex; merge.
+- [x] Physics review: the reuse of the collision is sound. Fixed:
+  - a NaN or ≥ 45° bunt angle is now invalid input;
+  - a bunt's bat has one speed (pushed, no pivot);
+  - the push is documented as a TUNED knob;
+  - the spray amplification is explained by e_x and r_x.
+- [x] Codex round 1: grade C. Fixed:
+  - a pending bunt is resolved before the pitch is applied or replaced (frame-independent);
+  - a bunt can be pulled back on a pitch that falls short (`ContactResolver.BuntArrival`);
+  - the CPU's bunt aim is clamped to the PCI area like the labs'.
+- [x] Tests for each. check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107).
+- [ ] Codex round 2; merge.
 
 ## Known gaps (handed on)
 - Sacrifice success is very low: the runner's lead and break (TASK-026); bunt defense and positioning (TASK-033).

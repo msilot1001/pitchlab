@@ -68,8 +68,7 @@ namespace Pitchlab.Gameplay.Hitting
         public SwingInput? InputFor(HittingPitch pitch)
         {
             if (!IsBunt) return Input;
-            double arrival = pitch.ReachesContactPlane ? pitch.IdealContactTime : pitch.Flight.Final.Time;
-            (double x, double z) = PciAt(arrival);
+            (double x, double z) = PciAt(ContactResolver.BuntArrival(pitch));
             return SwingInput.Bunt(SwingStart, x, z, BuntAim, CheckTime);
         }
 
@@ -303,7 +302,10 @@ namespace Pitchlab.Gameplay.Hitting
                 double contactTime = fit.TimeAtY(contactPlaneY, seen);
                 if (double.IsNaN(contactTime) || now >= contactTime) continue;
                 Vector3d atContact = fit.At(contactTime);
-                plan.Events.Add(new AimEvent(now, atContact.X + aimX, atContact.Z + BuntOverIntent + aimZ, atContact.X, atContact.Z));
+                // The bat lives in the aimable area, as a human's PCI does (the labs clamp it there too).
+                (double bu, double bv) = PciFrame.Default.ToNormalized(atContact.X + aimX, atContact.Z + BuntOverIntent + aimZ);
+                (double bx, double bz) = PciFrame.Default.ToMeters(bu, bv);
+                plan.Events.Add(new AimEvent(now, bx, bz, atContact.X, atContact.Z));
                 plan.LastObservation = seen;
                 if (decided || now < contactTime - bunt.SwingDuration) continue;   // he decides when he would commit a swing
 

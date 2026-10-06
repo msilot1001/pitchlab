@@ -82,6 +82,9 @@ namespace Pitchlab.Gameplay.Hitting
         /// <summary>The latest a bunt can be pulled back on a pitch arriving at <paramref name="arrival"/> (s).</summary>
         public static double PullBackDeadline(double arrival) => arrival - OfferLead;
 
+        /// <summary>A bunt's bat angle must stay below this (rad, 45°): beyond it the ball glances off sideways or backward.</summary>
+        public static readonly double MaxBuntAim = Math.PI / 4.0;
+
         /// <summary>Whether the swing was stopped in time: no swing (a take).</summary>
         public bool IsChecked(double swingDuration) => CheckTime <= OfferTime(swingDuration);
     }
@@ -138,16 +141,18 @@ namespace Pitchlab.Gameplay.Hitting
         public static ContactResult Resolve(HittingPitch pitch, SwingInput swing, SwingParameters p)
         {
             p.Validate();
+            // A bunt pulled back in time is no attempt, whether or not the pitch reaches the bat (TASK-025).
+            if (swing.IsBunt && swing.CheckTime <= SwingInput.PullBackDeadline(BuntArrival(pitch)))
+                return new ContactResult(ContactOutcome.CheckedSwing, 0.0, double.NaN, double.NaN, 0.0, default);
             if (!pitch.ReachesContactPlane) return new ContactResult(ContactOutcome.NoPitch, double.NaN, double.NaN, double.NaN, 0.0, default);
-            if (!Finite(swing.StartTime) || !Finite(swing.PciX) || !Finite(swing.PciZ))
+            if (!Finite(swing.StartTime) || !Finite(swing.PciX) || !Finite(swing.PciZ) || swing.IsBunt && !(Math.Abs(swing.BuntAim) < SwingInput.MaxBuntAim))
                 return new ContactResult(ContactOutcome.InvalidInput, double.NaN, double.NaN, double.NaN, 0.0, default);
 
             double contactTime = ContactTime(pitch, swing, p);
             double timingError = contactTime - pitch.IdealContactTime;
             if (swing.IsBunt)
             {
-                // A bunt (TASK-025): pulled back in time is no attempt; squared too late, the bat is not there.
-                if (swing.CheckTime <= SwingInput.PullBackDeadline(contactTime)) return new ContactResult(ContactOutcome.CheckedSwing, 0.0, double.NaN, double.NaN, 0.0, default);
+                // A bunt (TASK-025): squared too late, the bat is not there.
                 if (swing.StartTime > contactTime - p.SwingDuration) return new ContactResult(ContactOutcome.MissTiming, swing.StartTime + p.SwingDuration - contactTime, double.NaN, double.NaN, 0.0, default);
             }
             else if (swing.IsChecked(p.SwingDuration)) return new ContactResult(ContactOutcome.CheckedSwing, timingError, double.NaN, double.NaN, 0.0, default);
@@ -196,7 +201,8 @@ namespace Pitchlab.Gameplay.Hitting
             bool towardTip = alongBarrel * pullSign > 0.0;
             double q = Math.Max(towardTip ? p.MinTipEfficiency : 0.0, p.SweetSpotEfficiency - (towardTip ? p.EfficiencyFalloffTip : p.EfficiencyFalloffHandle) * Sq(alongBarrel));
             // The bat turns about its pivot: slower toward the hands, faster toward the tip (TASK-023).
-            Vector3d batVelocity = BatSpeedAt(p, towardTipDistance) * swingDirection;
+            // A bunt's bat is pushed straight, not turned about the swing's pivot: one speed along it (TASK-025).
+            Vector3d batVelocity = (swing.IsBunt ? p.BatSpeed : BatSpeedAt(p, towardTipDistance)) * swingDirection;
             double incomingNormal = -Vector3d.Dot(ball.Velocity, normal);   // > 0: ball moving into the bat
             double outNormal = q * incomingNormal + (1.0 + q) * Vector3d.Dot(batVelocity, normal);
 
@@ -232,6 +238,9 @@ namespace Pitchlab.Gameplay.Hitting
         /// </summary>
         public static Vector3d SweetSpotAtContact(HittingPitch pitch, SwingInput swing, SwingParameters p) =>
             SweetSpot(pitch, swing, p, pitch.Flight.StateAt(ContactTime(pitch, swing, p)).Position);
+
+        /// <summary>When the pitch reaches a bunter's bat: at the contact plane, or (short of it) where its flight ends.</summary>
+        public static double BuntArrival(HittingPitch pitch) => pitch.ReachesContactPlane ? pitch.IdealContactTime : pitch.Flight.Final.Time;
 
         /// <summary>When the bat meets the ball's path: a swing at its start + duration; a bunt when the ball arrives.</summary>
         public static double ContactTime(HittingPitch pitch, SwingInput swing, SwingParameters p) =>

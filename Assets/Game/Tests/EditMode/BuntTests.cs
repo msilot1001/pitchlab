@@ -96,6 +96,45 @@ namespace Pitchlab.Tests
         }
 
         [Test]
+        public void ABuntAngleMustBeFiniteAndBelow45Degrees()
+        {
+            HittingPitch pitch = Aimed(0.0, 0.75, PitchPresets.FourSeam);
+            Assert.AreEqual(ContactOutcome.InvalidInput, ContactResolver.Resolve(pitch, BuntAt(pitch, aim: double.NaN), BuntBat).Outcome);
+            Assert.AreEqual(ContactOutcome.InvalidInput, ContactResolver.Resolve(pitch, BuntAt(pitch, aim: Units.DegreesToRadians(50.0)), BuntBat).Outcome);
+            Assert.IsTrue(ContactResolver.Resolve(pitch, BuntAt(pitch, aim: Units.DegreesToRadians(10.0)), BuntBat).IsContact);
+        }
+
+        [Test]
+        public void ABuntCanBePulledBackOnAPitchThatFallsShort()
+        {
+            HittingPitch dirt = Aimed(0.0, -0.4, PitchPresets.Curveball);
+            Assume.That(dirt.ReachesContactPlane, Is.False, "in the dirt before the plate");
+            double deadline = SwingInput.PullBackDeadline(ContactResolver.BuntArrival(dirt));
+            Vector3d end = dirt.Flight.Final.Position;
+            var pulled = SwingInput.Bunt(0.05, end.X, 0.5, 0.0, deadline - 0.01);
+            ContactResult r = ContactResolver.Resolve(dirt, pulled, BuntBat);
+            Assert.AreEqual(ContactOutcome.CheckedSwing, r.Outcome, "pulled back: no attempt");
+            Assert.AreEqual(PitchOutcome.Ball, PitchOutcomes.BeforePlay(dirt, pulled, r, BuntBat.SwingDuration, null, StrikeZone.Bottom, StrikeZone.Top));
+            var offered = SwingInput.Bunt(0.05, end.X, 0.5, 0.0);
+            Assert.AreEqual(PitchOutcome.SwingingStrike, PitchOutcomes.BeforePlay(dirt, offered, ContactResolver.Resolve(dirt, offered, BuntBat), BuntBat.SwingDuration, null, StrikeZone.Bottom, StrikeZone.Top),
+                "left out over a ball in the dirt: an attempt");
+        }
+
+        [Test]
+        public void HisBuntStaysInTheAimableArea()
+        {
+            // As a human's PCI (and the labs' track) does: the simulator and the labs take the same bat position.
+            HittingPitch wide = Aimed(1.2, 0.2, PitchPresets.Slider);
+            SeedStream stream = CpuBatter.StreamFor(9, Batter.Id, 1, 1);
+            BatterPlan plan = CpuBatter.PlanBunt(CpuBatter.Observe(wide), Batter, BuntBat, wide.ContactPlaneY, 0.0, ref stream);
+            foreach (AimEvent e in plan.Aim)
+            {
+                (double u, double v) = PciFrame.Default.ToNormalized(e.X, e.Z);
+                Assert.AreEqual((e.X, e.Z), PciFrame.Default.ToMeters(u, v), "inside the area");
+            }
+        }
+
+        [Test]
         public void AMissedBuntIsAStrike()
         {
             HittingPitch pitch = Aimed(0.0, 0.75, PitchPresets.FourSeam);
@@ -237,7 +276,7 @@ namespace Pitchlab.Tests
         {
             // Late, close games with a weak hitter up (10 games): the simulator's batter bunts there, never elsewhere.
             int bunts = 0;
-            for (int seed = 7001; seed <= 7010; seed++)
+            for (int seed = 7019; seed <= 7028; seed++)   // seeds with sacrifice spots
             {
                 var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);
                 var sim = new GameSimulator(g);
