@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Play;
@@ -57,6 +58,8 @@ namespace Pitchlab.Sandbox
         /// <summary>The previous plate appearance in a few words ("#3 Away #3 — WALK").</summary>
         public string LastResult { get; private set; } = string.Empty;
         public IReadOnlyList<string> EventLog => _events;
+        private const string MisplaySuffix = " · MISPLAY";
+        private string _misplayBase, _misplayFlash;
         public string HistoryTitle { get; private set; } = string.Empty;
         /// <summary>The plate appearance whose pitches are shown: the one the last pitch belonged to until the loop is ready
         /// again, then the current one.</summary>
@@ -107,6 +110,13 @@ namespace Pitchlab.Sandbox
                 else flash = PitchOutcomes.Describe(o);
             }
 
+            // The defense misplayed the ball on this play (TASK-021): said plainly, not scored as an error.
+            if (flash.Length > 0 && _lab.LastLive != null && _lab.LastLive.Misplays.Count > 0)
+            {
+                // Cached: the same flash every frame of the result pause, not a new string.
+                if (!ReferenceEquals(_misplayBase, flash) && _misplayBase != flash) (_misplayBase, _misplayFlash) = (flash, flash + MisplaySuffix);
+                flash = _misplayFlash;
+            }
             bool final = g.IsOver && ready;
             if (final) flash = FinalFlash;
             if (ReferenceEquals(g, _built.Game) && g.Version == _built.Version && ReferenceEquals(shown, _built.Shown) && flash == _built.Flash) return;

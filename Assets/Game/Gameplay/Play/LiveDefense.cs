@@ -111,6 +111,10 @@ namespace Pitchlab.Gameplay.Play
             public bool Acted;
             /// <summary>An out was just made with this ball: the next throw is the turn of a double play, at full effort.</summary>
             public bool Turn;
+            /// <summary>A free ball: who is going for it (null: nobody can).</summary>
+            public DefensivePosition? Retriever;
+            /// <summary>A throw in the air: the throw as aimed — what the runners can expect before it arrives (TASK-021).</summary>
+            public LiveThrow Aimed;
         }
 
         private readonly LivePlay _play;
@@ -127,7 +131,6 @@ namespace Pitchlab.Gameplay.Play
         private readonly List<HolderDecision> _decisions = new List<HolderDecision>();
         private readonly List<(double Start, double End, Base Base, DefensivePosition Carrier)> _carries = new List<(double, double, Base, DefensivePosition)>();
         private Func<IReadOnlyList<LiveAction>, LiveAction> _firstChoice;
-        private DefensivePosition? _retriever;
 
         internal LiveDefense(LivePlay play, Func<IReadOnlyList<LiveAction>, LiveAction> firstChoice)
         {
@@ -144,7 +147,7 @@ namespace Pitchlab.Gameplay.Play
                 _onPoint[i] = double.PositiveInfinity;
             }
 
-            _ball.Add(new Segment { Kind = SegmentKind.Free, Start = t0, Free = f.Ball });
+            _ball.Add(new Segment { Kind = SegmentKind.Free, Start = t0, Free = f.Ball, Retriever = f.Primary });
             var start = new Vector3d[DefensiveAlignment.Count];
             for (int i = 0; i < start.Length; i++) start[i] = f.Motion((DefensivePosition)i).Start;
             _alignment = new DefensiveAlignment(start);
@@ -245,7 +248,7 @@ namespace Pitchlab.Gameplay.Play
                 case SegmentKind.Thrown: return s.Throw.Receiver;
             }
 
-            return _ball.Count == 1 ? _play.Fielding.Primary : _retriever;
+            return s.Retriever;
         }
 
         /// <summary>The ball is held and nobody has anything left to do with it (no throw coming, no carry running).</summary>
@@ -296,7 +299,7 @@ namespace Pitchlab.Gameplay.Play
             if (f.Outcome != FieldingOutcome.Fielded) return;   // a dead ball: everyone holds
             DefensivePosition primary = f.Primary.Value;
             Reassign(_play.ContactTime, primary, f.Intercept.Ball.Position, null);
-            _play.ScheduleDefense(f.PossessionTime, () => Possess(primary, f.PossessionTime, f.Intercept.Ball.Position, true, f.Action), "possession");
+            _play.ScheduleDefense(f.PossessionTime, () => Attempt(primary, f.Ball, f.Intercept, f.Action, true), "possession");
         }
 
         /// <summary><paramref name="p"/> takes the ball at <paramref name="t"/>.</summary>
@@ -367,15 +370,24 @@ namespace Pitchlab.Gameplay.Play
             {
                 case LiveActionKind.Throw:
                 {
-                    LiveThrow th = a.Throw;
+                    // He chose with the throw as aimed (expected ability); it is released with his real direction error.
+                    LiveThrow th = Executed(a.Throw);
                     _throws.Add(th);
                     _ball[_ball.Count - 1].Next = th;
-                    _ball.Add(new Segment { Kind = SegmentKind.Thrown, Start = th.ReleaseTime, Throw = th });
+                    _ball.Add(new Segment { Kind = SegmentKind.Thrown, Start = th.ReleaseTime, Throw = th, Aimed = a.Throw });
                     if (th.ReceiverMotion != null) _tracks[(int)th.Receiver].Add(th.SwitchTime, th.ReceiverMotion);
                     Reassign(t, h, _tracks[(int)h].PositionAt(t), th);
                     _play.ScheduleDefense(th.ReleaseTime, () => _play.OnThrowReleased(th), "release");
-                    if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Possess(th.Receiver, th.Catch.Time, th.Catch.Ball.Position, false, FieldingAction.ReceiveThrow), "catch");
-                    else _play.ScheduleDefense(th.FirstContactTime, () => Loose(th), "loose");
+                    if (a.IsForce && th.Caught && th.Target != null && a.Throw.Caught && a.Throw.ReceiverMotion == null && th.ReceiverMotion != null
+                        && (th.Catch.FielderTarget - th.ReceiverMotion.Start).Length > PulledOffBag)
+                        _play.ScheduleDefense(th.Catch.Time, () =>
+                        {
+                            // The throw as aimed would have been taken on the bag; this one pulls him off it.
+                            _play.OnMisplay(th.Catch.Time, th.Thrower, MisplayKind.ThrowingMisplay, $"throw pulled {LivePlay.Abbrev(th.Receiver)} off the bag", false);
+                            if (!_play.IsOver) Attempt(th.Receiver, th.Flight, th.Catch, FieldingAction.ReceiveThrow, false, th);
+                        }, "catch");
+                    else if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Attempt(th.Receiver, th.Flight, th.Catch, FieldingAction.ReceiveThrow, false, th), "catch");
+                    else _play.ScheduleDefense(th.FirstContactTime, () => Loose(th, a.Throw.Caught), "loose");
                     return;
                 }
 
@@ -386,34 +398,206 @@ namespace Pitchlab.Gameplay.Play
             }
         }
 
-        /// <summary>A missed throw is loose: whoever can field it first (from where and as he is moving) goes for it.</summary>
-        private void Loose(LiveThrow th)
+        /// <summary>A missed throw is loose: whoever can field it first (from where and as he is moving) goes for it. If the
+        /// throw as aimed would have been held, the miss is the thrower's misplay (TASK-021).</summary>
+        private void Loose(LiveThrow th, bool aimedWouldBeHeld)
         {
             double t = th.FirstContactTime;
-            _ball.Add(new Segment { Kind = SegmentKind.Free, Start = t, Free = th.Flight });
-            _play.OnLooseBall(t);
+            if (aimedWouldBeHeld && !th.AimError.Equals(Vector3d.Zero))
+                _play.OnMisplay(t, th.Thrower, MisplayKind.ThrowingMisplay, $"throw off target ({th.AimError.Length:F1} m)", false);
+            else _play.OnLooseBall(t);
+            if (_play.IsOver) return;
+            LooseBall(th.Flight, t, t, null, double.NegativeInfinity);
+        }
+
+        /// <summary>
+        /// A free ball from <paramref name="t"/> on its own path <paramref name="ball"/>: everyone reacts
+        /// <see cref="LooseReaction"/> after <paramref name="reactFrom"/> (from where and as he is moving), except
+        /// <paramref name="slow"/>, who cannot go for it before <paramref name="slowUntil"/> (he is recovering from his misplay);
+        /// whoever can field it first goes for it. <paramref name="catchableUntil"/>: a batted ball not yet touched by the ground
+        /// (a missed fly) — taken in the air before then, it is still a catch.
+        /// </summary>
+        private void LooseBall(BallInPlay ball, double t, double reactFrom, DefensivePosition? slow, double slowUntil, double catchableUntil = double.NegativeInfinity)
+        {
+            var segment = new Segment { Kind = SegmentKind.Free, Start = t, Free = ball };
+            _ball.Add(segment);
             var takes = new Intercept[DefensiveAlignment.Count];
+            var starts = new double[DefensiveAlignment.Count];
             for (int i = 0; i < takes.Length; i++)
             {
                 FielderTrack track = _tracks[i];
                 FielderProfile p = track.Profile;
-                var react = new FielderProfile(t - th.Flight.First.Time + LooseReaction, p.MaxSpeed, p.AccelerationTime, p.BrakeDeceleration, p.Reach, p.GroundReach, p.CatchHeightMax, p.PickupHeightMax);
-                double start = t + LooseReaction;
-                takes[i] = InterceptSolver.Solve(th.Flight, track.PositionAt(start), react, _play.Field, double.PositiveInfinity, initialVelocity: track.VelocityAt(start));
+                double start = Math.Max(reactFrom + LooseReaction, slow == (DefensivePosition)i ? slowUntil : double.NegativeInfinity);
+                starts[i] = start;
+                var react = new FielderProfile(start - ball.First.Time, p.MaxSpeed, p.AccelerationTime, p.BrakeDeceleration, p.Reach, p.GroundReach, p.CatchHeightMax, p.PickupHeightMax);
+                takes[i] = InterceptSolver.Solve(ball, track.PositionAt(start), react, _play.Field, double.PositiveInfinity, initialVelocity: track.VelocityAt(start));
             }
 
             int best = FieldingSolver.SelectPrimary(takes);
-            if (best < 0) return;   // nobody can get to it (it left the park)
+            if (best < 0)
+            {
+                // Nobody can get to it: it leaves the field. The play ends there (no award is modelled after a misplay).
+                double gone = ball.EndTime;
+                foreach (BallEvent e in ball.Events)
+                    if (e.Kind == BallEventKind.LeftPlay || e.Kind == BallEventKind.ClearedFence)
+                    {
+                        gone = e.Time;
+                        break;
+                    }
+
+                _play.ScheduleDefense(gone, () => _play.OnBallOutOfPlay(gone), "out of play");
+                return;
+            }
+
             var who = (DefensivePosition)best;
             Intercept take = takes[best];
             FielderTrack tr = _tracks[best];
-            double go = t + LooseReaction;
+            double go = starts[best];
             if (take.RouteDistance > 0.0)
                 tr.Add(Math.Max(go, tr.CurrentStart), new ContinuationMotion(tr.Profile, tr.PositionAt(go), tr.VelocityAt(go), go, take.FielderTarget, take.Time));
-            _retriever = who;
+            segment.Retriever = who;
             Reassign(t, who, take.Ball.Position, null);
-            FieldingAction action = FieldingActions.Classify(th.Flight, take, tr.PositionAt(take.Time), tr.VelocityAt(take.Time), _play.Field);
-            _play.ScheduleDefense(take.Time, () => Possess(who, take.Time, take.Ball.Position, false, action), "retrieve");
+            FieldingAction action = FieldingActions.Classify(ball, take, tr.PositionAt(take.Time), tr.VelocityAt(take.Time), _play.Field);
+            bool caught = take.Time < catchableUntil && take.Kind == InterceptKind.FlyCatch;
+            _play.ScheduleDefense(take.Time, () => Attempt(who, ball, take, action, caught), "retrieve");
+        }
+
+        // ------------------------------------------------------------------ execution (TASK-021)
+
+        /// <summary>A throw that makes the receiver step this far (m) from the bag on a force play, when the throw as aimed would
+        /// have been taken on it, is a throwing misplay (a step to the side is not; ASSUMED).</summary>
+        public const double PulledOffBag = 0.6;
+        /// <summary>Recovering from a missed ball before he can go after it again (s; ASSUMED): 0.5 s, a failed dive as long as
+        /// getting up from a successful one (<see cref="FieldingActions.DiveRecovery"/>).</summary>
+        public const double MissRecovery = 0.5;
+        /// <summary>Recovering from a bobble before he can go after the ball again (s; ASSUMED): he has to find it and set
+        /// himself again.</summary>
+        public const double BobbleRecovery = 0.4;
+        /// <summary>A ground ball knocked off the glove rebounds at a quarter of its speed, at most this fast (m/s; ASSUMED).</summary>
+        public const double MaxRebound = 4.0;
+
+        /// <summary>
+        /// <paramref name="p"/> tries to take <paramref name="ball"/> at <paramref name="take"/>. Without an execution seed he
+        /// always holds it (the validated deterministic defense). With one, the take's difficulty and his skill decide (seeded)
+        /// whether he holds it, bobbles or drops it (a new free ball from the glove), or misses it (the ball carries on). Balls
+        /// taken over foul territory are always held (a dropped foul fly is not modelled).
+        /// </summary>
+        private void Attempt(DefensivePosition p, BallInPlay ball, Intercept take, FieldingAction action, bool batted, LiveThrow th = null)
+        {
+            double t = take.Time;
+            Vector3d at = take.Ball.Position;
+            bool fairGround = Math.Abs(Math.Atan2(at.X, at.Y)) <= 0.25 * Math.PI;
+            if (_play.ExecutionSeed is long seed && action != FieldingAction.None && fairGround)
+            {
+                FielderTrack track = _tracks[(int)p];
+                Vector3d v = track.VelocityAt(t);
+                double ballSpeed = (take.Ball.Velocity - new Vector3d(v.X, v.Y, 0.0)).Length;
+                double margin = th != null ? double.PositiveInfinity : t - take.EarliestArrival;
+                double moved = th?.ReceiverMotion != null ? (th.Catch.FielderTarget - th.ReceiverMotion.Start).Length : 0.0;
+                double chance = FieldingExecution.Chance(action, margin, new Vector3d(v.X, v.Y, 0.0).Length, ballSpeed, moved, _play.Personnel.Skill(p));
+                SeedStream stream = FieldingExecution.StreamFor(seed, p, t, 0x7A4E);
+                TakeOutcome outcome = FieldingExecution.Attempt(action, chance, ref stream);
+                if (outcome != TakeOutcome.Clean)
+                {
+                    _takes.Add(new BallTake(t, p, take.Ball.Position, action, held: false));   // the reach, for presentation
+                    Misplayed(p, th != null ? Remaining(th, t) : ball, take, action, outcome, batted, ref stream);
+                    return;
+                }
+            }
+
+            Possess(p, t, take.Ball.Position, batted, action);
+        }
+
+        /// <summary>A throw that was meant to be caught was followed only to the catch: its whole remaining flight.</summary>
+        private BallInPlay Remaining(LiveThrow th, double t) =>
+            BallInPlaySimulation.Run(th.Flight.StateAt(t), _play.Environment, _play.Field, ThrowSolver.Aerodynamics);
+
+        /// <summary>The ball was not held: missed, it carries on along its path; knocked loose, it leaves the glove as a new free
+        /// ball (a ground ball rebounds off the glove, a catch drops out of it). It is live; the misplaying defender recovers
+        /// before he can go after it again. A missed fly is still catchable until it touches the ground.</summary>
+        private void Misplayed(DefensivePosition p, BallInPlay ball, Intercept take, FieldingAction action, TakeOutcome outcome, bool batted, ref SeedStream stream)
+        {
+            double t = take.Time;
+            bool pickup = FieldingExecution.IsPickup(action);
+            string what = outcome == TakeOutcome.Miss
+                ? action == FieldingAction.DivingCatch ? "dive missed" : pickup ? "missed the ball" : "missed the catch"
+                : pickup ? "bobble" : "dropped the ball";
+            bool stillAFly = batted && outcome == TakeOutcome.Miss && _play.Kind == LivePlay.BallKind.Caught;
+            double grounded = stillAFly ? FirstContactAfter(ball, t) : t;
+            _play.OnMisplay(t, p, MisplayKind.FieldingMisplay, $"{what} ({Words(action)})", batted, grounded);
+            if (_play.IsOver) return;
+            if (outcome == TakeOutcome.Miss)
+            {
+                double recovery = action == FieldingAction.DivingCatch ? FieldingActions.DiveRecovery : MissRecovery;
+                LooseBall(ball, t, t, p, t + recovery, stillAFly ? grounded : double.NegativeInfinity);
+                return;
+            }
+
+            // Off the glove: a ground ball rebounds (a quarter of its speed, at most MaxRebound, back toward where it came from,
+            // turned up to ±60°, with a little lift); a ball in the air drops out (≈ 1 m/s in a random direction). ASSUMED.
+            Vector3d incoming = take.Ball.Velocity;
+            Vector3d off;
+            double turn = (stream.Unit() * 2.0 - 1.0) * Math.PI / 3.0;
+            if (pickup)
+            {
+                Vector3d back = -0.25 * new Vector3d(incoming.X, incoming.Y, 0.0);
+                if (back.Length > MaxRebound) back = MaxRebound / back.Length * back;
+                off = new Vector3d(back.X * Math.Cos(turn) - back.Y * Math.Sin(turn), back.X * Math.Sin(turn) + back.Y * Math.Cos(turn), 1.0);
+            }
+            else
+            {
+                double dir = stream.Unit() * 2.0 * Math.PI;
+                off = new Vector3d(Math.Cos(dir), Math.Sin(dir), 0.5);
+            }
+
+            Vector3d at = take.Ball.Position;
+            var loose = new BallState(t, new Vector3d(at.X, at.Y, Math.Max(at.Z, BallProperties.Baseball.Radius)), off, Vector3d.Zero);
+            BallInPlay knocked = BallInPlaySimulation.Run(loose, _play.Environment, _play.Field);
+            // A dropped ball in the air is played once it has come down (no juggling catches): from its first contact.
+            double reactFrom = pickup ? t : FirstContact(knocked);
+            LooseBall(knocked, t, reactFrom, p, t + (pickup ? BobbleRecovery : 0.2));
+        }
+
+        private static double FirstContactAfter(BallInPlay ball, double t)
+        {
+            foreach (BallEvent e in ball.Events)
+                if (e.Time > t && (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact)) return e.Time;
+            return ball.EndTime;
+        }
+
+        /// <summary>"running catch", "backhand pickup" … for the log.</summary>
+        private static string Words(FieldingAction a)
+        {
+            string s = a.ToString();
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (i > 0 && char.IsUpper(s[i])) sb.Append(' ');
+                sb.Append(char.ToLowerInvariant(s[i]));
+            }
+
+            return sb.ToString();
+        }
+
+        private static double FirstContact(BallInPlay ball)
+        {
+            foreach (BallEvent e in ball.Events)
+                if (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact) return e.Time;
+            return ball.EndTime;
+        }
+
+        /// <summary>The throw as released (TASK-021): with an execution seed, the thrower's direction error (ArmAccuracy) is
+        /// applied to the throw he chose; the flight and the receiver's reaction to it are planned again.</summary>
+        private LiveThrow Executed(LiveThrow aimed)
+        {
+            if (!(_play.ExecutionSeed is long seed)) return aimed;
+            DefensivePosition h = aimed.Thrower;
+            SeedStream stream = FieldingExecution.StreamFor(seed, h, aimed.ReleaseTime, 0x7B40);
+            var aim = new Vector3d(aimed.AimPoint.X, aimed.AimPoint.Y, ThrowPlanner.TargetHeight);
+            bool full = aimed.Arm.Speed > _play.Personnel.Throw(h).Speed + 1e-9;
+            Vector3d error = FieldingExecution.ThrowError(aimed.ReleasePoint, aim, _play.Personnel.Skill(h), full, ref stream);
+            return ThrowPlanner.PlanLive(h, _tracks[(int)h], aimed.ReleaseTime, aimed.Arm, aimed.Receiver, _tracks[(int)aimed.Receiver], aimed.OnPoint,
+                aimed.AimPoint, aimed.Target, _play.Environment, _play.Field, error);
         }
 
         // ------------------------------------------------------------------ roles
@@ -435,7 +619,7 @@ namespace Pitchlab.Gameplay.Play
                 RoleAssignment r = roles[i];
                 if (p == ballPlayer || HolderAt(t) == p) continue;
                 if (throwing != null && p == throwing.Receiver) continue;   // he is taking the throw
-                if (_ball.Count > 0 && _ball[_ball.Count - 1].Kind == SegmentKind.Free && p == _retriever) continue;
+                if (_ball.Count > 0 && _ball[_ball.Count - 1].Kind == SegmentKind.Free && p == _ball[_ball.Count - 1].Retriever) continue;
                 RoleAssignment? was = previous?[i];
                 bool same = was is RoleAssignment w && w.Role == r.Role && w.At == r.At && (w.Point - r.Point).Length < 0.75;
                 if (same) continue;
@@ -686,7 +870,7 @@ namespace Pitchlab.Gameplay.Play
                     return now + 3.0;   // a loose ball (ASSUMED)
                 case SegmentKind.Thrown:
                 {
-                    LiveThrow th = s.Throw;
+                    LiveThrow th = s.Aimed ?? s.Throw;   // as aimed: nobody knows yet whether it will be held
                     double end = th.Caught ? th.Catch.Time : th.FirstContactTime + 2.0;
                     if (th.Target == b) return end;
                     return end + _play.Personnel.Throw(th.Receiver).TransferTime + Flight(th.AimPoint, th.Receiver);

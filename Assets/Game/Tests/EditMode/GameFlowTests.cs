@@ -280,12 +280,12 @@ namespace Pitchlab.Tests
         // ------------------------------------------------------------------ whole games
 
         // Seeds pinned to exercise each ending with the current rosters and simulator (regression pins — re-chosen when either
-        // changes; the seed drives the whole game): 5 visitors after nine, 2 home ahead after the top of the 9th, 10 a walk-off
-        // in the 9th, 20 a walk-off in the 11th (extra innings, asserted below).
+        // changes; the seed drives the whole game): 5 visitors after nine, 2 home ahead after the top of the 9th, 15 a walk-off
+        // in the 9th, 20 the visitors after 13 innings (extra innings, asserted below).
         [TestCase(5, "nine innings")]
         [TestCase(2, "the home team leads after the top of the 9th")]
-        [TestCase(10, "walk-off")]
-        [TestCase(20, "walk-off")]
+        [TestCase(15, "walk-off")]
+        [TestCase(20, "13 innings")]
         public void ASimulatedGameIsAValidGame(int seed, string ending)
         {
             var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);   // the seed drives execution too

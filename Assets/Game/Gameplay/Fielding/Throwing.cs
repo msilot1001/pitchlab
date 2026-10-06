@@ -535,8 +535,12 @@ namespace Pitchlab.Gameplay.Fielding
     public sealed class LiveThrow
     {
         internal LiveThrow(DefensivePosition thrower, DefensivePosition receiver, Base? target, Vector3d aimPoint, double releaseTime,
-            Vector3d releasePoint, BallInPlay flight, bool reaches, Intercept catchIntercept, double switchTime, ContinuationMotion receiverMotion)
+            Vector3d releasePoint, BallInPlay flight, bool reaches, Intercept catchIntercept, double switchTime, ContinuationMotion receiverMotion,
+            ThrowProfile arm, double onPoint, Vector3d aimError)
         {
+            Arm = arm;
+            OnPoint = onPoint;
+            AimError = aimError;
             Thrower = thrower;
             Receiver = receiver;
             Target = target;
@@ -576,6 +580,12 @@ namespace Pitchlab.Gameplay.Fielding
         /// <summary>The receiver's move to the catch from his state at <see cref="SwitchTime"/> (null: he stays).</summary>
         public ContinuationMotion ReceiverMotion { get; }
         public double FirstContactTime { get; }
+        /// <summary>The thrower's arm on this throw (routine or full effort).</summary>
+        public ThrowProfile Arm { get; }
+        /// <summary>When the receiver was planned to be on the point (−∞: no waiting for him).</summary>
+        public double OnPoint { get; }
+        /// <summary>How far the throw was off its aim at the receiver's chest (m; zero: thrown as aimed — TASK-021).</summary>
+        public Vector3d AimError { get; }
         /// <summary>When the ball is no longer this throw's: the catch, or its first contact if missed.</summary>
         public double EndTime => Caught ? Catch.Time : FirstContactTime;
     }
@@ -590,28 +600,31 @@ namespace Pitchlab.Gameplay.Fielding
         /// within reach there without leaving it, otherwise adjusts from his position and velocity (on the fly or on a hop).
         /// <paramref name="onPoint"/> = −∞: no waiting for him (a throw to a cut-off man, who adjusts to it).
         /// </summary>
+        /// <param name="aimError">TASK-021: the executed throw's offset from its aim (m); a throw with an error is released at
+        /// <paramref name="ready"/> (its hold for the cover was already planned with the throw as aimed).</param>
         public static LiveThrow PlanLive(DefensivePosition thrower, FielderTrack throwerTrack, double ready, ThrowProfile arm,
             DefensivePosition receiver, FielderTrack receiverTrack, double onPoint, Vector3d point, Base? target,
-            EnvironmentState environment, FieldLayout field)
+            EnvironmentState environment, FieldLayout field, Vector3d aimError = default)
         {
             // The throw is followed for twice its straight-line time plus 2 s (a catch, or a hop, is well inside); a throw that
             // is not caught is planned again on its whole flight, so its retrieval sees the real ball.
             Vector3d from = throwerTrack.PositionAt(ready);
             double horizon = 2.0 * new Vector3d(point.X - from.X, point.Y - from.Y, 0.0).Length / arm.Speed + 2.0;
-            LiveThrow th = PlanLive(thrower, throwerTrack, ready, arm, receiver, receiverTrack, onPoint, point, target, environment, field, horizon);
-            return th.Caught ? th : PlanLive(thrower, throwerTrack, ready, arm, receiver, receiverTrack, onPoint, point, target, environment, field, BallInPlaySimulation.MaxPlayTime);
+            LiveThrow th = PlanLive(thrower, throwerTrack, ready, arm, receiver, receiverTrack, onPoint, point, target, environment, field, horizon, aimError);
+            return th.Caught ? th : PlanLive(thrower, throwerTrack, ready, arm, receiver, receiverTrack, onPoint, point, target, environment, field, BallInPlaySimulation.MaxPlayTime, aimError);
         }
 
         private static LiveThrow PlanLive(DefensivePosition thrower, FielderTrack throwerTrack, double ready, ThrowProfile arm,
             DefensivePosition receiver, FielderTrack receiverTrack, double onPoint, Vector3d point, Base? target,
-            EnvironmentState environment, FieldLayout field, double horizon)
+            EnvironmentState environment, FieldLayout field, double horizon, Vector3d aimError)
         {
-            var aim = new Vector3d(point.X, point.Y, TargetHeight);
+            bool errant = !aimError.Equals(Vector3d.Zero);
+            var aim = new Vector3d(point.X, point.Y, TargetHeight) + aimError;
             double release = ready;
             Vector3d releasePoint = ReleaseFrom(throwerTrack.PositionAt(release), point, arm);
             BallState launch = ThrowSolver.Launch(releasePoint, aim, arm.Speed, release, environment, out bool reaches);
             BallInPlay flight = BallInPlaySimulation.Run(launch, environment, field, ThrowSolver.Aerodynamics, horizon);
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < (errant ? 0 : 4); i++)
             {
                 double wait = onPoint - ArrivalAtBase(flight, point);
                 if (wait <= 1e-3) break;
@@ -646,7 +659,11 @@ namespace Pitchlab.Gameplay.Fielding
             FielderProfile adjust = atPoint;
             if (onIt)
             {
-                take = pass >= arrived && pass < playable && InterceptSolver.Feasible(flight, from, atPoint, field, pass, out Intercept there) && there.RouteDistance == 0.0
+                // On a base he stretches for it, his foot on the bag: a longer reach for the take where it passes.
+                // Only for a throw off its aim (TASK-021): a throw as aimed is planned exactly as before.
+                FielderProfile stretched = target != null && errant ? new FielderProfile(atPoint.ReactionTime, p.MaxSpeed, p.AccelerationTime, p.BrakeDeceleration,
+                    p.Reach + StretchReach, p.GroundReach + StretchReach, p.CatchHeightMax, p.PickupHeightMax) : atPoint;
+                take = pass >= arrived && pass < playable && InterceptSolver.Feasible(flight, from, stretched, field, pass, out Intercept there) && there.RouteDistance == 0.0
                     ? there
                     : InterceptSolver.Solve(flight, from, atPoint, field, playable);
             }
@@ -665,8 +682,12 @@ namespace Pitchlab.Gameplay.Fielding
                 ? new ContinuationMotion(adjust, adjustFrom, adjustVelocity, adjustStart, take.FielderTarget, take.Time)
                 : null;
             return new LiveThrow(thrower, receiver, target, point, release, releasePoint, flight, reaches, take,
-                motion != null ? adjustStart : double.PositiveInfinity, motion);
+                motion != null ? adjustStart : double.PositiveInfinity, motion, arm, onPoint, aimError);
         }
+
+        /// <summary>A receiver on a base stretches this much further (m) for a throw, keeping his foot on the bag (a first
+        /// baseman's stretch reaches ≈ 1.0–1.2 m beyond his standing reach of the bag — Docs/RULES.md; ASSUMED 0.6 m extra).</summary>
+        public const double StretchReach = 0.6;
 
         /// <summary>The ball at hand height on the throwing side, a step toward the target.</summary>
         private static Vector3d ReleaseFrom(Vector3d holder, Vector3d target, ThrowProfile arm)

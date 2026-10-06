@@ -39,6 +39,35 @@ namespace Pitchlab.Gameplay.Play
         Run,
         Decision,
         PlayOver,
+        /// <summary>A defender failed to hold the ball, or a throw went astray (TASK-021).</summary>
+        Misplay,
+    }
+
+    /// <summary>Which part of the defense misplayed the ball (descriptive — not official scoring's E-numbers).</summary>
+    public enum MisplayKind
+    {
+        /// <summary>A take not held: missed, bobbled or dropped.</summary>
+        FieldingMisplay,
+        /// <summary>A throw the receiver could not hold because of where it went.</summary>
+        ThrowingMisplay,
+    }
+
+    /// <summary>One misplay of a live play (TASK-021).</summary>
+    public readonly struct Misplay
+    {
+        public Misplay(double time, DefensivePosition fielder, MisplayKind kind, string what)
+        {
+            Time = time;
+            Fielder = fielder;
+            Kind = kind;
+            What = what;
+        }
+
+        public double Time { get; }
+        public DefensivePosition Fielder { get; }
+        public MisplayKind Kind { get; }
+        /// <summary>"bobble", "miss", "drop", "dive missed", "throw off target" …</summary>
+        public string What { get; }
     }
 
     /// <summary>One entry of a play's chronological log (debugging, UI, tests).</summary>
@@ -100,8 +129,10 @@ namespace Pitchlab.Gameplay.Play
         /// <param name="runsOnContact">Scripted runners who run on contact whatever their read (lab/test scenarios).</param>
         /// <param name="personnel">The players on the field (TASK-017): defenders' and runners' profiles; generic if null.</param>
         public LivePlay(FieldingPlay fielding, Situation situation, RunnerProfile? profile = null,
-            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null, PlayPersonnel personnel = null)
+            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null, PlayPersonnel personnel = null,
+            long? executionSeed = null)
         {
+            ExecutionSeed = executionSeed;
             Fielding = fielding;
             Situation = situation;
             Personnel = personnel ?? PlayPersonnel.Standard;
@@ -157,7 +188,15 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The players on the field (TASK-017).</summary>
         public PlayPersonnel Personnel { get; }
         public double ContactTime { get; }
-        public BallKind Kind { get; }
+        /// <summary>What the batted ball is: fixed at contact, except that a fly ball the defense fails to hold becomes a hit
+        /// ball at that moment (TASK-021) — nobody knows before.</summary>
+        public BallKind Kind { get; private set; }
+        /// <summary>The play's seed for defensive execution (TASK-021): takes and throws can then fail. Null: perfect execution
+        /// (the validated deterministic defense of TASK-005–008, used by scenario tests and labs).</summary>
+        public long? ExecutionSeed { get; }
+        /// <summary>The play's misplays, in time order (TASK-021).</summary>
+        public IReadOnlyList<Misplay> Misplays => _misplays;
+        private readonly List<Misplay> _misplays = new List<Misplay>();
         /// <summary>Bases awarded to every runner and the batter (OBR 5.05(a)): 4 for a fair ball over the fence on the fly, 2 for
         /// one that bounces out of the park; 0 otherwise. The ball is dead: the runners advance under the running law, no play.</summary>
         public int AwardedBases { get; }
@@ -615,6 +654,36 @@ namespace Pitchlab.Gameplay.Play
             foreach (LiveRunner r in _runners)
                 if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, _now), _now);
         }
+
+        /// <summary>A defender failed to hold the ball (or a throw got away): the ball is loose; a fly ball not held is no longer a
+        /// catch; every runner reconsiders.</summary>
+        /// <param name="grounded">A batted fly not held is still catchable until it touches the ground (a missed one): it stops
+        /// being a catch then, not before.</param>
+        internal void OnMisplay(double t, DefensivePosition p, MisplayKind kind, string what, bool batted, double grounded = double.NegativeInfinity)
+        {
+            _misplays.Add(new Misplay(t, p, kind, what));
+            if (batted && Kind == BallKind.Caught)
+            {
+                if (grounded <= t) Kind = DefensiveDecision.IsOutfielder(p) ? BallKind.Hit : BallKind.Grounder;
+                else Schedule(grounded, () => OnFlyGrounded(p, grounded), "fly grounded");
+            }
+
+            Note(t, PlayLogKind.Misplay, null, null, p, $"MISPLAY: {Abbrev(p)} {what}");
+            foreach (LiveRunner r in _runners)
+                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
+        }
+
+        /// <summary>A missed fly touched the ground before anyone held it: no catch any more; the runners reconsider.</summary>
+        private void OnFlyGrounded(DefensivePosition misplayed, double t)
+        {
+            if (Kind != BallKind.Caught || Defense.HolderAt(t) != null) return;
+            Kind = DefensiveDecision.IsOutfielder(misplayed) ? BallKind.Hit : BallKind.Grounder;
+            foreach (LiveRunner r in _runners)
+                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
+        }
+
+        /// <summary>A loose ball left the field after a misplay: the play ends (no award is modelled).</summary>
+        internal void OnBallOutOfPlay(double t) => EndPlay(t, "the ball left the field");
 
         internal void OnLooseBall(double t)
         {

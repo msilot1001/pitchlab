@@ -132,6 +132,11 @@ namespace Pitchlab.Sandbox
         private static readonly (Key, Base?)[] ThrowKeys = { (Key.Z, Base.First), (Key.X, Base.Second), (Key.C, Base.Third), (Key.V, Base.Home), (Key.N, null) };
         /// <summary>Action override (debug controls Z/X/C/V = throw to 1B/2B/3B/home, N = hold, B = the defense's decision).</summary>
         public Base? TargetOverride { get; set; }
+        /// <summary>Defensive execution (TASK-021, debug): with a seed the crew can misplay the ball (E toggles, R re-rolls the
+        /// seed); null — the default — is the exact deterministic defense.</summary>
+        public long? ExecutionSeed { get; set; }
+        /// <summary>The crew's Fielding, Catching and ArmAccuracy with execution on (debug: 50 average, lower for more misplays).</summary>
+        public int CrewSkill { get; set; } = 50;
         public bool UseOverride { get; set; }
         public DefenseView Defense => _defense;
         public Transform Ball => _ball;
@@ -187,8 +192,10 @@ namespace Pitchlab.Sandbox
             else if (sc.TagAt is Base tagAt) choose = cs => cs.FirstOrDefault(a => a.Kind == LiveActionKind.Throw && a.Target == tagAt) ?? cs[0];
             // The live play (TASK-007) with real runners, resolved at once: every motion keeps its history, so it renders
             // exactly at any later time.
+            PlayPersonnel crew = ExecutionSeed == null ? null : new PlayPersonnel(FielderProfile.For, ThrowProfile.For, ThrowProfile.Full,
+                _ => RunnerProfile.Standard, _ => new FielderSkill(CrewSkill, CrewSkill, CrewSkill));
             var live = new LivePlay(fielding, situation, null, choose,
-                sc.RunsOnContact is Base runs ? r => r.From == runs : (Func<Runner, bool>)null);
+                sc.RunsOnContact is Base runs ? r => r.From == runs : (Func<Runner, bool>)null, crew, ExecutionSeed);
             live.RunToEnd();
             PresetIndex = i;
             Play = play;
@@ -249,6 +256,17 @@ namespace Pitchlab.Sandbox
                 if (k.sKey.wasPressedThisFrame) SetSpeed(_speed > 0.75f ? 0.5f : _speed > 0.375f ? 0.25f : 1f);   // 1× → 0.5× → 0.25×
                 if (k.mKey.wasPressedThisFrame) _motionDebug = !_motionDebug;
                 if (k.tKey.wasPressedThisFrame) _debug = !_debug;
+                if (k.eKey.wasPressedThisFrame)
+                {
+                    ExecutionSeed = ExecutionSeed == null ? 1 : (long?)null;
+                    Launch(PresetIndex);
+                }
+
+                if (k.rKey.wasPressedThisFrame && ExecutionSeed is long seed)
+                {
+                    ExecutionSeed = seed + 1;
+                    Launch(PresetIndex);
+                }
             }
 
             FrameUpdate();
@@ -273,7 +291,8 @@ namespace Pitchlab.Sandbox
         {
             _style ??= new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft, fontSize = 12 };
             _bigStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter, fontSize = 30, fontStyle = FontStyle.Bold };
-            var text = new System.Text.StringBuilder("Fielding Lab — 1–8 rules · ←→ all · Space replay · S speed 1/0.5/0.25× · T debug · M motion\nZ/X/C/V throw 1B/2B/3B/home · N hold · B decision\n");
+            var text = new System.Text.StringBuilder("Fielding Lab — 1–8 rules · ←→ all · Space replay · S speed 1/0.5/0.25× · T debug · M motion\nZ/X/C/V throw 1B/2B/3B/home · N hold · B decision · E misplays · R re-roll\n");
+            if (ExecutionSeed is long es) text.AppendLine($"Execution ON · seed {es} · crew {CrewSkill}" + (Live != null && Live.Misplays.Count > 0 ? $" · {Live.Misplays.Count} misplay(s)" : ""));
             for (int i = Math.Max(0, PresetIndex - 4); i < Math.Min(Presets.Length, Math.Max(0, PresetIndex - 4) + 10); i++)
                 text.AppendLine($"{(i == PresetIndex ? "▶" : "  ")} {(i < 8 ? (i + 1).ToString() : " ")}  {Presets[i].Name}");
             if (Play != null)

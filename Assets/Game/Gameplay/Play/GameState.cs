@@ -131,6 +131,17 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The team in the field: the home team in the top half, the visitors in the bottom.</summary>
         public TeamSide Fielding => Batting == TeamSide.Away ? TeamSide.Home : TeamSide.Away;
         public int Seed { get; }
+
+        /// <summary>The seed of the play on the current plate appearance's next pitch (TASK-021: defensive execution) — from the
+        /// game's seed, the plate appearance and the pitch number, so the same game replays the same plays.</summary>
+        public long PlaySeed
+        {
+            get
+            {
+                var s = new SeedStream(Seed, Current.Number, Current.Pitches.Count + 1, 0x9A17);
+                return (long)(s.Unit() * long.MaxValue);
+            }
+        }
         /// <summary>The pitcher on the mound: the fielding team's starter (null for a lineup-only team).</summary>
         public PlayerProfile Pitcher => TeamOf(Fielding).Pitcher;
 
@@ -160,7 +171,8 @@ namespace Pitchlab.Gameplay.Play
                     p => field.Fielder(p) is PlayerProfile f ? RatingScale.Fielder(f.Ratings, p) : FielderProfile.For(p),
                     p => field.Fielder(p) is PlayerProfile f ? RatingScale.Throw(f.Ratings, p) : ThrowProfile.For(p),
                     p => field.Fielder(p) is PlayerProfile f ? RatingScale.FullThrow(f.Ratings, p) : ThrowProfile.Full(p),
-                    r => (r.IsBatter ? batter : RunnerOn(r.From)) is PlayerProfile who ? RatingScale.Runner(who.Ratings) : RunnerProfile.Standard)
+                    r => (r.IsBatter ? batter : RunnerOn(r.From)) is PlayerProfile who ? RatingScale.Runner(who.Ratings) : RunnerProfile.Standard,
+                    p => field.Fielder(p) is PlayerProfile f ? FielderSkill.Of(f.Ratings) : FielderSkill.Average)
                 { Game = this, GameVersion = Version };
             }
         }
@@ -273,7 +285,9 @@ namespace Pitchlab.Gameplay.Play
                     break;
                 case PlateAppearanceEnd.InPlay:
                     PlayResultKind kind = PlayResults.Classify(play);
-                    End(e.End, PlayResults.Describe(kind), play.Runs, play.OutsMade, play.ResultingBases(), kind, play);
+                    // A play with a misplay says so (descriptive; TASK-021 — no official error scoring).
+                    string described = PlayResults.Describe(kind) + (play.Misplays.Count > 0 ? $" (misplay: {LivePlay.Abbrev(play.Misplays[0].Fielder)} {play.Misplays[0].What})" : "");
+                    End(e.End, described, play.Runs, play.OutsMade, play.ResultingBases(), kind, play);
                     break;
             }
 
