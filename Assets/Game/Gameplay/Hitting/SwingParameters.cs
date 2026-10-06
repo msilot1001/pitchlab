@@ -1,4 +1,6 @@
 using System;
+using Pitchlab.Gameplay.Play;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Simulation.Core;
 
 namespace Pitchlab.Gameplay.Hitting
@@ -77,6 +79,19 @@ namespace Pitchlab.Gameplay.Hitting
         private static void Require(bool condition, string field)
         {
             if (!condition) throw new ArgumentException($"SwingParameters.{field} is out of range.", field);
+        }
+
+        /// <summary>Bat speed (mph) from Power: 72 + 5·r̂ → 67–77 mph (TASK-019; MLB average 72 mph, 2025 qualified P10 66.5 /
+        /// P90 75.8 — DERIVED, Docs/BATTER_AI.md). The physical input: exit velocity follows from the collision.</summary>
+        public static double BatSpeedMph(int power) => 72.0 + 5.0 * RatingScale.Unit(power);
+
+        /// <summary><paramref name="batter"/>'s swing: the default swing from his side, at his bat speed.</summary>
+        public static SwingParameters For(PlayerProfile batter)
+        {
+            SwingParameters p = Default;
+            p.Side = batter.Bats;
+            p.BatSpeed = Units.MphToMetersPerSecond(BatSpeedMph(batter.Ratings.Power));
+            return p;
         }
 
         /// <summary>A typical MLB right-handed hitter's swing (see Docs/HITTING.md).</summary>

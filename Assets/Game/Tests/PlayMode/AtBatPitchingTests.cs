@@ -161,6 +161,92 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheCpuBatterPlaysTheSameAtAnyFrameRate()
+        {
+            yield return null;
+            // CPU vs CPU in the lab (TASK-019): his PCI placements and swing presses are timestamped events applied at their
+            // own times, so the plate appearances come out the same at any frame rate — and his swings are real swings.
+            _lab.ExecutionVariance = true;
+            string Run(params double[] steps)
+            {
+                _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 11));
+                _lab.CpuBatting = true;
+                _lab.AutoPitchSeed = 3;
+                _lab.AutoPitch = true;
+                double start = _now;
+                _lab.PressSwingButton(_now);
+                int k = 0;
+                while (_now < start + 60.0) Frame(_now + steps[k++ % steps.Length]);
+                _lab.AutoPitch = false;
+                _lab.CpuBatting = false;
+                GameState g = _lab.Game;
+                return string.Join("|", g.Completed.SelectMany(p => p.Pitches).Concat(g.Current.Pitches)
+                    .Select(p => $"{p.Info.PlateX:R},{p.Info.PlateZ:R}:{p.Outcome}")) + string.Join(";", g.Log);
+            }
+
+            string a = Run(1.0 / 30.0), b = Run(1.0 / 144.0), c = Run(0.013, 0.21, 0.004, 0.07);
+            Assert.AreEqual(a, b);
+            Assert.AreEqual(a, c, "and an uneven frame schedule");
+            var outcomes = _lab.Game.Completed.SelectMany(p => p.Pitches).Concat(_lab.Game.Current.Pitches).Select(p => p.Outcome).ToList();
+            Assert.GreaterOrEqual(outcomes.Count, 8);
+            Assert.IsTrue(outcomes.Contains(PitchOutcome.Ball) || outcomes.Contains(PitchOutcome.CalledStrike), "he takes");
+            Assert.IsTrue(outcomes.Any(o => o == PitchOutcome.SwingingStrike || o == PitchOutcome.Foul || o == PitchOutcome.InPlay), "he swings");
+        }
+
+        [UnityTest]
+        public IEnumerator HisSwingIsHisAndAPressNeverPreemptsIt()
+        {
+            yield return null;
+            _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 11));
+            _lab.CpuBatting = true;
+            _lab.ExecutionVariance = false;
+            _lab.Target = PitchTarget.Middle;
+            int swings = 0;
+            for (int i = 0; i < 40 && swings < 2 && !_lab.Game.IsOver; i++)
+            {
+                double release = _now + _lab.DeliveryLead;
+                _lab.PressSwingButton(_now);                         // the player throws
+                BatterPlan plan = _lab.LastBatterPlan;
+                Assert.IsNotNull(plan, "the CPU bats this pitch");
+                Frame(release + 0.05);
+                _lab.PressSwingButton(_now);                         // a press in flight is not a swing
+                Assert.IsFalse(_lab.LastSwing.HasValue, "the player's press is ignored");
+                if (plan.Swing && swings == 0)
+                {
+                    // His swing, with the PCI his events placed (through the same PCI track as the player's).
+                    while (!_lab.LastSwing.HasValue) Frame(_now + 0.016);
+                    SwingInput s = _lab.LastSwing.Value, expected = plan.Input.Value;
+                    Assert.AreEqual(expected.StartTime, s.StartTime, 1e-9);
+                    Assert.AreEqual(expected.PciX, s.PciX, 1e-9);
+                    Assert.AreEqual(expected.PciZ, s.PciZ, 1e-9);
+                    swings++;
+                }
+                else if (plan.Swing)
+                {
+                    // A long frame gap past the end of the pitch, then a press (the next throw): his swing still counts.
+                    double final = _lab.CurrentPitch.Flight.Final.Time;
+                    int thrown = _lab.PitchesThrown;
+                    _lab.PressSwingButton(release + final + 0.05);
+                    if (_lab.PitchesThrown == thrown)
+                        Assert.IsTrue(_lab.LastSwing.HasValue, "his swing was applied first (the press then fell in the play's double-press grace)");
+                    else
+                    {
+                        PitchOutcome recorded = _lab.Game.Completed.SelectMany(p => p.Pitches).Concat(_lab.Game.Current.Pitches).Last().Outcome;
+                        Assert.That(recorded, Is.Not.EqualTo(PitchOutcome.Ball).And.Not.EqualTo(PitchOutcome.CalledStrike), "recorded as his swing, not a take");
+                    }
+
+                    swings++;
+                    break;
+                }
+
+                while (_lab.StateAt(_now) != BattingState.Ready) Frame(_now + 0.05);
+                Frame(_now + 0.05);
+            }
+
+            Assert.AreEqual(2, swings, "he swung at two pitches");
+        }
+
+        [UnityTest]
         public IEnumerator TheExecutionToggleIsHonoured()
         {
             yield return null;
