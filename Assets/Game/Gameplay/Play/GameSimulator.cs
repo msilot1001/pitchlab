@@ -72,7 +72,8 @@ namespace Pitchlab.Gameplay.Play
             {
                 Situation situation = Game.Situation;
                 BallInPlay ball = BallInPlaySimulation.Run(r.BattedBall, _environment, FieldLayout.Standard);
-                var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, FielderProfile.For, FieldLayout.Standard), situation);
+                PlayPersonnel personnel = Game.Personnel;
+                var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, personnel.Fielder, FieldLayout.Standard), situation, personnel: personnel);
                 play.RunToEnd();
                 Game.Apply(play, info);
                 return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;

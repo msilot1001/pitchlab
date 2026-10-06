@@ -34,7 +34,7 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>The editor's screen area when open (GUI coordinates, origin top-left): clicks there are not swings.</summary>
-        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 336) : Rect.zero;
+        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 380) : Rect.zero;
 
         private void Update()
         {
@@ -49,6 +49,10 @@ namespace Pitchlab.Sandbox
 
             GUILayout.BeginArea(PanelRect, GUI.skin.box);
             GUILayout.Label($"Situation editor (G)  ·  {(_lab.EditorLocked ? "locked: live" : "ready")}");
+            // Player inspector (TASK-017, development): the batter's and the pitcher's ratings.
+            PlayerProfile batter = game.Batter, pitcher = game.TeamOf(game.Fielding).Pitcher;
+            GUILayout.Label($"{batter.Name} {batter.Position}: Con {batter.Ratings.Contact} Pow {batter.Ratings.Power} Vis {batter.Ratings.Vision} Dis {batter.Ratings.Discipline} Spd {batter.Ratings.Speed}");
+            if (pitcher != null) GUILayout.Label($"{pitcher.Name}: Vel {pitcher.Ratings.Velocity} Cmd {pitcher.Ratings.Command} Mov {pitcher.Ratings.Movement} Sta {pitcher.Ratings.Stamina}");
             GUI.enabled = !_lab.EditorLocked;
             int inning = game.Inning, outs = game.Outs, away = game.AwayScore, home = game.HomeScore;
             Half half = game.Half;

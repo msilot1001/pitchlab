@@ -278,11 +278,12 @@ namespace Pitchlab.Tests
 
         // ------------------------------------------------------------------ whole games
 
-        // Seeds chosen to exercise each ending: 1 visitors after nine, 4 home ahead after the top of the 9th, 12 a walk-off in
-        // the 9th, 33 extra innings ending in a walk-off in the 12th (asserted below).
+        // Seeds pinned to exercise each ending with the current rosters and simulator (regression pins — re-chosen when either
+        // changes): 1 visitors after nine, 3 home ahead after the top of the 9th, 14 a walk-off in the 9th, 33 extra innings
+        // ending in a walk-off (asserted below).
         [TestCase(1, "nine innings")]
-        [TestCase(4, "the home team leads after the top of the 9th")]
-        [TestCase(12, "walk-off")]
+        [TestCase(3, "the home team leads after the top of the 9th")]
+        [TestCase(14, "walk-off")]
         [TestCase(33, "walk-off")]
         public void ASimulatedGameIsAValidGame(int seed, string ending)
         {

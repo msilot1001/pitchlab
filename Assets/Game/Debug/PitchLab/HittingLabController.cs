@@ -631,8 +631,10 @@ namespace Pitchlab.Sandbox
                 LastPlay = BallInPlaySimulation.Run(r.BattedBall, Environment, Field);
                 LastCall = FairFoul.Call(LastPlay);
                 Situation situation = Situation;
-                LastFielding = FieldingSolver.Solve(LastPlay, situation.Alignment, FielderProfile.For, Field);
-                LastLive = new LivePlay(LastFielding, situation);
+                // The players on the field (GameLab: the game's rosters; HittingLab: the generic profiles).
+                PlayPersonnel personnel = Game?.Personnel ?? PlayPersonnel.Standard;
+                LastFielding = FieldingSolver.Solve(LastPlay, situation.Alignment, personnel.Fielder, Field);
+                LastLive = new LivePlay(LastFielding, situation, personnel: personnel);
                 LastLive.RunToEnd();
                 BattedBallMetrics flight = LastBattedBall.Metrics;
                 // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.

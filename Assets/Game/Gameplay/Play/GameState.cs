@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Running;
 using Pitchlab.Gameplay.Fielding;
@@ -85,7 +86,9 @@ namespace Pitchlab.Gameplay.Play
             new SituationPreset("Loaded, 2 out", 2, BaseOccupancy.Loaded),
         };
 
-        private readonly Lineup[] _lineups;
+        private readonly Team[] _teams;
+        /// <summary>Who is on first, second and third (TASK-017: runners run with their own ratings).</summary>
+        private readonly PlayerProfile[] _onBase = new PlayerProfile[3];
         private readonly int[] _score = new int[2];
         /// <summary>Each team's next batter (slot 1–9), kept while the other team bats.</summary>
         private readonly int[] _upNext = { 1, 1 };
@@ -95,11 +98,16 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Every play applied (by reference): a play is applied at most once, whatever happens in between.</summary>
         private readonly HashSet<LivePlay> _applied = new HashSet<LivePlay>();
 
-        public GameState() : this(Lineup.GenericAway(), Lineup.GenericHome()) { }
+        /// <summary>A game between the two generic rosters (TASK-017).</summary>
+        public GameState() : this(GenericRosters.Away(), GenericRosters.Home()) { }
 
+        /// <summary>A game between two batting orders only: the generic position profiles field.</summary>
         public GameState(Lineup away, Lineup home)
+            : this(new Team(away?.Team ?? throw new ArgumentNullException(nameof(away)), away), new Team(home?.Team ?? throw new ArgumentNullException(nameof(home)), home)) { }
+
+        public GameState(Team away, Team home)
         {
-            _lineups = new[] { away ?? throw new ArgumentNullException(nameof(away)), home ?? throw new ArgumentNullException(nameof(home)) };
+            _teams = new[] { away ?? throw new ArgumentNullException(nameof(away)), home ?? throw new ArgumentNullException(nameof(home)) };
             Current = NewPlateAppearance();
             _paStart = Capture(clearPitches: true);
         }
@@ -112,7 +120,31 @@ namespace Pitchlab.Gameplay.Play
         public int HomeScore => _score[1];
         /// <summary>The team at bat: the visitors in the top half, the home team in the bottom.</summary>
         public TeamSide Batting => Half == Half.Top ? TeamSide.Away : TeamSide.Home;
-        public Lineup LineupOf(TeamSide team) => _lineups[(int)team];
+        public Lineup LineupOf(TeamSide team) => _teams[(int)team].Lineup;
+        public Team TeamOf(TeamSide team) => _teams[(int)team];
+        /// <summary>The team in the field: the home team in the top half, the visitors in the bottom.</summary>
+        public TeamSide Fielding => Batting == TeamSide.Away ? TeamSide.Home : TeamSide.Away;
+
+        /// <summary>The player on <paramref name="b"/> (null if empty).</summary>
+        public PlayerProfile RunnerOn(Base b) => b == Base.Home ? null : _onBase[(int)b - 1];
+
+        /// <summary>
+        /// The players on the field for the next play, as the simulation uses them (TASK-017): the fielding team's defenders
+        /// (generic position profiles where a team has no rated player there) and the batter and runners with their running.
+        /// </summary>
+        public PlayPersonnel Personnel
+        {
+            get
+            {
+                Team field = TeamOf(Fielding);
+                PlayerProfile batter = Batter;
+                return new PlayPersonnel(
+                    p => field.Fielder(p) is PlayerProfile f ? RatingScale.Fielder(f.Ratings, p) : FielderProfile.For(p),
+                    p => field.Fielder(p) is PlayerProfile f ? RatingScale.Throw(f.Ratings, p) : ThrowProfile.For(p),
+                    p => field.Fielder(p) is PlayerProfile f ? RatingScale.FullThrow(f.Ratings, p) : ThrowProfile.Full(p),
+                    r => (r.IsBatter ? batter : RunnerOn(r.From)) is PlayerProfile who ? RatingScale.Runner(who.Ratings) : RunnerProfile.Standard);
+            }
+        }
         /// <summary>The slot (1–9) due up next for <paramref name="team"/> — for the team at bat, the current batter's.</summary>
         public int UpNext(TeamSide team) => _upNext[(int)team];
 
@@ -156,6 +188,8 @@ namespace Pitchlab.Gameplay.Play
             Bases = bases;
             _score[0] = away;
             _score[1] = home;
+            if (!sameTeam) Array.Clear(_onBase, 0, 3);
+            FillRunners();
             PlateAppearance old = Current;
             Current = NewPlateAppearance(old.Number);
             if (sameTeam) Current.CarryCount(old);
@@ -241,6 +275,7 @@ namespace Pitchlab.Gameplay.Play
                 runs = _score[0] - _score[1] + 1;
                 if (play != null) (outsMade, kind, what) = WalkOff(play, runs, outsMade, kind.Value, what);
             }
+            PlayerProfile[] onBase = RunnersAfter(end, play);
             Current.Complete(end, what, runs, outsMade, kind);
             _completed.Add(Current);
             int team = (int)Batting;
@@ -252,17 +287,20 @@ namespace Pitchlab.Gameplay.Play
             {
                 Outs = Math.Min(outs, OutsPerHalf - 1);
                 Bases = bases;
+                onBase.CopyTo(_onBase, 0);
                 Finish("walk-off");
             }
             else if (outs < OutsPerHalf)
             {
                 Outs = outs;
                 Bases = bases;
+                onBase.CopyTo(_onBase, 0);
             }
             else
             {
                 Outs = 0;
                 Bases = BaseOccupancy.Empty;
+                Array.Clear(_onBase, 0, 3);
                 if (Half == Half.Top && Inning >= RegulationInnings && _score[1] > _score[0])
                     Finish($"the home team leads after the top of the {Ordinal(Inning)}");   // 7.01(e)(1)
                 else if (Half == Half.Bottom && Inning >= RegulationInnings && _score[0] != _score[1])
@@ -343,6 +381,51 @@ namespace Pitchlab.Gameplay.Play
             _log.Add(Result.ToString());
         }
 
+        /// <summary>
+        /// Who is on base after the plate appearance (TASK-017): a walk moves the batter to first and forced runners up one
+        /// base; a strikeout leaves them; a play leaves each runner where it ended him (the batter-runner included).
+        /// </summary>
+        private PlayerProfile[] RunnersAfter(PlateAppearanceEnd end, LivePlay play)
+        {
+            var next = new PlayerProfile[3];
+            switch (end)
+            {
+                case PlateAppearanceEnd.Walk:
+                    next[0] = Current.Batter;
+                    bool forcedToSecond = Bases.First, forcedToThird = Bases.First && Bases.Second;
+                    next[1] = forcedToSecond ? _onBase[0] : _onBase[1];
+                    next[2] = forcedToThird ? _onBase[1] : _onBase[2];
+                    break;
+                case PlateAppearanceEnd.InPlay when play != null:
+                    foreach (LiveRunner r in play.Runners)
+                        if (!r.IsOut && !r.HasScored && r.LastTouched != Base.Home)
+                            next[(int)r.LastTouched - 1] = r.Id.IsBatter ? Current.Batter : _onBase[(int)r.Id.From - 1];
+                    break;
+                default:
+                    _onBase.CopyTo(next, 0);
+                    break;
+            }
+
+            return next;
+        }
+
+        /// <summary>The editor marks bases occupied without saying by whom: the batting team's previous batters stand in.</summary>
+        private void FillRunners()
+        {
+            Lineup lineup = LineupOf(Batting);
+            int back = 1;
+            for (int b = 0; b < 3; b++)
+            {
+                bool occupied = b == 0 ? Bases.First : b == 1 ? Bases.Second : Bases.Third;
+                if (!occupied) _onBase[b] = null;
+                else if (_onBase[b] == null)
+                {
+                    int slot = ((_upNext[(int)Batting] - 1 - back++) % Lineup.Size + Lineup.Size) % Lineup.Size + 1;
+                    _onBase[b] = lineup[slot];
+                }
+            }
+        }
+
         private PlateAppearance NewPlateAppearance() => NewPlateAppearance(_completed.Count + 1);
 
         private PlateAppearance NewPlateAppearance(int number)
@@ -361,6 +444,7 @@ namespace Pitchlab.Gameplay.Play
             public int Inning, Outs, Away, Home, Completed, Log;
             public GameResult Result;
             public bool Started;
+            public PlayerProfile[] OnBase;
             public Half Half;
             public BaseOccupancy Bases;
             public int[] UpNext;
@@ -370,7 +454,7 @@ namespace Pitchlab.Gameplay.Play
         private Snapshot Capture(bool clearPitches) => new Snapshot
         {
             Inning = Inning, Half = Half, Outs = Outs, Bases = Bases, Away = _score[0], Home = _score[1],
-            Completed = _completed.Count, Log = _log.Count, UpNext = (int[])_upNext.Clone(), Result = Result, Started = _started,
+            Completed = _completed.Count, Log = _log.Count, UpNext = (int[])_upNext.Clone(), Result = Result, Started = _started, OnBase = (PlayerProfile[])_onBase.Clone(),
             Current = clearPitches ? NewPlateAppearance(Current.Number) : Current.Copy(),
         };
 
@@ -380,6 +464,7 @@ namespace Pitchlab.Gameplay.Play
             s.UpNext.CopyTo(_upNext, 0);
             Result = s.Result;
             _started = s.Started;
+            s.OnBase.CopyTo(_onBase, 0);
             _completed.RemoveRange(s.Completed, _completed.Count - s.Completed);
             _log.RemoveRange(s.Log, _log.Count - s.Log);
             Current = s.Current.Copy();

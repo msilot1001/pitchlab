@@ -151,7 +151,7 @@ namespace Pitchlab.Sandbox
                 double next = i + 1 < legs.Count ? legs[i + 1].Motion.StartTime : double.PositiveInfinity;
                 // Put out on the way (tagged before he gets there): the slide is cut at the out, not dropped.
                 if (r.IsOut && Math.Abs(next - r.OutTime) < 1e-6) next = double.PositiveInfinity;
-                if (m.Sign > 0.0 && m.EndSpeed == 0.0 && leg.To != Base.First && leg.To != Base.Home && m.Deceleration == play.Profile.SlideDeceleration
+                if (m.Sign > 0.0 && m.EndSpeed == 0.0 && leg.To != Base.First && leg.To != Base.Home && m.Deceleration == r.Profile.SlideDeceleration
                     && m.Target >= leg.Length - 1e-6 && m.ArrivalTime <= next + 1e-6)
                 {
                     // Into second or third: the authoritative slide (its braking phase) — shown as a slide on a close play; with no
