@@ -34,6 +34,9 @@ namespace Pitchlab.Tests
             _view = Object.FindFirstObjectByType<HittingLabPresentation>();
             _now = Time.realtimeSinceStartupAsDouble + 100.0;
             _lab.Clock = () => _now;
+            // These scenarios script pitch locations to test the at-bat loop, not command: pitches are thrown as intended
+            // (TASK-018's execution variance is tested on its own).
+            _lab.ExecutionVariance = false;
         }
 
         private void Frame(double realtime)
@@ -127,6 +130,34 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator ExecutedPitchesDoNotDependOnTheFrameSchedule()
+        {
+            yield return null;
+            // The rated rosters with execution variance (TASK-018): the same game seed gives the same executed pitches at any
+            // frame rate.
+            _lab.ExecutionVariance = true;
+            string Run(double step)
+            {
+                _lab.NewGame();
+                _lab.AutoPitchSeed = 3;
+                _lab.AutoPitch = true;
+                double start = _now;
+                _lab.PressSwingButton(_now);
+                RunAuto(step, start + 40.0);
+                _lab.AutoPitch = false;
+                GameState g = _lab.Game;
+                return string.Join("|", g.Completed.SelectMany(p => p.Pitches).Concat(g.Current.Pitches)
+                    .Select(p => $"{p.Info.Label}@{p.Info.PlateX:R},{p.Info.PlateZ:R}/{p.Info.TargetX:R},{p.Info.TargetZ:R}:{p.Info.SpeedMph:R}:{p.Outcome}"));
+            }
+
+            string a = Run(1.0 / 30.0), b = Run(1.0 / 144.0);
+            Assert.AreEqual(a, b);
+            Assert.Greater(a.Split('|').Length, 6);
+            // Executed, not exact: crossings are off their targets.
+            Assert.IsTrue(_lab.Game.Completed.SelectMany(p => p.Pitches).Any(p => p.Info.HasTarget && System.Math.Abs(p.Info.PlateX - p.Info.TargetX) > 0.05));
+        }
+
+        [UnityTest]
         public IEnumerator TheAutoPitcherReadsTheCountAndThePitchNumber()
         {
             yield return null;
@@ -135,7 +166,7 @@ namespace Pitchlab.Tests
             _lab.AutoPitchSeed = 9;
             _lab.AutoPitch = true;
             _lab.PressSwingButton(_now);
-            Assert.AreEqual(AutoPitcher.Choose(9, game.Current.Number, 4, new Count(3, 0)), _lab.LastCommand, "the 3–0 pitch of this plate appearance");
+            Assert.AreEqual(AutoPitcher.Choose(9, game.Current.Number, 4, new Count(3, 0), game.Pitcher.Repertoire), _lab.LastCommand, "the 3–0 pitch of this plate appearance, from his repertoire");
         }
 
         [UnityTest]
@@ -186,7 +217,9 @@ namespace Pitchlab.Tests
             Assert.AreEqual(PitchTarget.BallUp, _lab.Target);
             int preset = _lab.PresetIndex;
             _lab.OnPitchingKey("x");
-            Assert.AreEqual((preset + 1) % PitchPresetsCount, _lab.PresetIndex);
+            Gameplay.Players.Repertoire rep = _lab.Game.Pitcher.Repertoire;
+            Assert.AreEqual((int)rep.Step((Gameplay.Players.PitchType)preset, 1), _lab.PresetIndex, "the next pitch of his repertoire");
+            Assert.IsTrue(rep.Has((Gameplay.Players.PitchType)_lab.PresetIndex));
             _lab.PressSwingButton(_now);
             Assert.AreEqual(thrown + 1, _lab.PitchesThrown);
             Assert.AreEqual(new PitchCommand(_lab.PresetIndex, PitchTarget.BallUp), _lab.LastCommand);

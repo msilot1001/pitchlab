@@ -35,6 +35,9 @@ namespace Pitchlab.Tests
             Assert.IsNotNull(_hud, "the GameLab has a HUD");
             _now = Time.realtimeSinceStartupAsDouble + 100.0;
             _lab.Clock = () => _now;
+            // These scenarios script pitch locations to test the at-bat loop, not command: pitches are thrown as intended
+            // (TASK-018's execution variance is tested on its own).
+            _lab.ExecutionVariance = false;
         }
 
         private void Frame(double realtime)

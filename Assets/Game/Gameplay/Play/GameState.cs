@@ -106,8 +106,13 @@ namespace Pitchlab.Gameplay.Play
         public GameState(Lineup away, Lineup home)
             : this(new Team(away?.Team ?? throw new ArgumentNullException(nameof(away)), away), new Team(home?.Team ?? throw new ArgumentNullException(nameof(home)), home)) { }
 
-        public GameState(Team away, Team home)
+        public GameState(Team away, Team home) : this(away, home, 1) { }
+
+        /// <param name="seed">The game's seed: every seeded variation (pitch execution, …) derives from it — the same seed and
+        /// inputs replay the same game.</param>
+        public GameState(Team away, Team home, int seed)
         {
+            Seed = seed;
             _teams = new[] { away ?? throw new ArgumentNullException(nameof(away)), home ?? throw new ArgumentNullException(nameof(home)) };
             Current = NewPlateAppearance();
             _paStart = Capture(clearPitches: true);
@@ -125,6 +130,18 @@ namespace Pitchlab.Gameplay.Play
         public Team TeamOf(TeamSide team) => _teams[(int)team];
         /// <summary>The team in the field: the home team in the top half, the visitors in the bottom.</summary>
         public TeamSide Fielding => Batting == TeamSide.Away ? TeamSide.Home : TeamSide.Away;
+        public int Seed { get; }
+        /// <summary>The pitcher on the mound: the fielding team's starter (null for a lineup-only team).</summary>
+        public PlayerProfile Pitcher => TeamOf(Fielding).Pitcher;
+
+        /// <summary>Pitches thrown so far by <paramref name="pitching"/>'s pitcher (recorded pitches: TASK-018 fatigue).</summary>
+        public int PitchCount(TeamSide pitching)
+        {
+            int n = 0;
+            foreach (PlateAppearance pa in _completed) if (pa.Team != pitching) n += pa.Pitches.Count;
+            if (Current.Team != pitching) n += Current.Pitches.Count;
+            return n;
+        }
 
         /// <summary>The player on <paramref name="b"/> (null if empty).</summary>
         public PlayerProfile RunnerOn(Base b) => b == Base.Home ? null : _onBase[(int)b - 1];

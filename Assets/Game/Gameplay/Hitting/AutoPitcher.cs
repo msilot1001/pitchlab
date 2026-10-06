@@ -22,6 +22,32 @@ namespace Pitchlab.Gameplay.Hitting
             { 0.85, 0.75, 0.65 },
         };
 
+        /// <summary>The same from a pitcher's repertoire (TASK-018): his pitches by their usage weights, fastballs (four-seam,
+        /// sinker) weighted ×1.5 when behind in the count and ×0.7 when ahead.</summary>
+        public static PitchCommand Choose(int seed, int plateAppearance, int pitchNumber, Count count, Players.Repertoire repertoire)
+        {
+            if (repertoire == null) return Choose(seed, plateAppearance, pitchNumber, count);
+            PitchCommand where = Choose(seed, plateAppearance, pitchNumber, count);
+            var stream = new SeedStream(seed, plateAppearance, pitchNumber, 0x7E9E);
+            double total = 0.0;
+            foreach (Players.RepertoirePitch p in repertoire.Pitches) total += Weight(p, count);
+            double x = stream.Unit() * total;
+            foreach (Players.RepertoirePitch p in repertoire.Pitches)
+            {
+                x -= Weight(p, count);
+                if (x < 0.0) return new PitchCommand((int)p.Type, where.Target);
+            }
+
+            return new PitchCommand((int)repertoire.Pitches[repertoire.Count - 1].Type, where.Target);
+        }
+
+        private static double Weight(Players.RepertoirePitch p, Count count)
+        {
+            bool fastball = p.Type == Players.PitchType.FourSeam || p.Type == Players.PitchType.Sinker;
+            double bias = count.Balls > count.Strikes ? 1.5 : count.Strikes > count.Balls ? 0.7 : 1.0;
+            return p.Usage * (fastball ? bias : 1.0);
+        }
+
         public static PitchCommand Choose(int seed, int plateAppearance, int pitchNumber, Count count)
         {
             // Each input mixed on its own (no overlapping bit ranges: any seed, any plate appearance and pitch number).

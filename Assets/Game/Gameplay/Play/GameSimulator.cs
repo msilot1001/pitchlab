@@ -43,9 +43,8 @@ namespace Pitchlab.Gameplay.Play
             PlateAppearance pa = Game.Current;
             PlayerProfile batter = pa.Batter;
             int number = pa.Pitches.Count + 1;
-            PitchCommand command = AutoPitcher.Choose(_seed, pa.Number, number, Game.Count);
-            HittingPitch pitch = PitchTargets.Create(command, batter.ZoneBottom, batter.ZoneTop, _environment);
-            PitchInfo info = PitchInfo.Of(PitchPresets.All[command.Preset].Label, pitch);
+            PitchCommand command = AutoPitcher.Choose(_seed, pa.Number, number, Game.Count, Game.Pitcher?.Repertoire);
+            HittingPitch pitch = GamePitches.Create(Game, (Players.PitchType)command.Preset, command.Target, true, _environment, out PitchInfo info, out _);
             Pitches++;
 
             ulong h = Mix(Mix(Mix((ulong)(uint)_seed ^ 0xBA77E5UL) ^ (ulong)(uint)pa.Number) ^ (ulong)(uint)number);
