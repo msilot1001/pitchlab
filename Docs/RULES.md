@@ -107,3 +107,6 @@ The rules ask only two questions: "when does he touch his next base" and "where 
   - the call (OUT AT 1B, SAFE AT 1B, FLY OUT, OUT AT 3B (tag)) appears at its authoritative moment.
 - **HittingLab:** bases are empty; the banner appends the call.
 - **The SAFE scenario:** across ~1,700 grid infield balls with the average runner, the idealized TASK-005 fielding never loses a race to first by itself. Fielders never bobble, field on the run, and transfer in a fixed 0.70 s. The one natural close play the runner wins is the 1B ranging far to his right and racing him to the bag, 0.11 s late. Infield hits on slow choppers need fielding imperfection, which is a known limitation.
+
+## At the plate (TASK-024)
+Hit by pitch, foul tips and check swings are decided by `PitchOutcomes.BeforePlay`; see Docs/HBP_FOULTIP_CHECKSWING.md.

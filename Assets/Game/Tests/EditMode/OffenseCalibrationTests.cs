@@ -22,7 +22,9 @@ namespace Pitchlab.Tests
             public int ZonePitches, OutPitches, ZoneSwings, OutSwings, ZoneContact, OutContact;
             public readonly List<(double Ev, double La, bool HomeRun)> Fair = new List<(double, double, bool)>();
             public double AlongSum, VerticalSum;
-            public int Contacts, Fouls;
+            public int Contacts, Fouls, HitByPitch, FoulTips;
+            public double HitByPitchRate => Pct(HitByPitch, PlateAppearances);
+            public double FoulTipRate => Pct(FoulTips, Pitches);
             public double FoulShare => Pct(Fouls, Contacts);
 
             private static double Pct(double n, double d) => 100.0 * n / Math.Max(1.0, d);
@@ -53,7 +55,7 @@ namespace Pitchlab.Tests
             public double ChaseRate => Pct(OutSwings, OutPitches);
 
             public override string ToString() =>
-                $"{Games} g · R/team-g {RunsPerTeamGame:F2} · HR/team-g {HomeRunsPerTeamGame:F2} · K {KRate:F1}% · BB {BBRate:F1}% · P/PA {Pitches / (double)Math.Max(1, PlateAppearances):F2}\n" +
+                $"{Games} g · R/team-g {RunsPerTeamGame:F2} · HR/team-g {HomeRunsPerTeamGame:F2} · K {KRate:F1}% · BB {BBRate:F1}% · P/PA {Pitches / (double)Math.Max(1, PlateAppearances):F2} · HBP {HitByPitchRate:F2}% · foul tips {FoulTipRate:F2}% of pitches\n" +
                 $"swing: Z {ZoneSwingRate:F0}% O {ChaseRate:F0}% · contact {ContactRate:F1}% (Z {ZoneContactRate:F1}% O {OutContactRate:F1}%)\n" +
                 $"BBE {Fair.Count}: EV {ExitMph:F1} mph · LA {LaunchDeg:F1}° (SD {LaunchSd:F1}) · hard-hit {HardHit:F1}% · barrel {Barrel:F1}% · sweet-spot {SweetSpot:F1}%\n" +
                 $"GB {GroundBall:F0}% LD {LineDrive:F0}% FB {FlyBall:F0}% PU {PopUp:F0}% · HR/FB {HomeRunPerFly:F1}% · fouls {FoulShare:F0}% of contact · |along| {100 * AlongSum / Math.Max(1, Contacts):F1} cm |vertical| {100 * VerticalSum / Math.Max(1, Contacts):F1} cm";
@@ -72,6 +74,7 @@ namespace Pitchlab.Tests
                     PlayerProfile batter = g.Batter;
                     PitchOutcome o = sim.PlayPitch();
                     if (o == PitchOutcome.Foul) s.Fouls++;
+                    if (o == PitchOutcome.FoulTip) s.FoulTips++;
                     if (sim.LastContact is ContactResult r && r.IsContact)
                     {
                         s.Contacts++;
@@ -96,12 +99,13 @@ namespace Pitchlab.Tests
                     s.Pitches += pa.Pitches.Count;
                     if (pa.End == PlateAppearanceEnd.Strikeout) s.Strikeouts++;
                     if (pa.End == PlateAppearanceEnd.Walk) s.Walks++;
+                    if (pa.End == PlateAppearanceEnd.HitByPitch) s.HitByPitch++;
                     if (pa.PlayResult == PlayResultKind.HomeRun || pa.PlayResult == PlayResultKind.InsideTheParkHomeRun) s.HomeRuns++;
                     foreach (PitchEvent e in pa.Pitches)
                     {
                         if (!e.Info.HasCrossing) continue;
                         bool zone = StrikeZone.Contains(e.Info.PlateX, e.Info.PlateZ, pa.Batter.ZoneBottom, pa.Batter.ZoneTop);
-                        bool swung = e.Outcome == PitchOutcome.SwingingStrike || e.Outcome == PitchOutcome.Foul || e.Outcome == PitchOutcome.InPlay;
+                        bool swung = e.Outcome == PitchOutcome.SwingingStrike || e.Outcome == PitchOutcome.FoulTip || e.Outcome == PitchOutcome.Foul || e.Outcome == PitchOutcome.InPlay;   // a foul tip is a whiff (Savant)
                         bool contact = e.Outcome == PitchOutcome.Foul || e.Outcome == PitchOutcome.InPlay;
                         if (zone)
                         {
@@ -141,6 +145,9 @@ namespace Pitchlab.Tests
             Assert.That(s.Barrel, Is.InRange(5.0, 12.0), all);                  // 7.8 %
             Assert.That(s.ContactRate, Is.InRange(62.0, 73.0), all);            // 76.8 %
             Assert.That(s.FoulShare, Is.InRange(37.0, 50.0), all);              // ≈ 52 %
+            // TASK-024 (broad: a 12-game sample has ≈ 15 hit batters and ≈ 20 foul tips).
+            Assert.That(s.HitByPitchRate, Is.InRange(0.4, 3.0), all);           // 1.1 % of PA
+            Assert.That(s.FoulTipRate, Is.InRange(0.15, 1.5), all);             // 1.03 % of pitches
         }
 
         /// <summary>Development report (Docs/OFFENSE_CALIBRATION.md).</summary>

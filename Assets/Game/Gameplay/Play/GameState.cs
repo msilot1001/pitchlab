@@ -277,11 +277,12 @@ namespace Pitchlab.Gameplay.Play
             switch (e.End)
             {
                 case PlateAppearanceEnd.Walk:
+                case PlateAppearanceEnd.HitByPitch:
                     BaseOccupancy walked = Rules.Count.Walk(Bases, out int runs);
-                    End(e.End, "walk", runs, 0, walked, null, null);
+                    End(e.End, e.End == PlateAppearanceEnd.Walk ? "walk" : "hit by pitch", runs, 0, walked, null, null);
                     break;
                 case PlateAppearanceEnd.Strikeout:
-                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : "strikeout swinging", 0, 1, Bases, null, null);
+                    End(e.End, result == PitchOutcome.CalledStrike ? "strikeout looking" : result == PitchOutcome.FoulTip ? "strikeout swinging (foul tip)" : "strikeout swinging", 0, 1, Bases, null, null);
                     break;
                 case PlateAppearanceEnd.InPlay:
                     PlayResultKind kind = PlayResults.Classify(play);
@@ -418,7 +419,7 @@ namespace Pitchlab.Gameplay.Play
         }
 
         /// <summary>
-        /// Who is on base after the plate appearance (TASK-017): a walk moves the batter to first and forced runners up one
+        /// Who is on base after the plate appearance (TASK-017): a walk (or a hit by pitch) moves the batter to first and forced runners up one
         /// base; a strikeout leaves them; a play leaves each runner where it ended him (the batter-runner included).
         /// </summary>
         private PlayerProfile[] RunnersAfter(PlateAppearanceEnd end, LivePlay play)
@@ -427,6 +428,7 @@ namespace Pitchlab.Gameplay.Play
             switch (end)
             {
                 case PlateAppearanceEnd.Walk:
+                case PlateAppearanceEnd.HitByPitch:
                     next[0] = Current.Batter;
                     bool forcedToSecond = Bases.First, forcedToThird = Bases.First && Bases.Second;
                     next[1] = forcedToSecond ? _onBase[0] : _onBase[1];

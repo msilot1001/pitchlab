@@ -71,10 +71,38 @@ namespace Pitchlab.Gameplay.Hitting
         public static PitchOutcome Of(HittingPitch pitch, SwingInput? swing, ContactResult? result, LivePlay play, double zoneBottom, double zoneTop)
         {
             if (pitch == null) throw new ArgumentNullException(nameof(pitch));
-            if (!swing.HasValue) return StrikeZone.IsStrike(pitch, zoneBottom, zoneTop) ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
+            if (!Offered(swing, result)) return StrikeZone.IsStrike(pitch, zoneBottom, zoneTop) ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
             if (!(result is ContactResult r) || !r.IsContact) return PitchOutcome.SwingingStrike;
             if (play == null) throw new ArgumentNullException(nameof(play), "a batted ball has a play");
             return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
+        }
+
+        /// <summary>Did he swing? A swing checked before the offer point is none (TASK-024).</summary>
+        public static bool Offered(SwingInput? swing, ContactResult? result) =>
+            swing.HasValue && !(result is ContactResult r && r.Outcome == ContactOutcome.CheckedSwing);
+
+        /// <summary>
+        /// The pitch's result decided before any play (TASK-024), or null when a batted ball must be played out:
+        /// <list type="bullet">
+        /// <item>contact caught as a foul tip → <see cref="PitchOutcome.FoulTip"/> (Definitions, "Foul tip");</item>
+        /// <item>other contact → null (the play decides);</item>
+        /// <item>no contact and the pitch touches the batter: after a swing a strike, in the zone a strike, otherwise
+        /// <see cref="PitchOutcome.HitByPitch"/> (OBR 5.05(b)(2), Definitions "Strike" (e), (f));</item>
+        /// <item>otherwise a swinging strike, or the zone call for a take (a checked swing is a take).</item>
+        /// </list>
+        /// </summary>
+        public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, BatterSide side, double heightInches, double zoneBottom, double zoneTop) =>
+            BeforePlay(pitch, swing, result, result is ContactResult r && r.IsContact ? null : BatterBody.FirstTouch(pitch, side, heightInches), zoneBottom, zoneTop);
+
+        /// <summary>The same with the batter's touch already found (<paramref name="touch"/>; null: the pitch missed him).</summary>
+        public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, BodyHit? touch, double zoneBottom, double zoneTop)
+        {
+            if (pitch == null) throw new ArgumentNullException(nameof(pitch));
+            if (result is ContactResult r && r.IsContact) return FoulTips.IsCaught(pitch, r) ? PitchOutcome.FoulTip : (PitchOutcome?)null;
+            bool swung = Offered(swing, result), strike = StrikeZone.IsStrike(pitch, zoneBottom, zoneTop);
+            if (swung) return PitchOutcome.SwingingStrike;
+            if (touch.HasValue && !strike) return PitchOutcome.HitByPitch;
+            return strike ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
         }
 
         public static string Describe(PitchOutcome o) => o switch
@@ -83,6 +111,8 @@ namespace Pitchlab.Gameplay.Hitting
             PitchOutcome.CalledStrike => "CALLED STRIKE",
             PitchOutcome.SwingingStrike => "SWINGING STRIKE",
             PitchOutcome.Foul => "FOUL",
+            PitchOutcome.HitByPitch => "HIT BY PITCH",
+            PitchOutcome.FoulTip => "FOUL TIP",
             _ => "IN PLAY",
         };
     }

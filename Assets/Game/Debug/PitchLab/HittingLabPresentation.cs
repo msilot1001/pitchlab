@@ -183,6 +183,7 @@ namespace Pitchlab.Sandbox
 
             if (!ReferenceEquals(_lab.CurrentPitch, _pitch)) ResetForPitch(_lab.CurrentPitch);
             if (_lab.LastSwing.HasValue && !_swing.HasValue) OnSwing(_lab.LastSwing.Value, _lab.LastResult.Value);
+            else if (_lab.LastSwing is SwingInput checkedSwing && _swing.HasValue && !checkedSwing.CheckTime.Equals(_swing.Value.CheckTime)) _swing = checkedSwing;   // checked (TASK-024)
 
             if (!_defense.DrivesPitcher(_lab.LastDefense, t)) AnimatePitcher(t);
             AnimateBatter(t);
@@ -240,9 +241,14 @@ namespace Pitchlab.Sandbox
             // the possession moment.
             _defense.CatcherVisible = _contactShown && _lab.LastFielding?.Primary == DefensivePosition.C || !_lab.CameraBehindPlate;
             // A pitch not put in play ends in the catcher's glove where he can be seen (TASK-014; presentation only).
-            bool received = _pitch != null && !(_lab.LastResult is ContactResult { IsContact: true }) && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
+            // Not after the pitch touched the batter (a dead ball); a caught foul tip is received like a pitch (TASK-024).
+            bool tipped = _lab.LastFoulTip, touched = _lab.LastTouch.HasValue && !(_lab.LastResult is ContactResult { IsContact: true });
+            bool received = _pitch != null && (!(_lab.LastResult is ContactResult { IsContact: true }) || tipped) && !touched && !double.IsNaN(_catchTime) && !_lab.CameraBehindPlate && !double.IsNegativeInfinity(t);
             _defense.CatcherGloveWeight = received ? Mathf.SmoothStep(0f, 1f, (float)((t - _catchTime + CatcherReach) / CatcherReach)) : 0f;
-            _defense.CatcherGlove = _catchPoint;
+            // A caught foul tip: the mitt takes it where its direct path crosses his plane (within the mitt, FoulTips.GloveReach).
+            Vector3 catchPoint = tipped && _lab.LastResult is ContactResult tipResult && FoulTips.DirectPathAt(tipResult.BattedBall) is Vector3d tipAt
+                ? SimulationSpace.ToUnity(tipAt) : _catchPoint;
+            _defense.CatcherGlove = catchPoint;
             // Where they stand: the play's alignment while it is shown, the next situation's once it is over.
             LivePlay shown = _lab.LastLive;
             bool returning = shown != null && shown.IsOver && t > shown.EndTime;
@@ -253,7 +259,8 @@ namespace Pitchlab.Sandbox
             _defense.Show(returning ? null : _lab.LastDefense, t, _lab.BallTransform, _lab.DebugView);
             // In his glove once it is there (a pitch out of his reach flies on).
             Vector3 glove = _defense.Figure(DefensivePosition.C).GloveAnchor.position;
-            if (received && t >= _catchTime && Vector3.Distance(glove, _catchPoint) < CatcherGloveReach) _lab.BallTransform.position = glove;
+            double inGlove = tipped && _lab.LastResult is ContactResult tip ? tip.BattedBall.Time + (CatcherGlovePlaneY - tip.BattedBall.Position.Y) / tip.BattedBall.Velocity.Y : _catchTime;
+            if (received && t >= inGlove && Vector3.Distance(glove, catchPoint) < CatcherGloveReach) _lab.BallTransform.position = glove;
             _baseballCamera.FollowAlso(_contactShown ? _defense.Focus : null);
 
             // Runners (TASK-007): the batter figure hands over to the batter-runner when he starts for first.
@@ -294,7 +301,17 @@ namespace Pitchlab.Sandbox
             if (_pitch == null || double.IsNegativeInfinity(t)) return "Click to pitch";
             BattingState state = BattingStateMachine.At(t, _pitch, _lab.LastSwing, _lab.LastResult, _lab.PlayEnd, _lab.Swing.SwingDuration);
             if (state == BattingState.Ready) return "Click to pitch";
-            if (!(_lab.LastResult is ContactResult r)) return state == BattingState.Result ? (StrikeZone.IsStrike(_pitch, _lab.Zone.Bottom, _lab.Zone.Top) ? "Take · called strike" : "Take · ball") : string.Empty;
+            bool zone = StrikeZone.IsStrike(_pitch, _lab.Zone.Bottom, _lab.Zone.Top);
+            bool hit = _lab.LastTouch is BodyHit touch && t >= touch.Time && !(_lab.LastResult is ContactResult { IsContact: true });
+            if (!(_lab.LastResult is ContactResult r) || r.Outcome == ContactOutcome.CheckedSwing)
+            {
+                string take = _lab.LastResult.HasValue ? "Check swing" : "Take";
+                if (hit) return zone ? $"{take} · hit by the pitch in the zone · strike" : "Hit by pitch";
+                return state == BattingState.Result ? (zone ? $"{take} · called strike" : $"{take} · ball") : string.Empty;
+            }
+
+            if (_lab.LastFoulTip) return t >= r.BattedBall.Time ? "Foul tip · strike" : string.Empty;
+            if (hit) return "Swung · hit by the pitch · strike";
             string timing = ContactFeedback.Timing(r);
             if (!r.IsContact)
                 return t >= _lab.LastSwing.Value.StartTime + _lab.Swing.SwingDuration ? (timing.Length > 0 ? $"Swing and miss · {timing}" : "Swing and miss") : string.Empty;
@@ -431,7 +448,7 @@ namespace Pitchlab.Sandbox
         private bool _freshBatter;
 
         /// <summary>The plane (simulation Y, m) where the crouched catcher's glove takes a pitch (he sets up at −0.76 m).</summary>
-        public const double CatcherGlovePlaneY = -0.35;
+        public const double CatcherGlovePlaneY = FoulTips.CatcherPlaneY;
         /// <summary>How long (s) his glove moves to the pitch before it arrives.</summary>
         private const double CatcherReach = 0.3;
         /// <summary>The glove (pocket) takes the ball only if it got within this distance (m) of it — the IK aims the glove
@@ -522,6 +539,9 @@ namespace Pitchlab.Sandbox
             _adjust = SwingTargeting.Solve(_batter, _sweetSpot, _swingClip, _uContact, target, swingYaw, _pose, out _targetResidual);
         }
 
+        /// <summary>How long (s) a checked bat keeps moving while it is braked (presentation).</summary>
+        private const double CheckStop = 0.04;
+
         private void AnimateBatter(double t)
         {
             if (_pitch == null || double.IsNegativeInfinity(t) || _freshBatter)
@@ -534,8 +554,22 @@ namespace Pitchlab.Sandbox
             }
             else
             {
-                double s = _swing.Value.StartTime, c = s + _lab.Swing.SwingDuration;
+                double s = _swing.Value.StartTime, c = s + _lab.Swing.SwingDuration, stop = _swing.Value.CheckTime;
                 if (t < s) PreSwing(t, _pose);
+                else if (!double.IsNaN(stop))
+                {
+                    // Checked (TASK-024): the bat runs on to the check (plus CheckStop while it is braked), holds, then he
+                    // resets to his stance. Before the offer point by construction: the pose never reaches contact.
+                    double held = Math.Min(t, stop + CheckStop);
+                    _swingClip.Sample(Mathf.Lerp(PreSwingU(s), _uContact, (float)((held - s) / (c - s))), _pose);
+                    float weight = (float)((held - s) / (c - s));
+                    SwingTargeting.Apply(_adjust, Mathf.SmoothStep(0f, 1f, weight), weight, _pose);
+                    if (t > stop + 0.3)
+                    {
+                        _swingClip.Sample(_uStance, _from);
+                        MannequinPose.StepBlend(_pose, _from, Ease((t - stop - 0.3) / 0.6), _pose);
+                    }
+                }
                 else
                 {
                     // Launch → contact is pinned to the authoritative swing: start wherever the pre-swing motion was at the

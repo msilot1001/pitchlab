@@ -83,6 +83,35 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheCheckButtonStopsTheSwingOnlyBeforeTheOffer()
+        {
+            // TASK-024: C / East during the swing. Before the offer point: no swing (the take is called); after it: too late.
+            double now = Time.realtimeSinceStartupAsDouble + 100.0;
+            _lab.Clock = () => now;
+            double RealtimeAt(double simTime) => now + (simTime - _lab.ToSimTime(now));   // playback speed 1
+            _lab.PressSwingButton(now);                                     // throw
+            now += _lab.DeliveryLead + 0.2;
+            _lab.PressSwingButton(now);                                     // swing
+            double offer = _lab.LastSwing.Value.OfferTime(_lab.Swing.SwingDuration);
+            _lab.PressCheckButton(RealtimeAt(offer - 0.005));
+            Assert.AreEqual(ContactOutcome.CheckedSwing, _lab.LastResult.Value.Outcome, "stopped in time");
+            Assert.IsNull(_lab.LastLive, "no play");
+            Assert.AreEqual(offer - 0.005, _lab.LastSwing.Value.CheckTime, 1e-9);
+            yield return null;
+
+            now += 2.0;
+            _lab.PressSwingButton(now);                                     // the next pitch
+            now += _lab.DeliveryLead + 0.2;
+            _lab.PressSwingButton(now);
+            ContactResult swung = _lab.LastResult.Value;
+            offer = _lab.LastSwing.Value.OfferTime(_lab.Swing.SwingDuration);
+            _lab.PressCheckButton(RealtimeAt(offer + 0.005));
+            Assert.AreEqual(swung.Outcome, _lab.LastResult.Value.Outcome, "too late: the swing stands");
+            Assert.IsTrue(double.IsNaN(_lab.LastSwing.Value.CheckTime));
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator PressDuringTheWindupIsIgnored()
         {
             // Wind-up policy B: a press before release can never connect (contact is ~0.4 s after release), so it is

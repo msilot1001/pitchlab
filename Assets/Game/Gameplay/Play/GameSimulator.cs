@@ -38,6 +38,8 @@ namespace Pitchlab.Gameplay.Play
         private readonly List<Misplay> _misplays = new List<Misplay>();
         /// <summary>The last pitch's swing and its contact result (null: a take) — calibration and diagnostics (TASK-023).</summary>
         public ContactResult? LastContact { get; private set; }
+        /// <summary>The last pitch as thrown (diagnostics).</summary>
+        public HittingPitch LastPitch { get; private set; }
         /// <summary>The last ball in play (null before the first).</summary>
         public LivePlay LastPlay { get; private set; }
 
@@ -63,6 +65,7 @@ namespace Pitchlab.Gameplay.Play
             }
 
             Pitches++;
+            LastPitch = pitch;
 
             // The CPU batter (TASK-019): sees the pitch only as it flies, decides, and swings through the contact model.
             SwingParameters swing = SwingParameters.For(batter);
@@ -72,23 +75,25 @@ namespace Pitchlab.Gameplay.Play
             ContactResult? result = input is SwingInput s ? ContactResolver.Resolve(pitch, s, swing) : (ContactResult?)null;
             LastContact = result;
 
-            if (result is ContactResult r && r.IsContact)
+            // Decided at the plate (TASK-024: a caught foul tip, a hit by pitch, a strike, a ball), or a batted ball to play out.
+            PitchOutcome? decided = PitchOutcomes.BeforePlay(pitch, input, result, batter.Bats, batter.HeightInches, batter.ZoneBottom, batter.ZoneTop);
+            if (decided is PitchOutcome outcome)
             {
-                Situation situation = Game.Situation;
-                BallInPlay ball = BallInPlaySimulation.Run(r.BattedBall, _environment, FieldLayout.Standard);
-                PlayPersonnel personnel = Game.Personnel;
-                var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, personnel.Fielder, FieldLayout.Standard), situation, personnel: personnel,
-                    executionSeed: Game.PlaySeed);   // defensive execution (TASK-021)
-                play.RunToEnd();
-                LastPlay = play;
-                _misplays.AddRange(play.Misplays);
-                Game.Apply(play, info);
-                return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
+                Game.Pitch(outcome, info);
+                return outcome;
             }
 
-            PitchOutcome outcome = PitchOutcomes.Of(pitch, input, result, null, batter.ZoneBottom, batter.ZoneTop);
-            Game.Pitch(outcome, info);
-            return outcome;
+            ContactResult r = result.Value;
+            Situation situation = Game.Situation;
+            BallInPlay ball = BallInPlaySimulation.Run(r.BattedBall, _environment, FieldLayout.Standard);
+            PlayPersonnel personnel = Game.Personnel;
+            var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, personnel.Fielder, FieldLayout.Standard), situation, personnel: personnel,
+                executionSeed: Game.PlaySeed);   // defensive execution (TASK-021)
+            play.RunToEnd();
+            LastPlay = play;
+            _misplays.AddRange(play.Misplays);
+            Game.Apply(play, info);
+            return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
         }
 
         /// <summary>Plays until the game is over (or <paramref name="maxPitches"/> pitches, a safety stop).</summary>

@@ -112,4 +112,5 @@ assert the orderings, and a deterministic squared-up swing gives ≥ 4 mph more 
 - O-Contact: ≈ 40–70 % across archetypes (≈ 55 % in games; MLB 62 %). It was too high before TASK-023's reach penalty.
 - Simulated offence is calibrated (TASK-023): ≈ 4.45 runs per team-game, K 21 %, BB 9.5 %. Home runs remain ≈ 2× MLB;
   see Docs/OFFENSE_CALIBRATION.md.
-- One swing (no check swings, no two-strike shortening, no pitch-type guessing, no scouting).
+- One swing (no two-strike shortening, no pitch-type guessing, no scouting). He can check it (TASK-024): he keeps watching
+  until the offer point and stops a swing he took for a strike once it clearly looks a ball (Docs/HBP_FOULTIP_CHECKSWING.md).
