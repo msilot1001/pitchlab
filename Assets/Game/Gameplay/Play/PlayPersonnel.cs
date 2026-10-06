@@ -15,10 +15,11 @@ namespace Pitchlab.Gameplay.Play
         private readonly FielderProfile[] _fielders = new FielderProfile[DefensiveAlignment.Count];
         private readonly ThrowProfile[] _throws = new ThrowProfile[DefensiveAlignment.Count];
         private readonly ThrowProfile[] _fullThrows = new ThrowProfile[DefensiveAlignment.Count];
+        private readonly FielderSkill[] _skills = new FielderSkill[DefensiveAlignment.Count];
         private readonly RunnerProfile[] _runners = new RunnerProfile[4];   // indexed by the base the runner started on (home: the batter)
 
         public PlayPersonnel(Func<DefensivePosition, FielderProfile> fielder, Func<DefensivePosition, ThrowProfile> routineThrow,
-            Func<DefensivePosition, ThrowProfile> fullThrow, Func<Runner, RunnerProfile> runner)
+            Func<DefensivePosition, ThrowProfile> fullThrow, Func<Runner, RunnerProfile> runner, Func<DefensivePosition, FielderSkill> skill = null)
         {
             if (fielder == null || routineThrow == null || fullThrow == null || runner == null) throw new ArgumentNullException(nameof(fielder));
             for (int i = 0; i < DefensiveAlignment.Count; i++)
@@ -27,6 +28,7 @@ namespace Pitchlab.Gameplay.Play
                 _fielders[i] = fielder(p);
                 _throws[i] = routineThrow(p);
                 _fullThrows[i] = fullThrow(p);
+                _skills[i] = skill?.Invoke(p) ?? FielderSkill.Average;
             }
 
             for (int b = 0; b < 4; b++) _runners[b] = runner(new Runner((Simulation.Field.Base)b));
@@ -57,5 +59,7 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>A max-effort throw.</summary>
         public ThrowProfile FullThrow(DefensivePosition p) => _fullThrows[(int)p];
         public RunnerProfile Runner(Runner r) => _runners[(int)r.From];
+        /// <summary>His handling skills (TASK-021; average when the team has no rated player there).</summary>
+        public FielderSkill Skill(DefensivePosition p) => _skills[(int)p];
     }
 }

@@ -3,11 +3,13 @@ using Pitchlab.Simulation.Core;
 
 namespace Pitchlab.Gameplay.Fielding
 {
-    /// <summary>A defender taking the ball: a fielded batted ball, a caught throw, a retrieved loose ball.</summary>
+    /// <summary>A defender taking the ball: a fielded batted ball, a caught throw, a retrieved loose ball — or trying to and
+    /// failing (<see cref="Held"/> false, TASK-021).</summary>
     public readonly struct BallTake
     {
-        public BallTake(double time, DefensivePosition fielder, Vector3d ballPoint, FieldingAction action = FieldingAction.None)
+        public BallTake(double time, DefensivePosition fielder, Vector3d ballPoint, FieldingAction action = FieldingAction.None, bool held = true)
         {
+            Held = held;
             Action = action;
             Time = time;
             Fielder = fielder;
@@ -20,6 +22,8 @@ namespace Pitchlab.Gameplay.Fielding
         public Vector3d BallPoint { get; }
         /// <summary>How he takes it (TASK-011.6).</summary>
         public FieldingAction Action { get; }
+        /// <summary>He held it (TASK-021: false for a misplayed attempt — the reach is shown, the ball stays free).</summary>
+        public bool Held { get; }
     }
 
     /// <summary>

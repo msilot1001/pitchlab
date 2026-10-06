@@ -39,6 +39,35 @@ namespace Pitchlab.Gameplay.Play
         Run,
         Decision,
         PlayOver,
+        /// <summary>A defender failed to hold the ball, or a throw went astray (TASK-021).</summary>
+        Misplay,
+    }
+
+    /// <summary>Which part of the defense misplayed the ball (descriptive — not official scoring's E-numbers).</summary>
+    public enum MisplayKind
+    {
+        /// <summary>A take not held: missed, bobbled or dropped.</summary>
+        FieldingMisplay,
+        /// <summary>A throw the receiver could not hold because of where it went.</summary>
+        ThrowingMisplay,
+    }
+
+    /// <summary>One misplay of a live play (TASK-021).</summary>
+    public readonly struct Misplay
+    {
+        public Misplay(double time, DefensivePosition fielder, MisplayKind kind, string what)
+        {
+            Time = time;
+            Fielder = fielder;
+            Kind = kind;
+            What = what;
+        }
+
+        public double Time { get; }
+        public DefensivePosition Fielder { get; }
+        public MisplayKind Kind { get; }
+        /// <summary>"bobble", "miss", "drop", "dive missed", "throw off target" …</summary>
+        public string What { get; }
     }
 
     /// <summary>One entry of a play's chronological log (debugging, UI, tests).</summary>
@@ -100,8 +129,10 @@ namespace Pitchlab.Gameplay.Play
         /// <param name="runsOnContact">Scripted runners who run on contact whatever their read (lab/test scenarios).</param>
         /// <param name="personnel">The players on the field (TASK-017): defenders' and runners' profiles; generic if null.</param>
         public LivePlay(FieldingPlay fielding, Situation situation, RunnerProfile? profile = null,
-            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null, PlayPersonnel personnel = null)
+            Func<IReadOnlyList<LiveAction>, LiveAction> choose = null, Func<Runner, bool> runsOnContact = null, PlayPersonnel personnel = null,
+            long? executionSeed = null)
         {
+            ExecutionSeed = executionSeed;
             Fielding = fielding;
             Situation = situation;
             Personnel = personnel ?? PlayPersonnel.Standard;
@@ -157,10 +188,18 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The players on the field (TASK-017).</summary>
         public PlayPersonnel Personnel { get; }
         public double ContactTime { get; }
-        public BallKind Kind { get; }
+        /// <summary>What the batted ball is: fixed at contact, except that a fly ball the defense fails to hold becomes a hit
+        /// ball at that moment (TASK-021) — nobody knows before.</summary>
+        public BallKind Kind { get; private set; }
+        /// <summary>The play's seed for defensive execution (TASK-021): takes and throws can then fail. Null: perfect execution
+        /// (the validated deterministic defense of TASK-005–008, used by scenario tests and labs).</summary>
+        public long? ExecutionSeed { get; }
+        /// <summary>The play's misplays, in time order (TASK-021).</summary>
+        public IReadOnlyList<Misplay> Misplays => _misplays;
+        private readonly List<Misplay> _misplays = new List<Misplay>();
         /// <summary>Bases awarded to every runner and the batter (OBR 5.05(a)): 4 for a fair ball over the fence on the fly, 2 for
         /// one that bounces out of the park; 0 otherwise. The ball is dead: the runners advance under the running law, no play.</summary>
-        public int AwardedBases { get; }
+        public int AwardedBases { get; private set; }
         /// <summary>A foul: the ball is dead without an award (a home run or ground-rule double is dead with one).</summary>
         public bool IsFoul => Kind == BallKind.Dead && AwardedBases == 0;
         /// <summary>The live defense: every defender's role and motion, the ball and who has it, the throws, the decisions.</summary>
@@ -449,7 +488,7 @@ namespace Pitchlab.Gameplay.Play
 
         private void MakeOut(LiveRunner r, PlayEventKind kind, double time)
         {
-            if (r.IsDone) return;
+            if (r.IsDone || _deadAfterMisplay) return;   // a dead ball: no play can be made
             // A forced runner tagged off his base is still put out on a force (he lost his right to the base because the
             // batter became a runner): a force out for OBR 5.08(a), at the base he was forced to.
             if (kind == PlayEventKind.TagOut && ForcedAt(r, time)) kind = PlayEventKind.ForceOut;
@@ -584,14 +623,17 @@ namespace Pitchlab.Gameplay.Play
 
         // ------------------------------------------------------------------ ball events (from the live defense)
 
-        internal void ScheduleDefense(double time, Action act, string name) => Schedule(time, act, name);
+        internal void ScheduleDefense(double time, Action act, string name) => Schedule(time, act, DefensePrefix + name);
+
+        private const string DefensePrefix = "defense: ";
 
         /// <summary>A defender took the ball: the batted ball fielded or caught, a throw caught, a loose ball retrieved.</summary>
         internal void OnDefenseTook(DefensivePosition p, double t, bool batted)
         {
+            if (_deadAfterMisplay) return;   // a dead ball: the runners are on their award
             if (batted)
             {
-                Note(t, PlayLogKind.Fielded, null, null, p, $"{(Fielding.Intercept.Kind == InterceptKind.FlyCatch ? "CAUGHT" : "FIELDED")} by {Abbrev(p)}");
+                Note(t, PlayLogKind.Fielded, null, null, p, $"{(Kind == BallKind.Caught ? "CAUGHT" : "FIELDED")} by {Abbrev(p)}");
                 if (Kind == BallKind.Caught)
                 {
                     LiveRunner batter = RunnerOf(Runner.Batter);
@@ -610,14 +652,78 @@ namespace Pitchlab.Gameplay.Play
 
         internal void OnThrowReleased(LiveThrow th)
         {
+            if (_deadAfterMisplay) return;
             string to = th.Target is Base b ? Bases.Name(b).ToUpperInvariant() : "THE CUT-OFF";
             Note(_now, PlayLogKind.Throw, null, th.Target, th.Thrower, $"THROW TO {to} ({Abbrev(th.Thrower)} → {Abbrev(th.Receiver)})");
             foreach (LiveRunner r in _runners)
                 if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, _now), _now);
         }
 
+        /// <summary>A defender failed to hold the ball (or a throw got away): the ball is loose; a fly ball not held is no longer a
+        /// catch; every runner reconsiders.</summary>
+        /// <param name="grounded">A batted fly not held is still catchable until it touches the ground (a missed one): it stops
+        /// being a catch then, not before.</param>
+        internal void OnMisplay(double t, DefensivePosition p, MisplayKind kind, string what, bool batted, double grounded = double.NegativeInfinity)
+        {
+            _misplays.Add(new Misplay(t, p, kind, what));
+            if (batted && Kind == BallKind.Caught)
+            {
+                if (grounded <= t) Kind = DefensiveDecision.IsOutfielder(p) ? BallKind.Hit : BallKind.Grounder;
+                else Schedule(grounded, () => OnFlyGrounded(p, grounded), "fly grounded");
+            }
+
+            Note(t, PlayLogKind.Misplay, null, null, p, $"MISPLAY: {Abbrev(p)} {what}");
+            foreach (LiveRunner r in _runners)
+                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
+        }
+
+        /// <summary>A missed fly touched the ground before anyone held it: no catch any more; the runners reconsider.</summary>
+        private void OnFlyGrounded(DefensivePosition misplayed, double t)
+        {
+            // Caught in the air after the miss (a fly out is recorded), or held now: still a catch.
+            if (_deadAfterMisplay || Kind != BallKind.Caught || Defense.HolderAt(t) != null || _rulesEvents.Any(e => e.Kind == PlayEventKind.FlyOut)) return;
+            Kind = DefensiveDecision.IsOutfielder(misplayed) ? BallKind.Hit : BallKind.Grounder;
+            foreach (LiveRunner r in _runners)
+                if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
+        }
+
+        /// <summary>
+        /// A loose ball left the field after a misplay: the ball is dead. Over the fence on the fly after touching a fielder it is a
+        /// home run (four bases, OBR 5.05(a)(9)); otherwise every runner is awarded two bases (OBR 5.06(b)(4)(G)/(H), simplified:
+        /// counted from the last base he touched when the ball went out — the rule counts from the pitch or the throw). No play
+        /// can be made on them; the play ends when they are there.
+        /// </summary>
+        internal void OnBallOutOfPlay(double t, int bases)
+        {
+            if (IsOver) return;
+            _deadAfterMisplay = true;
+            if (bases == 4) AwardedBases = 4;   // over the fence off the glove: a home run (a two-base award is classified by where the batter ends)
+            _scheduled.RemoveAll(s => s.Name.StartsWith(DefensePrefix, StringComparison.Ordinal));   // nothing more to do with a dead ball
+            Note(t, PlayLogKind.Decision, null, null, null, bases == 4 ? "OVER THE FENCE OFF THE GLOVE: HOME RUN" : "BALL OUT OF PLAY: two bases");
+            foreach (LiveRunner r in _runners)
+                if (!r.IsDone) Award(r, AwardedBase(r.LastTouched, bases), t);
+        }
+
+        /// <summary>Sends <paramref name="r"/> to his awarded base — once he can go: a batter-runner overrunning first walks back
+        /// first, a runner returning to retouch gets back first (checked every 0.1 s).</summary>
+        private void Award(LiveRunner r, Base to, double t)
+        {
+            if (r.IsDone) return;
+            if (r.Phase == RunnerPhase.Overrunning || r.MustRetouch)
+            {
+                Schedule(t + 0.1, () => Award(r, to, _now), $"{r.Id} awaits his award");
+                return;
+            }
+
+            Apply(r, new Intent(IntentKind.Go, to, true), t);
+        }
+
+        /// <summary>The ball left the field after a misplay: dead, runners advancing on the award (TASK-021).</summary>
+        private bool _deadAfterMisplay;
+
         internal void OnLooseBall(double t)
         {
+            if (_deadAfterMisplay) return;
             Note(t, PlayLogKind.Throw, null, null, null, "throw not caught: loose ball");
             foreach (LiveRunner r in _runners)
                 if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
@@ -723,6 +829,7 @@ namespace Pitchlab.Gameplay.Play
             Schedule(decide, () =>
             {
                 if (runner.IsDone || runner.Segments.Count != legsAt || runner.Target != destination) return;   // replanned since
+                if (_deadAfterMisplay) return;   // on a dead-ball award he stops there
                 if (RunnerBrain.GoOn(this, runner, destination, _now))
                 {
                     Base next = BaseLeg.Bases(destination);
@@ -744,7 +851,7 @@ namespace Pitchlab.Gameplay.Play
         private void CheckPlayOver(double t)
         {
             if (IsOver) return;
-            if (Kind == BallKind.Dead)
+            if (Kind == BallKind.Dead || _deadAfterMisplay)
             {
                 if (_runners.All(r => r.IsDone || r.Phase == RunnerPhase.Standing && r.SpeedAt(t) < 1e-6) && t >= Fielding.EndTime) EndPlay(t, "dead ball");
                 return;

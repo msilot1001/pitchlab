@@ -304,7 +304,17 @@ namespace Pitchlab.Sandbox
             if (ContactFeedback.Quality(r, _lab.Swing) is ContactQuality q) line += $" · {ContactFeedback.Describe(q)}";
             BallInPlay play = _lab.LastPlay;
             FieldingPlay fielding = _lab.LastFielding;
-            double possession = fielding?.PossessionTime ?? double.PositiveInfinity;
+            // The first take the defense actually held (TASK-021: the fielding solve's possession may have been misplayed).
+            BallTake? held = null;
+            if (_lab.LastDefense != null)
+                foreach (BallTake k in _lab.LastDefense.Takes)
+                    if (k.Held)
+                    {
+                        held = k;
+                        break;
+                    }
+
+            double possession = _lab.LastDefense != null ? held?.Time ?? double.PositiveInfinity : fielding?.PossessionTime ?? double.PositiveInfinity;
             // The call reads at its decisive moment — or when a defender takes the ball, if that is earlier.
             if (_lab.LastCall is FairFoulResult call && t >= Math.Min(call.At.Time, possession))
             {
@@ -313,8 +323,12 @@ namespace Pitchlab.Sandbox
             }
 
             if (play.FirstGroundContact is BallEvent landing && landing.Time < possession && t >= landing.Time) line += $" · {Units.MetersToFeet(_lab.ShownCarry):0} ft";
-            if (t >= possession && fielding.Primary is DefensivePosition by)
-                line += $" · {(fielding.Intercept.Kind == InterceptKind.FlyCatch ? "caught" : "fielded")} by {Abbreviation(by)}";
+            if (_lab.LastLive != null)
+                foreach (Misplay m in _lab.LastLive.Misplays)
+                    if (t >= m.Time) line += $" · MISPLAY {Abbreviation(m.Fielder)} {m.What}";
+            DefensivePosition? taker = held?.Fielder ?? fielding?.Primary;
+            if (t >= possession && taker is DefensivePosition by)
+                line += $" · {(_lab.LastLive?.Kind == LivePlay.BallKind.Caught || _lab.LastLive == null && fielding.Intercept.Kind == InterceptKind.FlyCatch ? "caught" : "fielded")} by {Abbreviation(by)}";
             else if (t >= play.EndTime && play.EndPhase == BallPhase.Rest) line += $" (rests {Units.MetersToFeet(play.FinalDistance):0} ft)";
             LiveThrow th = null;
             if (_lab.LastDefense != null)

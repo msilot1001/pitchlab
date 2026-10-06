@@ -45,6 +45,8 @@ namespace Pitchlab.Gameplay.Play
             if (!play.IsOver) throw new InvalidOperationException("Classify a play once it is over.");
             if (play.IsFoul) throw new ArgumentException("A foul is not a play result.", nameof(play));
             if (play.AwardedBases == 4) return PlayResultKind.HomeRun;
+            // A fair ball bouncing over the fence. (A misplayed ball out of play is a two-base award for every runner, not a
+            // ground-rule double: the batter's result is where he ends, labelled with the misplay — TASK-021.)
             if (play.AwardedBases == 2) return PlayResultKind.GroundRuleDouble;
 
             int outs = play.OutsMade;

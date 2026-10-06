@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Rules;
@@ -32,6 +33,11 @@ namespace Pitchlab.Gameplay.Play
 
         public GameState Game { get; }
         public int Pitches { get; private set; }
+        /// <summary>Every misplay of the game so far (TASK-021).</summary>
+        public IReadOnlyList<Misplay> Misplays => _misplays;
+        private readonly List<Misplay> _misplays = new List<Misplay>();
+        /// <summary>The last ball in play (null before the first).</summary>
+        public LivePlay LastPlay { get; private set; }
 
         /// <summary>Plays one pitch (and its play, if put in play) into the game.</summary>
         public PitchOutcome PlayPitch()
@@ -68,8 +74,11 @@ namespace Pitchlab.Gameplay.Play
                 Situation situation = Game.Situation;
                 BallInPlay ball = BallInPlaySimulation.Run(r.BattedBall, _environment, FieldLayout.Standard);
                 PlayPersonnel personnel = Game.Personnel;
-                var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, personnel.Fielder, FieldLayout.Standard), situation, personnel: personnel);
+                var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, personnel.Fielder, FieldLayout.Standard), situation, personnel: personnel,
+                    executionSeed: Game.PlaySeed);   // defensive execution (TASK-021)
                 play.RunToEnd();
+                LastPlay = play;
+                _misplays.AddRange(play.Misplays);
                 Game.Apply(play, info);
                 return play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay;
             }

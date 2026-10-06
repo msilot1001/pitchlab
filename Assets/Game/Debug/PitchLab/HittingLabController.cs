@@ -138,8 +138,9 @@ namespace Pitchlab.Sandbox
         public const double AutoHitchTolerance = 0.25;
 
         /// <summary>
-        /// Pitch execution (TASK-018, GameLab): the pitcher's command spreads his pitches around the target. Off: the intended
-        /// pitch exactly (debug). The labs without a game always throw the presets exactly.
+        /// Execution variance (GameLab): the pitcher's command spreads his pitches around the target (TASK-018), and defenders
+        /// can misplay the ball and throw off target (TASK-021). Off: the intended pitch exactly and the deterministic perfect
+        /// defense (debug, scripted scenarios). The labs without a game are always exact.
         /// </summary>
         public bool ExecutionVariance { get; set; } = true;
         /// <summary>How the current pitch's execution differed from the intent (null without variance or a rated pitcher).</summary>
@@ -750,7 +751,8 @@ namespace Pitchlab.Sandbox
                 // The players on the field (GameLab: the game's rosters; HittingLab: the generic profiles).
                 PlayPersonnel personnel = Game?.Personnel ?? PlayPersonnel.Standard;
                 LastFielding = FieldingSolver.Solve(LastPlay, situation.Alignment, personnel.Fielder, Field);
-                LastLive = new LivePlay(LastFielding, situation, personnel: personnel);
+                // Defensive execution (TASK-021) with the variance toggle: misplays possible in a game; exact otherwise.
+                LastLive = new LivePlay(LastFielding, situation, personnel: personnel, executionSeed: Game != null && ExecutionVariance ? Game.PlaySeed : (long?)null);
                 LastLive.RunToEnd();
                 BattedBallMetrics flight = LastBattedBall.Metrics;
                 // Carry is the first ground contact; off or over the fence, the projected (airborne-only) distance, as Statcast.
