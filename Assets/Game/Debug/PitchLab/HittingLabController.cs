@@ -473,13 +473,20 @@ namespace Pitchlab.Sandbox
         /// <summary>Simulates the selected pitch; it is released at <paramref name="releaseRealtime"/> on the shared clock.</summary>
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
+            DriveCpuBatter(Clock());   // the CPU batter's due events first: a throw never pre-empts his swing
             ApplyResult();   // a press during a play skips its remainder: its result stands
             if (Game != null && Game.IsOver) return;   // the game is over: no more pitches (NewGame starts the next)
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
             // The game's batter (GameLab): his side for the swing, his zone for the call — fixed for this pitch.
             PitchBatter = Game?.Batter;
-            // His swing (TASK-019): his side and his bat speed from Power — the same swing the simulator gives him.
-            if (PitchBatter != null) _swing = SwingParameters.For(PitchBatter);
+            // His swing (TASK-019): his side and his bat speed from Power; the rest is the lab's swing (the scene's is the
+            // default — the swing the simulator gives him).
+            if (PitchBatter != null)
+            {
+                SwingParameters his = SwingParameters.For(PitchBatter);
+                _swing.Side = his.Side;
+                _swing.BatSpeed = his.BatSpeed;
+            }
             DrawZone(Zone);
             // The auto pitcher's choice is this pitch's only — the manual selection stays as the player left it.
             int preset = _presetIndex;

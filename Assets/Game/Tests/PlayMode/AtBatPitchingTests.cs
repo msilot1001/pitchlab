@@ -202,7 +202,7 @@ namespace Pitchlab.Tests
             _lab.ExecutionVariance = false;
             _lab.Target = PitchTarget.Middle;
             int swings = 0;
-            for (int i = 0; i < 40 && swings < 2 && !_lab.Game.IsOver; i++)
+            for (int i = 0; i < 60 && swings < 3 && !_lab.Game.IsOver; i++)
             {
                 double release = _now + _lab.DeliveryLead;
                 _lab.PressSwingButton(_now);                         // the player throws
@@ -221,6 +221,16 @@ namespace Pitchlab.Tests
                     Assert.AreEqual(expected.PciZ, s.PciZ, 1e-9);
                     swings++;
                 }
+                else if (plan.Swing && swings == 2)
+                {
+                    // A direct throw (StartPlateAppearance) after the pitch, with no frame since: his swing is applied first.
+                    _now = release + _lab.CurrentPitch.Flight.Final.Time + 0.05;   // the clock moves; no frame renders
+                    _lab.StartPlateAppearance();
+                    PitchOutcome recorded = _lab.Game.Completed.SelectMany(p => p.Pitches).Concat(_lab.Game.Current.Pitches).Last().Outcome;
+                    Assert.That(recorded, Is.Not.EqualTo(PitchOutcome.Ball).And.Not.EqualTo(PitchOutcome.CalledStrike), "a direct throw: his swing, not a take");
+                    swings++;
+                    break;
+                }
                 else if (plan.Swing)
                 {
                     // A long frame gap past the end of the pitch, then a press (the next throw): his swing still counts.
@@ -236,14 +246,34 @@ namespace Pitchlab.Tests
                     }
 
                     swings++;
-                    break;
                 }
 
                 while (_lab.StateAt(_now) != BattingState.Ready) Frame(_now + 0.05);
                 Frame(_now + 0.05);
             }
 
-            Assert.AreEqual(2, swings, "he swung at two pitches");
+            Assert.AreEqual(3, swings, "he swung at three pitches");
+        }
+
+        [UnityTest]
+        public IEnumerator APitchInTheDirtIsShownWithoutErrors()
+        {
+            yield return null;
+            // Execution can bounce a low pitch before the contact plane (no ideal contact time): the batter's motion must
+            // still be finite (an error log fails the test).
+            _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 5));
+            _lab.ExecutionVariance = true;
+            _lab.Target = PitchTarget.BallDown;
+            for (int i = 0; i < 300 && !_lab.Game.IsOver; i++)
+            {
+                _lab.StartPlateAppearance();
+                if (!_lab.CurrentPitch.ReachesContactPlane) break;
+            }
+
+            Assert.IsFalse(_lab.CurrentPitch.ReachesContactPlane, "a pitch in the dirt was thrown");
+            double release = _now + _lab.DeliveryLead;
+            while (_now < release + _lab.CurrentPitch.Flight.Final.Time + 2.0) Frame(_now + 0.02);
+            Assert.IsTrue(float.IsFinite(_view.transform.position.x));
         }
 
         [UnityTest]

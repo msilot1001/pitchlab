@@ -33,7 +33,15 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
 - [x] EditMode tests: determinism, future-blind, same-input, timing/aim error vs Contact, discipline/chase, count, contact
   and power ordering, archetype regression guard. PlayMode: frame-rate independence (CPU vs CPU in the lab), the player
   cannot swing for him.
-- [ ] Re-pin simulator seeds; check.sh; runtime walkthrough; reviews (physics, Unity, test); Codex; merge.
+- [x] Reviews: physics (timing truncation → commit before the pre-drawn press; looming depth noise; NaN guard), Unity
+  (due CPU events before any press or throw; the stale plan no longer locks the player out; panel shows the decision only
+  once made), test (Y in the other-future test; isolated timing/aim/vision tests; squared-up power; dirt, lefty,
+  simulator-replay tests; PCI equality in the lab). Seeds re-pinned. check.sh green.
+- [x] Runtime (GameLab, CPU vs auto pitcher, real time): called strikes, balls taken, a chase (four-seamer up, swinging
+  strike), swinging strikes, fouls, two home runs, a 7-pitch plate appearance. Found a presentation NaN when a pitch
+  bounces before the contact plane (latent since TASK-018's execution spread): fixed, with a PlayMode test.
+- [x] Codex: B — fixed (flush due CPU events before a direct throw; the lab keeps its own swing fields, side and bat speed
+  from the batter). Merged.
 
 ## Known discrepancies
 O-Contact is too high (≈ 70–80 % vs 56 %). Simulated offence is too high (also the basic pitcher, TASK-020). See

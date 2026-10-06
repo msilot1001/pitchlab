@@ -550,9 +550,10 @@ namespace Pitchlab.Sandbox
             MannequinPose.Blend(_pose, _pose, 0f, _batterShown);
         }
 
-        /// <summary>Clip position before any swing: the reference timing relative to the expected contact, holding at launch-ready.</summary>
+        /// <summary>Clip position before any swing: the reference timing relative to the expected contact, holding at launch-ready.
+        /// A pitch that never reaches the contact plane (in the dirt) is timed to the end of its flight.</summary>
         private float PreSwingU(double t) =>
-            Mathf.Min(_uLaunch, ReferenceMotions.SwingU((float)(t - _pitch.IdealContactTime)));
+            Mathf.Min(_uLaunch, ReferenceMotions.SwingU((float)(t - (_pitch.ReachesContactPlane ? _pitch.IdealContactTime : _pitch.Flight.Final.Time))));
 
         /// <summary>Stance → load → stride → plant toward the expected contact; after a take, back to the stance.</summary>
         private void PreSwing(double t, MannequinPose into)
