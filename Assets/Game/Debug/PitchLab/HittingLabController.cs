@@ -144,6 +144,17 @@ namespace Pitchlab.Sandbox
         public bool ExecutionVariance { get; set; } = true;
         /// <summary>How the current pitch's execution differed from the intent (null without variance or a rated pitcher).</summary>
         public ExecutionError? LastExecution { get; private set; }
+        /// <summary>
+        /// The CPU batter (TASK-019, GameLab; B): he bats instead of the player — his aim and swing events enter the same
+        /// timestamped PCI track and swing path as the player's, at their own times. The player's aim and swing are ignored
+        /// while he bats. Takes effect from the next pitch.
+        /// </summary>
+        public bool CpuBatting { get => _cpuBatting; set => _cpuBatting = value && _gameMode; }
+        private bool _cpuBatting;
+        /// <summary>The CPU batter's events for the current pitch (null when the player bats it).</summary>
+        public BatterPlan LastBatterPlan { get; private set; }
+        private int _cpuAimNext;
+
         /// <summary>The pitcher of the current pitch (GameLab).</summary>
         public PlayerProfile PitchPitcher { get; private set; }
 
@@ -313,13 +324,14 @@ namespace Pitchlab.Sandbox
         {
             if (!(device is Mouse mouse) || _pciTrack == null) return;
             if (_requireMouseCapture && !MouseCaptured) return;
+            if (LastBatterPlan != null) return;   // the CPU batter has the PCI
             if (!eventPtr.IsA<StateEvent>() && !eventPtr.IsA<DeltaStateEvent>()) return;
             if (!mouse.delta.ReadValueFromEvent(eventPtr, out Vector2 delta) || delta == Vector2.zero) return;
             _pciTrack.Move(eventPtr.time, delta.x * _mouseSensitivity, delta.y * _mouseSensitivity);
         }
 
         /// <summary>Keyboard keys of the pitcher controls: the nine zone spots (PitchTarget order), then the four balls.</summary>
-        private static readonly string[] PitchingKeys = { "u", "i", "o", "j", "k", "l", "n", "m", "comma", "7", "8", "9", "0", "z", "x", "p" };
+        private static readonly string[] PitchingKeys = { "u", "i", "o", "j", "k", "l", "n", "m", "comma", "7", "8", "9", "0", "z", "x", "p", "b" };
 
         /// <summary>A pitcher control (key or gamepad control name).</summary>
         public void OnPitchingKey(string control)
@@ -329,6 +341,7 @@ namespace Pitchlab.Sandbox
             else if (control == "z" || control == "leftShoulder") StepPitchType(-1);
             else if (control == "x" || control == "rightShoulder") StepPitchType(1);
             else if (control == "p" || control == "buttonNorth") AutoPitch = !AutoPitch;
+            else if (control == "b") CpuBatting = !CpuBatting;
         }
 
         /// <summary>The pitch type keys: through the pitcher's repertoire in the GameLab, through every preset otherwise.</summary>
@@ -446,6 +459,8 @@ namespace Pitchlab.Sandbox
             Game = game ?? new GameState(GenericRosters.Away(), GenericRosters.Home(), NextGameSeed++);
             _resultPending = false;
             _autoArmed = Clock();   // auto pitching (if on) resumes AutoPitchDelay from now
+            if (LastBatterPlan != null) ResyncAim();
+            LastBatterPlan = null;   // the old game's batter no longer has the PCI
             ClearPitch();
             CurrentPitch = null;
             PitchBatter = null;
@@ -458,12 +473,20 @@ namespace Pitchlab.Sandbox
         /// <summary>Simulates the selected pitch; it is released at <paramref name="releaseRealtime"/> on the shared clock.</summary>
         public void ThrowPitch(int presetIndex, double releaseRealtime)
         {
+            DriveCpuBatter(Clock());   // the CPU batter's due events first: a throw never pre-empts his swing
             ApplyResult();   // a press during a play skips its remainder: its result stands
             if (Game != null && Game.IsOver) return;   // the game is over: no more pitches (NewGame starts the next)
             _presetIndex = ((presetIndex % Presets.Length) + Presets.Length) % Presets.Length;
             // The game's batter (GameLab): his side for the swing, his zone for the call — fixed for this pitch.
             PitchBatter = Game?.Batter;
-            if (PitchBatter != null) _swing.Side = PitchBatter.Bats;
+            // His swing (TASK-019): his side and his bat speed from Power; the rest is the lab's swing (the scene's is the
+            // default — the swing the simulator gives him).
+            if (PitchBatter != null)
+            {
+                SwingParameters his = SwingParameters.For(PitchBatter);
+                _swing.Side = his.Side;
+                _swing.BatSpeed = his.BatSpeed;
+            }
             DrawZone(Zone);
             // The auto pitcher's choice is this pitch's only — the manual selection stays as the player left it.
             int preset = _presetIndex;
@@ -495,6 +518,16 @@ namespace Pitchlab.Sandbox
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             ClearPitch();
+            // The CPU batter's events for this pitch: made from what he sees of the flight up to each event's time.
+            bool handBack = LastBatterPlan != null;
+            LastBatterPlan = null;
+            _cpuAimNext = 0;
+            if (CpuBatting && Game != null && PitchBatter != null)
+            {
+                SeedStream stream = CpuBatter.StreamFor(Game.Seed, PitchBatter.Id, Game.Current.Number, Game.Current.Pitches.Count + 1);
+                LastBatterPlan = CpuBatter.Plan(CpuBatter.Observe(CurrentPitch), PitchBatter, Game.Count, _swing, CurrentPitch.ContactPlaneY, ref stream);
+            }
+            else if (handBack) ResyncAim();
             _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
             PitchesThrown++;
             _pitchLabel = $"{Presets[preset].Label} ({(target is PitchTarget named ? PitchTargets.Name(named) : "preset aim")})";
@@ -565,13 +598,14 @@ namespace Pitchlab.Sandbox
         /// </summary>
         public void PressSwingButton(double eventRealtime)
         {
+            DriveCpuBatter(eventRealtime);   // his events due by then come first: a press never pre-empts his swing
             switch (StateAt(eventRealtime))
             {
                 case BattingState.PitchInFlight:
                     // One swing per pitch: a second press stamped earlier than the first (another device's event handled
                     // later in the same update) reads as "before the swing" but must not swing again.
                     // A press stamped before the end of the pitch but handled after its take was counted is too late.
-                    if (!LastSwing.HasValue && (Game == null || _resultPending)) SwingAtSimTime(ToSimTime(eventRealtime));
+                    if (LastBatterPlan == null && !LastSwing.HasValue && (Game == null || _resultPending)) SwingAtSimTime(ToSimTime(eventRealtime));
                     return;
                 case BattingState.Windup:
                 case BattingState.Swinging:
@@ -597,6 +631,7 @@ namespace Pitchlab.Sandbox
         // other gamepads deliver every report. Button presses (swing) are never merged.
         private void OnAim(InputAction.CallbackContext context)
         {
+            if (LastBatterPlan != null) return;   // the CPU batter has the PCI
             Vector2 aim = context.ReadValue<Vector2>();
             _pciTrack.SetVelocity(context.time, aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
         }
@@ -615,6 +650,7 @@ namespace Pitchlab.Sandbox
                 _zoneBatter = atBat;
                 DrawZone((atBat.ZoneBottom, atBat.ZoneTop));   // the outline follows the batter who steps in
             }
+            DriveCpuBatter(now);
             // The result of the pitch on screen, once decided (a take waits InputGrace for a late swing event).
             if (CurrentPitch != null && _resultPending)
             {
@@ -642,6 +678,32 @@ namespace Pitchlab.Sandbox
             _ball.position = SimulationSpace.ToUnity(LastDefense != null && t >= LastPlay.First.Time
                 ? LastDefense.BallPositionAt(t)
                 : CurrentPitch.Flight.StateAt(t).Position);
+        }
+
+        /// <summary>The player has the PCI back: the stick he may be holding moves it from now (its last event was ignored).</summary>
+        private void ResyncAim()
+        {
+            if (_aimAction == null) return;
+            Vector2 aim = _aimAction.ReadValue<Vector2>();
+            _pciTrack.SetVelocity(Clock(), aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
+        }
+
+        /// <summary>The CPU batter's events up to <paramref name="now"/>, each at its own time (frame-independent): his PCI
+        /// placements, then his swing — which reads the PCI where it was at the press, as the player's does.</summary>
+        private void DriveCpuBatter(double now)
+        {
+            BatterPlan plan = LastBatterPlan;
+            if (plan == null || CurrentPitch == null) return;
+            double RealtimeOf(double simTime) => _pitchStartRealtime + simTime / _pitchPlaybackSpeed;
+            for (; _cpuAimNext < plan.Aim.Count && RealtimeOf(plan.Aim[_cpuAimNext].Time) <= now; _cpuAimNext++)
+            {
+                AimEvent e = plan.Aim[_cpuAimNext];
+                (double u, double v) = Pci.ToNormalized(e.X, e.Z);
+                _pciTrack.SetVelocity(RealtimeOf(e.Time), 0.0, 0.0);
+                _pciTrack.Place(RealtimeOf(e.Time), u, v);
+            }
+
+            if (plan.Swing && !LastSwing.HasValue && _resultPending && RealtimeOf(plan.SwingStart) <= now) SwingAtSimTime(plan.SwingStart);
         }
 
         /// <summary>The pitch's result into the game (once; when it is decided — the end of the pitch or the swing, the play's

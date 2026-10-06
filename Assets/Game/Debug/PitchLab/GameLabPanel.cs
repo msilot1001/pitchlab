@@ -34,7 +34,7 @@ namespace Pitchlab.Sandbox
         }
 
         /// <summary>The editor's screen area when open (GUI coordinates, origin top-left): clicks there are not swings.</summary>
-        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 380) : Rect.zero;
+        private Rect PanelRect => _showEditor ? new Rect(Screen.width - 330, 10, 320, 400) : Rect.zero;
 
         private void Update()
         {
@@ -53,6 +53,12 @@ namespace Pitchlab.Sandbox
             PlayerProfile batter = game.Batter, pitcher = game.TeamOf(game.Fielding).Pitcher;
             GUILayout.Label($"{batter.Name} {batter.Position}: Con {batter.Ratings.Contact} Pow {batter.Ratings.Power} Vis {batter.Ratings.Vision} Dis {batter.Ratings.Discipline} Spd {batter.Ratings.Speed}");
             if (pitcher != null) GUILayout.Label($"{pitcher.Name}: Vel {pitcher.Ratings.Velocity} Cmd {pitcher.Ratings.Command} Mov {pitcher.Ratings.Movement} Sta {pitcher.Ratings.Stamina}");
+            // The CPU batter (TASK-019, B): his decision once he has made it (the plan exists from the throw).
+            BatterPlan plan = _lab.LastBatterPlan;
+            string cpu = plan == null ? (_lab.CpuBatting ? "on from the next pitch" : "off")
+                : double.IsNaN(plan.DecisionTime) || _lab.SimTime < plan.DecisionTime ? "watching…"
+                : $"{(plan.Swing ? "SWING" : "TAKE")} · saw ({plan.PredictedX * 39.37:F0}, {plan.PredictedZ * 39.37:F0}) in · strike {plan.StrikeBelief:P0} · swing {plan.SwingChance:P0}";
+            GUILayout.Label($"CPU batter (B): {cpu}");
             GUI.enabled = !_lab.EditorLocked;
             int inning = game.Inning, outs = game.Outs, away = game.AwayScore, home = game.HomeScore;
             Half half = game.Half;
