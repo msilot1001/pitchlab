@@ -9,6 +9,7 @@ using Pitchlab.Presentation;
 using Pitchlab.Sandbox;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Field;
+using Pitchlab.Simulation.Pitching;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
@@ -140,8 +141,7 @@ namespace Pitchlab.Tests
             string Run(params double[] steps)
             {
                 _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 7));
-                _lab.AutoPitchSeed = 3;
-                _lab.AutoPitch = true;
+                _lab.AutoPitch = true;   // the CPU pitcher: his calls follow the game's seed
                 double start = _now;
                 _lab.PressSwingButton(_now);
                 int k = 0;
@@ -171,11 +171,11 @@ namespace Pitchlab.Tests
             {
                 _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 11));
                 _lab.CpuBatting = true;
-                _lab.AutoPitchSeed = 3;
-                _lab.AutoPitch = true;
+                _lab.AutoPitch = true;   // the CPU pitcher: his calls follow the game's seed
                 double start = _now;
                 _lab.PressSwingButton(_now);
                 int k = 0;
+                // 120 s: balls in play take long, and the sample must hold takes and swings.
                 while (_now < start + 120.0) Frame(_now + steps[k++ % steps.Length]);
                 _lab.AutoPitch = false;
                 _lab.CpuBatting = false;
@@ -301,7 +301,7 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
-        public IEnumerator TheAutoPitcherReadsTheCountAndThePitchNumber()
+        public IEnumerator TheCpuPitcherCallsAndThrowsTheThreeOhPitch()
         {
             yield return null;
             GameState game = _lab.Game;
@@ -312,6 +312,23 @@ namespace Pitchlab.Tests
             Assert.AreEqual(expected.ToString(), _lab.LastDecision?.ToString(), "the 3–0 pitch of this plate appearance, from his repertoire");
             Assert.AreEqual(expected.TargetX, _lab.LastDecision.Value.TargetX);
             Assert.IsTrue(game.Pitcher.Repertoire.Has(expected.Type));
+            // The thrown pitch is his call: its type and its target.
+            Assert.AreEqual(PitchPresets.All[(int)expected.Type].Label, _lab.CurrentPitchInfo.Label);
+            Assert.AreEqual(expected.TargetX, _lab.CurrentPitchInfo.TargetX, 1e-12);
+            Assert.AreEqual(expected.TargetZ, _lab.CurrentPitchInfo.TargetZ, 1e-12);
+        }
+
+        [UnityTest]
+        public IEnumerator ManualPitchingIsUntouchedByTheCpuPitcher()
+        {
+            yield return null;
+            _lab.AutoPitch = false;
+            _lab.Target = PitchTarget.DownLeft;
+            _lab.PressSwingButton(_now);
+            Assert.IsNull(_lab.LastDecision, "the player called it");
+            (double tx, double tz) = PitchTargets.Point(PitchTarget.DownLeft, _lab.Game.Batter.ZoneBottom, _lab.Game.Batter.ZoneTop);
+            Assert.AreEqual(tx, _lab.CurrentPitchInfo.TargetX, 1e-12);
+            Assert.AreEqual(tz, _lab.CurrentPitchInfo.TargetZ, 1e-12);
         }
 
         [UnityTest]

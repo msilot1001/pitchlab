@@ -158,6 +158,8 @@ namespace Pitchlab.Sandbox
         /// <summary>The pitcher of the current pitch (GameLab).</summary>
         public PlayerProfile PitchPitcher { get; private set; }
 
+        /// <summary>The current pitch as recorded (type, speed, target and crossing; computed once at the throw).</summary>
+        public PitchInfo CurrentPitchInfo => _pitchInfo;
         /// <summary>The CPU pitcher's call for the current pitch (TASK-020; null when the player called it or the pitcher is
         /// unrated).</summary>
         public PitchDecision? LastDecision { get; private set; }
@@ -545,7 +547,9 @@ namespace Pitchlab.Sandbox
             else if (handBack) ResyncAim();
             _resultPending = Game != null;   // every pitch has a result for the game: a take, a miss or a play
             PitchesThrown++;
-            _pitchLabel = $"{Presets[preset].Label} ({(target is PitchTarget named ? PitchTargets.Name(named) : "preset aim")})";
+            _pitchLabel = LastDecision is PitchDecision called
+                ? $"{Presets[preset].Label} ({called.Location}, {called.Intent.ToString().ToLowerInvariant()})"
+                : $"{Presets[preset].Label} ({(target is PitchTarget named ? PitchTargets.Name(named) : "preset aim")})";
             _readout = $"{_pitchLabel}: swing (Space / A)!";
         }
 

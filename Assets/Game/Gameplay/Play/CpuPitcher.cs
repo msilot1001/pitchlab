@@ -63,8 +63,9 @@ namespace Pitchlab.Gameplay.Play
         private static readonly double[] Ahead = { 0.12, 0.45, 0.35, 0.08 };
         private static readonly double[] OhTwo = { 0.04, 0.30, 0.48, 0.18 };
 
-        /// <summary>A pitch just off the zone is this far beyond the edge (m, ball centre); a waste pitch this far. An edge pitch
-        /// is aimed this far inside the edge (his miss spreads it both ways).</summary>
+        /// <summary>A pitch just off the zone is this far beyond the edge where the call changes (m, ball centre past the zone
+        /// widened by the ball's radius); a waste pitch this far. An edge pitch is aimed this far inside the zone's edge (his
+        /// miss spreads it both ways).</summary>
         public const double ChaseBeyond = 0.07, WasteBeyond = 0.28, EdgeInside = 0.05;
         /// <summary>Each time in a row he has just thrown a type, its weight is multiplied by this (TUNED: ≤ 4–5 in a row).</summary>
         public const double RepeatFactor = 0.6;
@@ -136,7 +137,7 @@ namespace Pitchlab.Gameplay.Play
 
             (double x, double z) = Target(where, v, h, batter);
             string location = Describe(v, h, inSign);
-            string situation = count.Balls == 3 && count.Strikes == 0 ? "3-0" : count.Balls > count.Strikes ? "behind" : count.Strikes > count.Balls ? "ahead" : "even";
+            string situation = count.Strikes == 2 ? "two strikes" : count.Balls > count.Strikes ? "behind" : count.Strikes > count.Balls ? "ahead" : "even";
             string reason = $"{count.Balls}-{count.Strikes} · {situation} · {where.ToString().ToLowerInvariant()}" + (sameSide ? "" : " · opposite side");
             return new PitchDecision(type, x, z, where, location, reason);
         }
@@ -193,7 +194,9 @@ namespace Pitchlab.Gameplay.Play
         {
             double w = StrikeZone.HalfWidth, bottom = batter.ZoneBottom, top = batter.ZoneTop, cz = 0.5 * (bottom + top), hh = 0.5 * (top - bottom);
             if (where == LocationIntent.Heart) return (h * HeartFraction * w, cz + v * HeartFraction * hh);
-            double beyond = where == LocationIntent.Edge ? -EdgeInside : where == LocationIntent.Chase ? ChaseBeyond + BallProperties.Baseball.Radius : WasteBeyond;
+            // Measured from the zone edge widened by the ball's radius (where the call changes) for chase and waste pitches.
+            double r = BallProperties.Baseball.Radius;
+            double beyond = where == LocationIntent.Edge ? -EdgeInside : where == LocationIntent.Chase ? ChaseBeyond + r : WasteBeyond + r;
             // Edge / off: at (or beyond) the edge in the chosen direction; on a corner the edge of both (an edge pitch) or
             // beyond both (a chase or waste pitch).
             double x = h == 0.0 ? 0.0 : h * (w + beyond);

@@ -6,6 +6,7 @@ using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Play;
 using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
+using Pitchlab.Simulation.Pitching;
 
 namespace Pitchlab.Tests
 {
@@ -45,16 +46,97 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void HeThrowsOnlyHisRepertoireAndRoughlyByUsage()
+        public void HeThrowsOnlyHisRepertoireByUsageAndMatchup()
         {
+            // At 1-1 with no previous pitch, a type's share is usage × matchup (slider ×1.25, changeup ×0.6 against a
+            // same-side hitter), normalised: the model's own expectation, within sampling error (n 4000).
             foreach (Repertoire rep in new[] { GenericRosters.PowerRepertoire(), GenericRosters.CommandRepertoire(), GenericRosters.BreakingBallRepertoire() })
             {
-                List<PitchDecision> calls = Calls(Pitcher(rep), Batter(), new Count(1, 1), 3000);
+                List<PitchDecision> calls = Calls(Pitcher(rep), Batter(), new Count(1, 1), 4000);
                 Assert.IsTrue(calls.All(d => rep.Has(d.Type)), "nothing outside his repertoire");
-                double total = rep.Pitches.Sum(p => p.Usage);
+                double W(RepertoirePitch p) => p.Usage * (p.Type == PitchType.Slider ? 1.25 : p.Type == PitchType.Changeup ? 0.6 : 1.0);
+                double total = rep.Pitches.Sum(W);
                 foreach (RepertoirePitch p in rep.Pitches)
-                    Assert.AreEqual(p.Usage / total, Share(calls, d => d.Type == p.Type), 0.12, $"{p.Type}: usage (with matchup and repeat adjustments)");
+                    Assert.AreEqual(W(p) / total, Share(calls, d => d.Type == p.Type), 0.025, p.Type.ToString());
             }
+        }
+
+        [Test]
+        public void ArchetypesCallDifferentGames()
+        {
+            List<PitchDecision> power = Calls(Pitcher(GenericRosters.PowerRepertoire()), Batter(), new Count(1, 1));
+            List<PitchDecision> breaking = Calls(Pitcher(GenericRosters.BreakingBallRepertoire()), Batter(), new Count(1, 1));
+            bool Fastball(PitchDecision d) => d.Type == PitchType.FourSeam || d.Type == PitchType.Sinker;
+            Assert.Greater(Share(power, Fastball), Share(breaking, Fastball) + 0.15, "a power pitcher leans on his fastball");
+        }
+
+        [Test]
+        public void HeRepeatsAPitchLessTheMoreHeHasThrownIt()
+        {
+            PlayerProfile p = Pitcher(GenericRosters.PowerRepertoire()), b = Batter();
+            var game = new GameState(GenericRosters.Away(), GenericRosters.Home(), 1);
+            PitchInfo four = PitchInfo.Of(PitchPresets.All[0].Label, HittingPitch.Create(PitchPresets.All[0], Simulation.BallFlight.EnvironmentState.Standard), 0.0, 0.75);
+            double ShareAfter(int run)
+            {
+                var previous = Enumerable.Range(0, run).Select(i => new PitchEvent(i + 1, four, PitchOutcome.Foul, new Count(0, 2), new Count(0, 2), PlateAppearanceEnd.None)).ToList();
+                return Share(Enumerable.Range(0, 3000).Select(i => CpuPitcher.Choose(p, b, new Count(0, 2), 0, BaseOccupancy.Empty, previous, 1, i)), d => d.Type == PitchType.FourSeam);
+            }
+
+            double none = ShareAfter(0), one = ShareAfter(1), two = ShareAfter(2), three = ShareAfter(3);
+            Assert.Greater(none, one + 0.05);
+            Assert.Greater(one, two + 0.04);
+            Assert.Greater(two, three + 0.02);
+            // After a four-seamer to a spot, another four-seamer rarely goes to the very same spot.
+            var after = new List<PitchEvent> { new PitchEvent(1, four, PitchOutcome.Ball, new Count(0, 0), new Count(1, 0), PlateAppearanceEnd.None) };
+            var again = Enumerable.Range(0, 3000).Select(i => CpuPitcher.Choose(p, b, new Count(1, 0), 0, BaseOccupancy.Empty, after, 1, i)).Where(d => d.Type == PitchType.FourSeam).ToList();
+            Assert.Less(Share(again, d => Math.Abs(d.TargetX - four.TargetX) < 0.1 && Math.Abs(d.TargetZ - four.TargetZ) < 0.1), 0.1);
+        }
+
+        [Test]
+        public void TargetsMatchTheirIntent()
+        {
+            // Heart and edge targets are strikes, chase and waste targets balls, waste further out than chase.
+            PlayerProfile p = Pitcher(GenericRosters.PowerRepertoire()), b = Batter();
+            foreach (PitchDecision d in Calls(p, b, new Count(1, 1), 1500).Concat(Calls(p, b, new Count(0, 2), 1500)))
+            {
+                double edge = CpuBatter.SignedZoneDistance(d.TargetX, d.TargetZ, b.ZoneBottom, b.ZoneTop);
+                switch (d.Intent)
+                {
+                    case LocationIntent.Heart: Assert.Greater(edge, 0.08, d.ToString()); break;
+                    case LocationIntent.Edge: Assert.That(edge, Is.InRange(0.0, 0.1), d.ToString()); break;
+                    case LocationIntent.Chase: Assert.That(edge, Is.InRange(-0.12, -0.03), d.ToString()); break;
+                    default: Assert.Less(edge, -0.2, d.ToString()); break;
+                }
+            }
+        }
+
+        [Test]
+        public void ALeftHandersSpotsAreTheMirrorImage()
+        {
+            // Glove side: +X for a right-hander, −X for a left-hander. Sliders go glove side, changeups and sinkers arm side.
+            var rep = new Repertoire(new RepertoirePitch(PitchType.Slider, 0.5), new RepertoirePitch(PitchType.Changeup, 0.5));
+            foreach (Hand hand in new[] { Hand.Right, Hand.Left })
+            {
+                double glove = hand == Hand.Right ? 1.0 : -1.0;
+                List<PitchDecision> calls = Calls(Pitcher(rep, hand, $"P{hand}"), Batter(), new Count(1, 1));
+                Assert.Greater(Share(calls.Where(d => d.Type == PitchType.Slider), d => d.TargetX * glove > 0.0), 0.55, $"{hand}: slider glove side");
+                Assert.Greater(Share(calls.Where(d => d.Type == PitchType.Changeup), d => d.TargetX * glove < 0.0), 0.45, $"{hand}: changeup arm side");
+            }
+
+            // "In" is toward the batter: −X for a right-handed hitter, +X for a left-handed one.
+            foreach (BatterSide side in new[] { BatterSide.Right, BatterSide.Left })
+            {
+                double inSign = side == BatterSide.Right ? -1.0 : 1.0;
+                foreach (PitchDecision d in Calls(Pitcher(GenericRosters.PowerRepertoire()), Batter(side), new Count(1, 1), 800).Where(d => d.Location.EndsWith("in")))
+                    Assert.Greater(d.TargetX * inSign, 0.0, d.ToString());
+            }
+        }
+
+        [Test]
+        public void PitchTypesFollowThePresetOrder()
+        {
+            for (int i = 0; i < PitchPresets.All.Length; i++)
+                Assert.AreEqual((PitchType)i, CpuPitcher.TypeOf(PitchInfo.Of(PitchPresets.All[i].Label, HittingPitch.Create(PitchPresets.All[i], Simulation.BallFlight.EnvironmentState.Standard))));
         }
 
         [Test]
@@ -101,6 +183,8 @@ namespace Pitchlab.Tests
             double empty = Share(Calls(p, b, new Count(0, 2)), d => d.Intent == LocationIntent.Waste);
             double withRunner = Share(Enumerable.Range(0, 2000).Select(i => CpuPitcher.Choose(p, b, new Count(0, 2), 1, third, None, 1, i)), d => d.Intent == LocationIntent.Waste);
             Assert.Less(withRunner, empty * 0.6);
+            double twoOuts = Share(Enumerable.Range(0, 2000).Select(i => CpuPitcher.Choose(p, b, new Count(0, 2), 2, third, None, 1, i)), d => d.Intent == LocationIntent.Waste);
+            Assert.AreEqual(empty, twoOuts, 0.03, "with two outs the rule does not apply");
         }
 
         [Test]
@@ -177,7 +261,7 @@ namespace Pitchlab.Tests
         public void ExecutedZoneRateFollowsTheCount()
         {
             // Regression guard (prototype bounds, not validation): MLB zone% ≈ 64 % at 3-0, 54 % at 0-0, 32 % at 0-2, ≈ 49 % overall.
-            ZoneStats z = ZoneRates(new[] { 1, 2, 3 });
+            ZoneStats z = ZoneRates(new[] { 1, 2, 3, 4, 5 });
             double Group(Func<int, int, bool> f)
             {
                 int p = 0, n = 0;
@@ -193,10 +277,36 @@ namespace Pitchlab.Tests
             }
 
             double behind = Group((b, s) => b > s), even = Group((b, s) => b == s), ahead = Group((b, s) => s > b);
-            Assert.Greater(behind, even, "behind in the count: more strikes");
+            Assert.Greater(behind, even + 0.03, "behind in the count: more strikes");
             Assert.Greater(even, ahead + 0.05, "ahead: more pitches off the zone");
             Assert.That(z.Overall, Is.InRange(0.40, 0.60));
         }
+
+        [Test]
+        public void TheCommandPitcherHitsHisSpotsBetter()
+        {
+            // The same calls executed by each starter in simulated games: the command starter misses his targets by less.
+            var miss = new Dictionary<string, (double sq, int n)>();
+            foreach (int seed in new[] { 1, 2 })
+            {
+                var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);
+                new GameSimulator(g).PlayToEnd();
+                foreach (PlateAppearance pa in g.Completed)
+                foreach (PitchEvent e in pa.Pitches)
+                {
+                    if (!e.Info.HasTarget || !e.Info.HasCrossing) continue;
+                    string team = pa.Team.ToString();
+                    miss.TryGetValue(team, out var m);
+                    miss[team] = (m.sq + Sq(e.Info.PlateX - e.Info.TargetX) + Sq(e.Info.PlateZ - e.Info.TargetZ), m.n + 1);
+                }
+            }
+
+            // Away bats against the home (command) starter; home bats against the away (power) starter.
+            double Rms((double sq, int n) m) => Math.Sqrt(m.sq / m.n);
+            Assert.Less(Rms(miss["Away"]), Rms(miss["Home"]), "the command starter (facing the away lineup) is more accurate");
+        }
+
+        private static double Sq(double v) => v * v;
 
         /// <summary>Development report: zone rates by count and pitch usage over simulated games.</summary>
         public static string Report(int games = 10)

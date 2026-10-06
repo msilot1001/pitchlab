@@ -26,4 +26,13 @@ Claude Code (sole writer); Unity and test reviewers and Codex read-only.
 - [x] CpuPitcher, point targets, simulator and lab integration, debug line.
 - [x] Tests: determinism, repertoire and usage, count, batter profile, matchup, runner on third, no repetition, executed
   zone rate by count. Seeds re-pinned.
-- [ ] check.sh; runtime walkthrough; reviews (Unity, test); Codex; merge.
+- [x] Runtime (GameLab, CPU pitcher, left-hander against a left-handed hitter): varied calls (curveball, four-seamers
+  in and up-away, changeup), targets and executed misses recorded; console clean apart from MCP tooling timeouts.
+- [x] Reviews:
+  - Unity: miss computed at the throw and shown only after the pitch; the readout names the call; waste measured from
+    the call's edge; "two strikes" in the reason.
+  - Test: exact usage expectation, archetype pitch mix, an escalating repeat penalty with a direct test, intent geometry,
+    left-hander mirror and in/away, the preset-order pin, the outs boundary, the command starter's accuracy, manual
+    pitching untouched, the thrown pitch is the call.
+- [x] Codex: B — both findings already fixed by the review round. check.sh green (EditMode 677 passed, 6 skipped;
+  PlayMode 101/101). Merged.

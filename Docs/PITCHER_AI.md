@@ -46,22 +46,23 @@ Each pitch in his repertoire has weight = usage × count × matchup × repeat:
 - Targets in the batter's zone:
   - Heart: 35 % of the zone's half-extents from the centre.
   - Edge: 5 cm inside the edge. His miss (≈ 7 in per axis for average command) spreads it both ways.
-  - Chase: 7 cm plus a ball radius beyond the edge.
-  - Waste: 28 cm beyond.
+  - Chase: 7 cm beyond the edge where the call changes (the zone widened by a ball radius).
+  - Waste: 28 cm beyond that edge.
 - The call is a `PitchDecision`: type, target point, intent, a location word ("low-away") and a reason
-  ("0-2 · ahead · chase · opposite side").
+  ("0-2 · two strikes · chase · opposite side").
 
 ## Where it runs
 - `GameSimulator` uses it for every rated pitcher; the basic `AutoPitcher` remains for unrated teams.
-- In the GameLab, auto pitching (P) uses it. The situation editor (G) shows the intent, reason and execution miss:
-  "Slider low-away (Chase) · 0-2 · ahead · chase · missed 4.1 in glove-side, down".
+- In the GameLab, auto pitching (P) uses it. The situation editor (G) shows the intent and reason, and the execution miss
+  once the pitch is over (it never tells the hitter where the pitch goes):
+  "Slider low-away (Chase) · 0-2 · two strikes · chase · missed 4.1 in glove-side, down".
 
 ## Population (regression check, not validation)
 Executed pitches in 10 simulated games (seeds 201–210; CPU pitchers against CPU batters), zone rate by count:
 
 | Count | 0-0 | 0-1 | 0-2 | 1-0 | 1-1 | 1-2 | 2-0 | 2-1 | 2-2 | 3-0 | 3-1 | 3-2 | All |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Sim | 49 % | 39 % | 33 % | 53 % | 50 % | 35 % | 58 % | 57 % | 51 % | 49 % (n 35) | 61 % | 43 % | 47 % |
+| Sim | 51 % | 40 % | 29 % | 53 % | 48 % | 40 % | 56 % | 53 % | 51 % | 50 % (n 34) | 57 % | 42 % | 47 % |
 | MLB | 54 % | — | 32 % | — | — | — | — | — | — | 64 % | — | — | ≈ 49 % |
 
 MLB values are MEASURED (zone% by count, TASK-017 research).
@@ -79,4 +80,6 @@ Tests (`CpuPitcherTests`) cover:
 ## Limitations
 - No scouting or hot zones, no pitch tunnelling, no setup sequences beyond the repeat rule, no situational intent
   (double-play balls, pitching around a hitter).
-- 3-0 executed zone rate is low (49 % on a small sample, MLB 64 %).
+- 3-0 executed zone rate is low (50 % on a small sample, MLB 64 %).
+- His own ratings do not change his calls; they act through execution (the command starter misses his spots by less —
+  tested in simulated games).
