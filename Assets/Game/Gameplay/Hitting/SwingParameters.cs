@@ -112,6 +112,17 @@ namespace Pitchlab.Gameplay.Hitting
             return p;
         }
 
+        /// <summary>This swing with the default bat's geometry beyond the barrel when it has none (TASK-023: swings serialized
+        /// before the whole bat existed — their reach, taper, pivot and tip floor read as zero).</summary>
+        public SwingParameters WithBatGeometry()
+        {
+            if (PivotRadius > 0.0) return this;
+            SwingParameters bat = Default, p = this;
+            (p.TipReach, p.HandleReach, p.TaperStart, p.HandleRadius, p.PivotRadius, p.MinTipEfficiency) =
+                (bat.TipReach, bat.HandleReach, bat.TaperStart, bat.HandleRadius, bat.PivotRadius, bat.MinTipEfficiency);
+            return p;
+        }
+
         /// <summary>A typical MLB right-handed hitter's swing (see Docs/HITTING.md).</summary>
         public static SwingParameters Default => new SwingParameters
         {

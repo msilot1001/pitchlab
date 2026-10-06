@@ -79,7 +79,7 @@ namespace Pitchlab.Tests
                             Vector3 p = j.position;
                             Quaternion q = j.localRotation;
                             Assert.IsTrue(float.IsFinite(p.x) && float.IsFinite(p.y) && float.IsFinite(p.z), $"{sc.Name}: {m.name}/{j.name} at +{t:0.0}");
-                            Assert.Greater(p.y, -0.05f, $"{sc.Name}: {m.name}/{j.name} under the ground at +{t:0.0}");
+                            Assert.Greater(p.y, -0.05f, $"{sc.Name}: {m.name}/{j.parent?.name}/{j.name} under the ground at +{t:0.0}");
                             Assert.AreEqual(1f, Mathf.Sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w), 1e-3f, $"{sc.Name}: {m.name}/{j.name} rotation at +{t:0.0}");
                         }
 

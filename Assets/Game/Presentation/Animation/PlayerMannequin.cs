@@ -149,7 +149,7 @@ namespace Pitchlab.Presentation
             OrientFoot(MannequinJoint.RightFoot, pose.RightFootYaw, pose.RightFootPitch);
             OrientFoot(MannequinJoint.LeftFoot, pose.LeftFootYaw, pose.LeftFootPitch);
             if (pose.RightHandWeight > 0f) ReachLimb(MannequinJoint.RightUpperArm, pose.RightHand, pose.RightElbowHint);
-            if (pose.LeftHandWeight > 0f) ReachLimb(MannequinJoint.LeftUpperArm, pose.LeftHand, pose.LeftElbowHint);
+            if (pose.LeftHandWeight > 0f) ReachLimb(MannequinJoint.LeftUpperArm, pose.LeftHand, pose.LeftElbowHint, pose.LeftHandIsGlove ? GloveAnchor : null);
             if (pose.GripWeight > 0f) Grip(pose.GripPoint, pose.GripDirection);
         }
 
@@ -166,12 +166,14 @@ namespace Pitchlab.Presentation
         /// Two-bone reach of a limb (upper arm or thigh as <paramref name="root"/>) so its end joint (wrist or ankle) is at a
         /// figure-frame point, bending toward a figure-frame hint direction (elbow/knee side).
         /// </summary>
-        public void ReachLimb(MannequinJoint root, Vector3 figureTarget, Vector3 figureHint)
+        /// <param name="effector">The point that reaches the target, when it is not the end joint (a glove anchor on the
+        /// hand: hand rotation is identity, so it lies ≈ along the forearm; its 2 cm sideways offset is ignored).</param>
+        public void ReachLimb(MannequinJoint root, Vector3 figureTarget, Vector3 figureHint, Transform effector = null)
         {
             Transform upper = Joint(root);
             Transform lower = Joint(root + 1);
             Vector3 target = _visual.TransformPoint(figureTarget);
-            Reach(upper, lower, Joint(root + 2), target, (upper.position + target) * 0.5f + FigureToWorld(figureHint) * 0.5f);
+            Reach(upper, lower, effector != null ? effector : Joint(root + 2), target, (upper.position + target) * 0.5f + FigureToWorld(figureHint) * 0.5f);
         }
 
         /// <summary>

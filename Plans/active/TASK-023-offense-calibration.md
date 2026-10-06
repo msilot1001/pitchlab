@@ -38,17 +38,35 @@ Claude Code (sole writer); physics, test and Unity reviewers and Codex read-only
 ## Milestones
 - [x] Harness; MLB reference values (FanGraphs and Savant 2024–25).
 - [x] Contact-model geometry; CPU hitter levers.
-- [x] Calibration (30 games): runs 4.45 per team-game, K 21.1 %, BB 9.5 %, EV 87.4 mph, hard-hit 38.8 %, barrel 7.0 %.
+- [x] First calibration pass (30 games, before the park fix): runs 4.45 per team-game, K 21.1 %, BB 9.5 %, EV 87.4 mph, hard-hit 38.8 %, barrel 7.0 %.
 - [x] Physics review:
   - the pivot (Cross 2009) and local speed with Nathan's q are correct;
   - added the tip-side negative q floor (−0.10);
   - an exit-speed-along-the-bat test.
 - [x] Contact tests updated for the physics (not loosened); golden re-pinned; seed pins; calibration guards.
 - [x] Docs: OFFENSE_CALIBRATION.md, HITTING.md ("The whole bat"), BATTER_AI.md.
-- [x] Home-run excess (≈ 2× MLB) diagnosed but not resolved:
-  - ruled out: wall height, fences, EV/LA;
-  - suspects: in-game carry and the park;
-  - handed to TASK-031/037, capped by a guard.
-- [x] check.sh green (EditMode 700 passed, 6 skipped; PlayMode 103/103). Runtime: the HittingLab scene migrated (default bat
-  geometry), and a jammed swing gives 55 mph contact; console clean (MCP tooling timeout only).
-- [ ] Reviews (test, Unity); Codex; merge.
+- [x] Codex round 1 (grade C: home runs ≈ 2× MLB). Every link in the chain was checked against measured 2024 Statcast data:
+  - carry matches the validated flight;
+  - EV/LA match MLB;
+  - the park did not: a straight-chord fence, and dimensions shallower than MLB's average.
+
+  Fixed:
+  - a smooth polar fence (37 points);
+  - an MLB-average park (332/385/405 ft, 8-ft wall), fitted to the measured P(HR | distance);
+  - CPU timing 13 ms with a 2 ms early bias.
+
+  Result: HR 1.27 per team-game (MLB 1.13), HR/FB 12.1 %.
+- [x] Park-dependent tests re-pointed: their scenarios keep their intent in the new park.
+  - The new dimensions in fence and wall tests.
+  - New inputs for "thrown out stretching", the jumping catch and "a close play at second".
+  - The missed-fly search now requires a ball untouched by ground or wall.
+  - Game-ending seeds 5 and 62.
+  - The FieldingLab gap-ball preset now gives a close slide (98 mph, 14°, −15°).
+- [x] Two presentation defects exposed by the new plays and fixed:
+  - a low wall play is now shown as a pickup;
+  - the glove arm's IK now puts the glove anchor, not the wrist, on the ball. The glove went 8 cm past the ball and into
+    the ground on low backhands.
+- [x] Runs are ≈ 25 % low. Traced to defensive conversion by batted-ball type (GB .353 / LD .508 / FB .052 vs MLB
+  ≈ .24 / .68 / .13), documented and handed to TASK-033/037.
+- [x] check.sh green (EditMode 705 passed, 6 skipped; PlayMode 103/103).
+- [ ] Unity review; Codex round 2; merge.

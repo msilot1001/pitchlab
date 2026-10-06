@@ -166,7 +166,7 @@ namespace Pitchlab.Tests
                 LiveThrow next = d.Throws.FirstOrDefault(x => x.Thrower == th.Receiver && x.ReleaseTime > th.Catch.Time);
                 double held = th.Catch.Time + FieldingPlay.SecureTime + 0.1;
                 if (next != null) held = System.Math.Min(held, System.Math.Max(next.ReleaseTime - DefensivePlay.ArmAction - 0.15, th.Catch.Time + FieldingPlay.SecureTime));
-                At(held - t0);
+                At(held - t0 - 1e-3);   // just before the wind-up, which can start the moment the ball is secured
                 Assert.Less(Vector3.Distance(_lab.Ball.position, receiver.GloveAnchor.position), 1e-4f, $"{name}: held by the receiver");
                 log.AppendLine($"{name}: hand {hand:0.000} m, receiver glove {glove:0.000} m");
             }

@@ -340,6 +340,7 @@ namespace Pitchlab.Presentation
                 Vector3 rest = new Vector3(-0.25f, 0.9f, 0.35f);
                 pose.LeftHandWeight = 1f;
                 pose.LeftHand = Vector3.Lerp(rest, input.GloveTarget, w);
+                pose.LeftHandIsGlove = true;   // the glove, not the wrist, meets the ball
                 pose.LeftElbowHint = new Vector3(-1f, input.GloveTarget.y > 1.4f ? 0.3f : -0.5f, 0f);
                 if (input.Action == BodyAction.Pickup || input.Action == BodyAction.ShortHop)
                 {

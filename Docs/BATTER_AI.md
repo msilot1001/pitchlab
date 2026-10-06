@@ -69,9 +69,11 @@ The swing rates are used directly. The contact rates are only a comparison: cont
     harder to square up.
 
   All TUNED.
-- Press: his predicted contact time − swing duration + timing error, where σ = 10 ms · (1 − 0.3 r̂(Contact)) (TUNED; the
-  sweet-spot window is ≈ 9 ms, MEASURED, Higuchi et al. 2025). With his arrival misjudgement, an average hitter is
-  ≈ 10 ms RMS off the ball.
+- Press: his predicted contact time − swing duration + timing error, with mean −2 ms (slightly early: hitters pull) and
+  σ = 13 ms · (1 − 0.3 r̂(Contact)) (TUNED, TASK-023: fouls and pull share; the sweet-spot window is ≈ 9 ms, MEASURED,
+  Higuchi et al. 2025).
+- His perception's prior expects a straight pitch (gravity and drag only), so he reads a fastball's backspin lift late
+  and predicts it ≈ 1.4 cm low at the decision: the "rising fastball" effect, emergent, not scripted.
 - Power: bat speed = 72 + 5 r̂(Power) mph, i.e. 67–77 mph. MLB average is 72; 2025 qualified hitters run P10 66.5 /
   P90 75.8 (DERIVED). This is the physical input of the collision (exit ≈ q·v_pitch + (1+q)·v_bat). It applies to human-
   and CPU-batted game pitches alike: the GameLab swings `SwingParameters.For(batter)`, as the simulator does. No exit

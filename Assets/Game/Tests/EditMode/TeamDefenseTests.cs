@@ -232,7 +232,7 @@ namespace Pitchlab.Tests
             Assert.IsTrue(th.Caught);
             AssertRole(play, SS, DefensiveRole.Primary, null, th.Catch.Time - play.ContactTime + 1e-6);
             // With two out the runner from first goes on contact on the gap ball: the play is at second, direct.
-            LiveThrow gap = GapBall(OnFirst, 2).Defense.Throws[0];
+            LiveThrow gap = Play(100.0, 16.0, -12.0, 1800.0, OnFirst, 2).Defense.Throws[0];   // a gap liner that stays short of the wall
             Assert.AreEqual((CF, (Base?)Base.Second), (gap.Thrower, gap.Target), "a close play at second: direct");
         }
 

@@ -173,7 +173,7 @@ namespace Pitchlab.Tests
         [Test]
         public void FenceDistancesAndNormal()
         {
-            foreach (var (spray, feet) in new[] { (-45.0, 330.0), (-22.5, 375.0), (0.0, 400.0), (22.5, 375.0), (45.0, 330.0) })
+            foreach (var (spray, feet) in new[] { (-45.0, 332.0), (-22.5, 385.0), (0.0, 405.0), (22.5, 385.0), (45.0, 332.0) })
             {
                 (double x, double y) = At(feet, spray);
                 Assert.AreEqual(0.0, Field.DistanceBeyondFence(x, y, out Vector3d n), 1e-9, $"{spray}°");
@@ -181,11 +181,11 @@ namespace Pitchlab.Tests
                 Assert.AreEqual(1.0, n.Length, 1e-12);
             }
 
-            (double cx, double cy) = At(380.0, 0.0);
+            (double cx, double cy) = At(385.0, 0.0);
             double inside = Field.DistanceBeyondFence(cx, cy, out _);
-            Assert.Less(inside, -5.0, "20 ft short of the 400 ft mark is ≈ 5.7 m inside the (angled) fence face");
+            Assert.Less(inside, -5.0, "20 ft short of the 405 ft mark is ≈ 6 m inside the fence face");
             Assert.Greater(inside, -20.0 * Ft - 1e-9);
-            (cx, cy) = At(420.0, 0.0);
+            (cx, cy) = At(425.0, 0.0);
             Assert.Greater(Field.DistanceBeyondFence(cx, cy, out _), 0.0, "beyond is positive");
             Assert.AreEqual(8.0 * Ft, Field.WallHeight, 1e-12);
         }
@@ -348,14 +348,14 @@ namespace Pitchlab.Tests
         [Test]
         public void BallRollingIntoTheWallBouncesBack()
         {
-            var start = new BallState(0.0, new Vector3d(0.0, 380.0 * 0.3048, BallProperties.Baseball.Radius), new Vector3d(0.0, 8.0, 0.0),
-                new Vector3d(-8.0 / BallProperties.Baseball.Radius, 0.0, 0.0));   // already rolling toward the 400 ft fence
+            var start = new BallState(0.0, new Vector3d(0.0, 385.0 * 0.3048, BallProperties.Baseball.Radius), new Vector3d(0.0, 8.0, 0.0),
+                new Vector3d(-8.0 / BallProperties.Baseball.Radius, 0.0, 0.0));   // already rolling toward the 405 ft fence
             BallInPlay play = BallInPlaySimulation.Run(start, EnvironmentState.Standard, Field);
             BallEvent wall = Array.Find(ToArray(play), e => e.Kind == BallEventKind.WallImpact);
             Assert.AreEqual(BallEventKind.WallImpact, wall.Kind);
             Assert.Less(wall.After.Velocity.Y, 0.0, "comes back");
             Assert.AreEqual(BallPhase.Rest, play.EndPhase);
-            Assert.Less(play.Final.Position.Y, 400.0 * 0.3048 - BallProperties.Baseball.Radius);
+            Assert.Less(play.Final.Position.Y, 405.0 * 0.3048 - BallProperties.Baseball.Radius);
         }
 
         [Test]
@@ -494,7 +494,7 @@ namespace Pitchlab.Tests
         public void WallHeightPlusARadiusDecidesClearingTheFence(double aboveEdge, bool clears)
         {
             // Horizontal 40 m/s at the centre-field fence (vacuum, no aero; the 0.5 m approach drops it < 1 mm).
-            double face = 400.0 * 0.3048, r = BallProperties.Baseball.Radius;
+            double face = 405.0 * 0.3048, r = BallProperties.Baseball.Radius;
             var s = new BallState(0.0, new Vector3d(0.0, face - r - 0.5, Field.WallHeight + r + aboveEdge), new Vector3d(0.0, 40.0, 0.0), Vector3d.Zero);
             BallInPlay play = RunVacuum(s);
             Assert.AreEqual(clears, play.ClearedFence);
@@ -538,7 +538,7 @@ namespace Pitchlab.Tests
             // Every impact's After is exactly the state the play continues from (position and velocity, Codex review),
             // on the ground, off the wall in the air, and off the wall along the ground.
             BallInPlay wallInAir = Run(Launch(110.0, 14.0, 0.0, 1500.0));
-            BallInPlay wallRolling = BallInPlaySimulation.Run(new BallState(0.0, new Vector3d(0.0, 380.0 * 0.3048, BallProperties.Baseball.Radius),
+            BallInPlay wallRolling = BallInPlaySimulation.Run(new BallState(0.0, new Vector3d(0.0, 385.0 * 0.3048, BallProperties.Baseball.Radius),
                 new Vector3d(0.0, 8.0, 0.0), new Vector3d(-8.0 / BallProperties.Baseball.Radius, 0.0, 0.0)), EnvironmentState.Standard, Field);
             int impacts = 0;
             foreach (BallInPlay p in new[] { play, wallInAir, wallRolling })

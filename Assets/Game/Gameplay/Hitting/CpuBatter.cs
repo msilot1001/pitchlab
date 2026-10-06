@@ -12,16 +12,21 @@ namespace Pitchlab.Gameplay.Hitting
     /// <summary>A timestamped placement of the CPU batter's PCI: simulation time (s after release) and the contact-plane point (m).</summary>
     public readonly struct AimEvent
     {
-        public AimEvent(double time, double x, double z)
+        public AimEvent(double time, double x, double z, double predictedX = double.NaN, double predictedZ = double.NaN)
         {
             Time = time;
             X = x;
             Z = z;
+            PredictedX = predictedX;
+            PredictedZ = predictedZ;
         }
 
         public double Time { get; }
         public double X { get; }
         public double Z { get; }
+        /// <summary>Where he predicted the ball at the contact plane at this look (m; debugging and tests — NaN for the set-up).</summary>
+        public double PredictedX { get; }
+        public double PredictedZ { get; }
     }
 
     /// <summary>
@@ -109,7 +114,11 @@ namespace Pitchlab.Gameplay.Hitting
         /// <summary>How sharply he separates strikes from balls near the edge (m): 0.03 ∓ 30 % by Vision (TUNED).</summary>
         public static double JudgementSigma(PlayerRatings r) => 0.03 * (1.0 - 0.3 * RatingScale.Unit(r.Vision));
         /// <summary>His motor timing error (s, SD): 10 ms ∓ 30 % by Contact (TUNED; the sweet-spot window is ≈ 9 ms).</summary>
-        public static double TimingSigma(PlayerRatings r) => 0.010 * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
+        public static double TimingSigma(PlayerRatings r) => TimingBase * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
+        public const double TimingBase = 0.013;
+        /// <summary>His average timing (s; − early): hitters are slightly early on average, which is why MLB balls are pulled more
+        /// than pushed (FanGraphs 2024 ≈ 40 % pull / 34 % centre / 26 % opposite; TUNED, TASK-023).</summary>
+        public const double TimingBias = -0.002;
         /// <summary>His hand–eye aim error along the barrel (m): ∓ 30 % by Contact (TUNED, TASK-023: sets how squarely he meets
         /// the ball — exit speeds).</summary>
         public static double AimSigmaAlong(PlayerRatings r) => AimAlong * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
@@ -167,7 +176,7 @@ namespace Pitchlab.Gameplay.Hitting
             PlayerRatings r = batter.Ratings;
             double latency = Latency(r), noise = AngleNoise(r);
             // His deviates for this pitch, drawn first so the sequence never depends on what he saw.
-            double decide = stream.Unit(), timing = TimingSigma(r) * stream.Normal();
+            double decide = stream.Unit(), timing = TimingBias + TimingSigma(r) * stream.Normal();
             double aimX = AimSigmaAlong(r) * stream.Normal(), aimZ = AimSigmaVertical(r) * stream.Normal();
 
             double zoneMid = 0.5 * (batter.ZoneBottom + batter.ZoneTop);
@@ -200,7 +209,7 @@ namespace Pitchlab.Gameplay.Hitting
                 // The PCI lives in the aimable area, as a human's does. Under the ball's centre by his lift intent.
                 (double u, double v) = PciFrame.Default.ToNormalized(atContact.X + reach * aimX, atContact.Z - LiftIntent + reach * aimZ);
                 (double pciX, double pciZ) = PciFrame.Default.ToMeters(u, v);
-                plan.Events.Add(new AimEvent(now, pciX, pciZ));
+                plan.Events.Add(new AimEvent(now, pciX, pciZ, atContact.X, atContact.Z));
                 plan.LastObservation = seen;
                 // He commits CommitLead before his (pre-drawn) press would start, so an early press is never cut short.
                 if (plan.Swing || now < contactTime - swing.SwingDuration + Math.Min(timing, 0.0) - CommitLead) continue;

@@ -294,12 +294,7 @@ namespace Pitchlab.Sandbox
             }
 
             // Scenes serialized before the bat's full geometry (TASK-023) have none: the default bat's.
-            if (!(_swing.PivotRadius > 0.0))
-            {
-                SwingParameters bat = SwingParameters.Default;
-                (_swing.TipReach, _swing.HandleReach, _swing.TaperStart, _swing.HandleRadius, _swing.PivotRadius, _swing.MinTipEfficiency) =
-                    (bat.TipReach, bat.HandleReach, bat.TaperStart, bat.HandleRadius, bat.PivotRadius, bat.MinTipEfficiency);
-            }
+            _swing = _swing.WithBatGeometry();
 
             if (_gameMode) Game = new GameState();
             _pciRange = Instantiate(_pci, _pci.transform.parent);

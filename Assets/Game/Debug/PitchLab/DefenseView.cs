@@ -21,6 +21,9 @@ namespace Pitchlab.Sandbox
     {
         /// <summary>How long before a take the glove starts toward the ball (s).</summary>
         public const double GloveLead = 0.45;
+
+        /// <summary>A wall play taken below this height (m) is shown as a pickup (knee height: an upright reach cannot get there).</summary>
+        private const double LowWallBall = 0.3;
         /// <summary>The catcher appears once he is this far from his spot behind the plate (m).</summary>
         private const double CatcherShowDistance = 1.5;
         /// <summary>The follow-through after a release (s).</summary>
@@ -241,6 +244,7 @@ namespace Pitchlab.Sandbox
             FieldingAction.SlidingCatch => BodyAction.Slide,
             FieldingAction.DivingCatch => BodyAction.Dive,
             FieldingAction.JumpingCatch => BodyAction.Jump,
+            FieldingAction.WallPlay when take.BallPoint.Z < LowWallBall => BodyAction.Pickup,   // a ground ball off the wall: down to it
             FieldingAction.ReceiveThrow when OnABase(d.FielderPositionAt(position, take.Time)) => BodyAction.Stretch,
             FieldingAction.None => BodyAction.None,
             _ => BodyAction.Reach,
