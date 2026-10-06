@@ -394,7 +394,22 @@ namespace Pitchlab.Gameplay.Play
                     }
 
                     if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Attempt(th.Receiver, th.Flight, th.Catch, FieldingAction.ReceiveThrow, false, th), "catch");
-                    else _play.ScheduleDefense(th.FirstContactTime, () => Loose(th, a.Throw.Caught), "loose");
+                    else
+                    {
+                        if (a.Throw.Caught && !th.AimError.Equals(Vector3d.Zero))
+                        {
+                            // The throw as aimed would have been held; this one gets away. Seen as it passes the bag (or lands):
+                            // from then on everyone plays the real throw.
+                            double passes = Math.Min(th.FirstContactTime, ThrowPlanner.ArrivalAtBase(th.Flight, th.AimPoint));
+                            _play.ScheduleDefense(passes, () =>
+                            {
+                                thrown.Aimed = null;
+                                _play.OnMisplay(passes, th.Thrower, MisplayKind.ThrowingMisplay, $"throw off target ({th.AimError.Length:F1} m)", false);
+                            }, "off target");
+                        }
+
+                        _play.ScheduleDefense(th.FirstContactTime, () => Loose(th), "loose");
+                    }
                     return;
                 }
 
@@ -405,16 +420,13 @@ namespace Pitchlab.Gameplay.Play
             }
         }
 
-        /// <summary>A missed throw is loose: whoever can field it first (from where and as he is moving) goes for it. If the
-        /// throw as aimed would have been held, the miss is the thrower's misplay (TASK-021).</summary>
-        private void Loose(LiveThrow th, bool aimedWouldBeHeld)
+        /// <summary>A missed throw is loose: whoever can field it first (from where and as he is moving) goes for it.</summary>
+        private void Loose(LiveThrow th)
         {
             double t = th.FirstContactTime;
             // The free ball first, then the runners' reaction to it (they must see the loose ball, not the planned catch).
             LooseBall(th.Flight, t, t, null, double.NegativeInfinity);
-            if (aimedWouldBeHeld && !th.AimError.Equals(Vector3d.Zero))
-                _play.OnMisplay(t, th.Thrower, MisplayKind.ThrowingMisplay, $"throw off target ({th.AimError.Length:F1} m)", false);
-            else _play.OnLooseBall(t);
+            _play.OnLooseBall(t);
         }
 
         /// <summary>

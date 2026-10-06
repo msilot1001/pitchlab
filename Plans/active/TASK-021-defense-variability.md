@@ -69,3 +69,9 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
   - a loose ball is fieldable only until it leaves play;
   - a fly over the fence off the glove is a home run (`AwardedBases`);
   - the grounded event is ignored on a dead ball.
+- [x] Codex round 4: C — fixed:
+  - an uncaught errant throw is seen as it passes the bag;
+  - the fielded/caught log follows the current kind.
+
+  Not changed: a two-base out-of-play award after a misplay is classified by where the batter ends, not as a ground-rule
+  double (OBR: that is a fair ball bouncing over the fence). This is documented and tested.

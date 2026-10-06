@@ -312,6 +312,8 @@ namespace Pitchlab.Tests
             // Two bases from the last base touched: the batter (home) to second, the runner (first) to third.
             Assert.AreEqual(new BaseOccupancy(false, true, true), live.ResultingBases());
             Assert.AreEqual(0, live.Runs);
+            // Not a ground-rule double (a fair ball bouncing over the fence): the batter's result is where he ended — second.
+            Assert.AreEqual(PlayResultKind.Double, PlayResults.Classify(live));
 
             // Over the fence off a glove: a home run — classified so, everyone scores.
             var homer = new LivePlay(p.Fielding, p.Situation, personnel: p.Personnel);

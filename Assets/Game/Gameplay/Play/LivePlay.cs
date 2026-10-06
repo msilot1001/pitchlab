@@ -633,7 +633,7 @@ namespace Pitchlab.Gameplay.Play
             if (_deadAfterMisplay) return;   // a dead ball: the runners are on their award
             if (batted)
             {
-                Note(t, PlayLogKind.Fielded, null, null, p, $"{(Fielding.Intercept.Kind == InterceptKind.FlyCatch ? "CAUGHT" : "FIELDED")} by {Abbrev(p)}");
+                Note(t, PlayLogKind.Fielded, null, null, p, $"{(Kind == BallKind.Caught ? "CAUGHT" : "FIELDED")} by {Abbrev(p)}");
                 if (Kind == BallKind.Caught)
                 {
                     LiveRunner batter = RunnerOf(Runner.Batter);
