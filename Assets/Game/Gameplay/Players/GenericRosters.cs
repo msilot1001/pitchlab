@@ -103,6 +103,22 @@ namespace Pitchlab.Gameplay.Players
             new PlayerProfile(id, id, throws == Hand.Left ? BatterSide.Left : BatterSide.Right, throws, 75.0, DefensivePosition.P,
                 Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, archetype), repertoire);
 
+        /// <summary>
+        /// A uniform team (TASK-022 matchups): nine hitters of one batting archetype and one defence, average runners, batting
+        /// sides alternating left and right (all throw right), every position filled (the ninth a designated hitter), and <paramref name="pitcher"/>.
+        /// </summary>
+        public static Team Uniform(string team, string prefix, Batting batting, Defense defense, PlayerProfile pitcher)
+        {
+            DefensivePosition?[] at =
+            {
+                DefensivePosition.CenterField, DefensivePosition.Shortstop, DefensivePosition.RightField, DefensivePosition.FirstBase,
+                DefensivePosition.LeftField, DefensivePosition.ThirdBase, DefensivePosition.C, DefensivePosition.SecondBase, null,
+            };
+            var players = new PlayerProfile[Lineup.Size];
+            for (int i = 0; i < players.Length; i++) players[i] = Batter(prefix, team, i + 1, i % 2 == 0, at[i], batting, AverageRunner, defense, 55);
+            return new Team(team, new Lineup(team, players), pitcher);
+        }
+
         /// <summary>The visitors: a speed-and-defence top of the order, power in the middle; a power right-hander starting.</summary>
         public static Team Away()
         {

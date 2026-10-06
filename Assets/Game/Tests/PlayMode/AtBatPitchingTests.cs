@@ -277,6 +277,69 @@ namespace Pitchlab.Tests
         }
 
         [UnityTest]
+        public IEnumerator CpuVsCpuPlaysAHalfInningOnTheProductionPath()
+        {
+            yield return null;
+            // TASK-022 Mode C in the GameLab: the CPU pitcher's calls, executed pitches, the CPU batter's timestamped PCI and
+            // swing, the contact model, the live play with defensive execution — a whole half inning, no stand-in.
+            _lab.ExecutionVariance = true;
+            _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 21));
+            _lab.Mode = HittingLabController.LabMode.CpuVsCpu;
+            Assert.AreEqual(HittingLabController.LabMode.CpuVsCpu, _lab.Mode);
+            double start = _now;
+            int thrown = _lab.PitchesThrown, cpuPitches = 0;
+            while (_lab.Game.Half == Half.Top && _lab.Game.Inning == 1 && _now < start + 1200.0)
+            {
+                Frame(_now + 0.1);   // the test clock advanced, the lab and its presentation updated at each step
+                if (_lab.PitchesThrown == thrown) continue;
+                thrown = _lab.PitchesThrown;
+                Assert.IsTrue(_lab.LastDecision.HasValue, "the CPU pitcher called this pitch");
+                Assert.IsNotNull(_lab.LastBatterPlan, "the CPU batter batted it");
+                cpuPitches++;
+            }
+
+            GameState g = _lab.Game;
+            Assert.AreEqual(Half.Bottom, g.Half, "the top of the first ended");
+            var top = g.Completed.Where(pa => pa.Inning == 1 && pa.Half == Half.Top).ToList();
+            Assert.AreEqual(3, top.Sum(pa => pa.OutsMade), "three outs");
+            Assert.AreEqual(top.Sum(pa => pa.Pitches.Count), cpuPitches, "every pitch of the half: a CPU call, batted by the CPU");
+            Assert.IsTrue(top.Any(pa => pa.End == PlateAppearanceEnd.InPlay), "a ball in play: contact and a live play");
+        }
+
+        [UnityTest]
+        public IEnumerator TheModeSetsWhoPlays()
+        {
+            yield return null;
+            foreach (HittingLabController.LabMode m in new[] { HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.CpuVsCpu, HittingLabController.LabMode.Manual })
+            {
+                _lab.Mode = m;
+                Assert.AreEqual(m, _lab.Mode);
+                Assert.AreEqual(m == HittingLabController.LabMode.HumanBatting || m == HittingLabController.LabMode.CpuVsCpu, _lab.AutoPitch, $"{m}: CPU pitcher");
+                Assert.AreEqual(m == HittingLabController.LabMode.HumanPitching || m == HittingLabController.LabMode.CpuVsCpu, _lab.CpuBatting, $"{m}: CPU batter");
+            }
+
+            // F cycles HumanBatting → HumanPitching → CpuVsCpu → Manual → HumanBatting.
+            foreach (HittingLabController.LabMode next in new[] { HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.CpuVsCpu, HittingLabController.LabMode.Manual })
+            {
+                _lab.OnPitchingKey("f");
+                Assert.AreEqual(next, _lab.Mode);
+            }
+
+            // Behaviour, one throw each: who called it, who bats it.
+            foreach (HittingLabController.LabMode m in new[] { HittingLabController.LabMode.HumanPitching, HittingLabController.LabMode.HumanBatting, HittingLabController.LabMode.CpuVsCpu })
+            {
+                _lab.NewGame(new GameState(GenericRosters.Away(), GenericRosters.Home(), 4));
+                _lab.Mode = m;
+                _lab.Target = PitchTarget.Middle;
+                if (m == HittingLabController.LabMode.HumanPitching) _lab.PressSwingButton(_now);   // the player throws
+                else while (_lab.PitchesThrown == 0 || _lab.CurrentPitch == null) Frame(_now + 0.1);   // the CPU throws
+                Assert.AreEqual(m != HittingLabController.LabMode.HumanPitching, _lab.LastDecision.HasValue, $"{m}: CPU call");
+                Assert.AreEqual(m != HittingLabController.LabMode.HumanBatting, _lab.LastBatterPlan != null, $"{m}: CPU batter");
+                Frame(_now + 0.05);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator TheExecutionToggleIsHonoured()
         {
             yield return null;
