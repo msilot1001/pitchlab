@@ -105,13 +105,9 @@ namespace Pitchlab.Gameplay.Play
             Fielding = fielding;
             Situation = situation;
             Personnel = personnel ?? PlayPersonnel.Standard;
-            // The ball was fielded by the same players: the solve's primary fielder runs with this personnel's profile.
-            if (fielding.Primary is Fielding.DefensivePosition primary)
-            {
-                FielderProfile solved = fielding.Motion(primary).Profile, own = Personnel.Fielder(primary);
-                if (solved.MaxSpeed != own.MaxSpeed || solved.ReactionTime != own.ReactionTime)
-                    throw new ArgumentException("The fielding play was solved with other fielders than this personnel.", nameof(personnel));
-            }
+            // The ball was fielded by the same players: every fielder of the solve has this personnel's profile.
+            if (!Personnel.FieldedBy(p => fielding.Motion(p).Profile))
+                throw new ArgumentException("The fielding play was solved with other fielders than this personnel.", nameof(personnel));
             ContactTime = fielding.Ball.First.Time;
             _now = ContactTime;
             Kind = Classify(fielding);

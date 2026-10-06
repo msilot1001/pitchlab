@@ -48,7 +48,7 @@ Claude Code (sole writer); Unity / test reviewers and Codex read-only.
   every simulated pitch keeps identities = occupancy and distinct, team-specific personnel per half, full-throw
   monotonicity, a lineup-only game plays identically to the generic personnel. Not taken: the runners' estimate of an
   outfield throw stays at the routine speed (switching to full effort changed validated TASK-007/008 scenarios).
-- [ ] Codex, merge.
+- [x] Codex: B — a game-built personnel binds a play to its game and version (a stale play recreated by the editor is refused), the solve guard compares every fielder's full profile, lineup-only constructor doc corrected. Merge.
 
 ## Limitations
 - Runners read an outfielder's throw at his routine speed (0.85 of his arm), while he throws at full effort — conservative,

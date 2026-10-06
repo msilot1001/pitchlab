@@ -168,6 +168,34 @@ namespace Pitchlab.Tests
                 Assert.AreSame(r.Id.IsBatter ? hitter : r1, g2.RunnerOn(r.LastTouched), $"{r.Id} on {r.LastTouched}");
         }
 
+        [Test]
+        public void APlayBelongsToThePlateAppearanceItWasMadeIn()
+        {
+            // A play made for one batter is refused once the game has moved on — even if the editor recreates the same outs
+            // and bases — so its result can never land on another batter or other runners.
+            var game = new GameState();
+            LivePlay single = Play(game, 95.0, 6.0, 0.0, 700.0);
+            for (int i = 0; i < 3; i++) game.Pitch(PitchOutcome.SwingingStrike);   // the batter strikes out instead
+            game.Set(1, Half.Top, 0, BaseOccupancy.Empty, 0, 0);
+            Assert.Throws<InvalidOperationException>(() => game.Apply(single));
+            // Made now, it applies.
+            game.Apply(Play(game, 95.0, 6.0, 0.0, 700.0));
+            Assert.AreEqual(2, game.CompletedPlateAppearances);
+        }
+
+        [Test]
+        public void ThePersonnelMustBeTheFieldersTheBallWasSolvedWith()
+        {
+            BallInPlay ball = BallInPlaySimulation.Run(new BattedBallLaunch(85.0, -8.0, -15.0, -1000.0).ToState(new Vector3d(0.0, 0.7, 0.8)), EnvironmentState.Standard, FieldLayout.Standard);
+            FieldingPlay solved = FieldingSolver.Solve(ball, DefensiveAlignment.Standard, FielderProfile.For, FieldLayout.Standard);
+            // Only the left fielder (not the primary) differs, and only in acceleration.
+            var lf = new PlayerRatings(acceleration: 90);
+            var other = new PlayPersonnel(p => p == DefensivePosition.LeftField ? RatingScale.Fielder(lf, p) : FielderProfile.For(p), ThrowProfile.For, ThrowProfile.Full, _ => RunnerProfile.Standard);
+            Assert.AreNotEqual(DefensivePosition.LeftField, solved.Primary);
+            Assert.Throws<ArgumentException>(() => new LivePlay(solved, new Situation(0, BaseOccupancy.Empty), personnel: other));
+            Assert.DoesNotThrow(() => new LivePlay(solved, new Situation(0, BaseOccupancy.Empty), personnel: PlayPersonnel.Standard));
+        }
+
         private static LivePlay Play(GameState game, double mph, double launch, double spray, double spin)
         {
             Situation s = game.Situation;

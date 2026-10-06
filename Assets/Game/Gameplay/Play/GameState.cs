@@ -101,7 +101,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>A game between the two generic rosters (TASK-017).</summary>
         public GameState() : this(GenericRosters.Away(), GenericRosters.Home()) { }
 
-        /// <summary>A game between two batting orders only: the generic position profiles field.</summary>
+        /// <summary>A game between two batting orders: their players field the positions the lineups give them; a lineup without
+        /// positions (TASK-013 style) fields the generic position profiles. No starting pitchers.</summary>
         public GameState(Lineup away, Lineup home)
             : this(new Team(away?.Team ?? throw new ArgumentNullException(nameof(away)), away), new Team(home?.Team ?? throw new ArgumentNullException(nameof(home)), home)) { }
 
@@ -142,7 +143,8 @@ namespace Pitchlab.Gameplay.Play
                     p => field.Fielder(p) is PlayerProfile f ? RatingScale.Fielder(f.Ratings, p) : FielderProfile.For(p),
                     p => field.Fielder(p) is PlayerProfile f ? RatingScale.Throw(f.Ratings, p) : ThrowProfile.For(p),
                     p => field.Fielder(p) is PlayerProfile f ? RatingScale.FullThrow(f.Ratings, p) : ThrowProfile.Full(p),
-                    r => (r.IsBatter ? batter : RunnerOn(r.From)) is PlayerProfile who ? RatingScale.Runner(who.Ratings) : RunnerProfile.Standard);
+                    r => (r.IsBatter ? batter : RunnerOn(r.From)) is PlayerProfile who ? RatingScale.Runner(who.Ratings) : RunnerProfile.Standard)
+                { Game = this, GameVersion = Version };
             }
         }
         /// <summary>The slot (1–9) due up next for <paramref name="team"/> — for the team at bat, the current batter's.</summary>
@@ -230,6 +232,9 @@ namespace Pitchlab.Gameplay.Play
             if (!play.IsOver) throw new InvalidOperationException("Apply a play once it is over.");
             if (_applied.Contains(play)) throw new InvalidOperationException("This play has already been applied.");
             if (play.Situation.Outs != Outs || !play.Situation.Bases.Equals(Bases)) throw new InvalidOperationException("The play did not start from this state.");
+            // A play made with this game's players belongs to the plate appearance it was made in (not one recreated later).
+            if (play.Personnel.Game != null && (!ReferenceEquals(play.Personnel.Game, this) || play.Personnel.GameVersion != Version))
+                throw new InvalidOperationException("The play was made for another batter or other runners.");
             return Record(play.IsFoul ? PitchOutcome.Foul : PitchOutcome.InPlay, info, play);
         }
 

@@ -34,6 +34,23 @@ namespace Pitchlab.Gameplay.Play
 
         public static PlayPersonnel Standard { get; } = new PlayPersonnel(FielderProfile.For, ThrowProfile.For, ThrowProfile.Full, _ => RunnerProfile.Standard);
 
+        /// <summary>The game and its version this personnel was built for (<see cref="GameState.Personnel"/>; null otherwise):
+        /// a play made with it can only be applied to that game in that state.</summary>
+        internal GameState Game { get; set; }
+        internal int GameVersion { get; set; }
+
+        /// <summary>Do all fielders' movement profiles match <paramref name="solved"/> (the profiles a fielding play was solved with)?</summary>
+        public bool FieldedBy(Func<DefensivePosition, FielderProfile> solved)
+        {
+            for (int i = 0; i < DefensiveAlignment.Count; i++)
+                if (!Same(_fielders[i], solved((DefensivePosition)i))) return false;
+            return true;
+        }
+
+        private static bool Same(in FielderProfile a, in FielderProfile b) =>
+            a.ReactionTime == b.ReactionTime && a.MaxSpeed == b.MaxSpeed && a.AccelerationTime == b.AccelerationTime && a.BrakeDeceleration == b.BrakeDeceleration
+            && a.Reach == b.Reach && a.GroundReach == b.GroundReach && a.CatchHeightMax == b.CatchHeightMax && a.PickupHeightMax == b.PickupHeightMax;
+
         public FielderProfile Fielder(DefensivePosition p) => _fielders[(int)p];
         /// <summary>A routine throw.</summary>
         public ThrowProfile Throw(DefensivePosition p) => _throws[(int)p];
