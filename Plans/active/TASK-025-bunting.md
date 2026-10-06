@@ -49,7 +49,13 @@ See Docs/BUNTING.md.
     aim updates before a frame);
   - test.sh PlayMode polling extended to the 1500 s timeout.
 - [x] check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107).
-- [ ] Codex round 3; merge.
+- [x] Codex round 3: grade C.
+  - The CPU's sacrifice cannot succeed without secondary leads; running on contact barely helps (106 of 134 still forced),
+    so the gap is the lead.
+  - Now `BuntStrategy.Sacrifice` is off (`SacrificesWork = false`) until TASK-026; the spot is `BuntStrategy.Spot` (tested).
+  - Fixed: test.sh's final status look after polling; the debug readout's bunt contact time.
+- [x] check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107).
+- [ ] Codex round 4; merge.
 
 ## Known gaps (handed on)
 - Sacrifice success is very low: the runner's lead and break (TASK-026); bunt defense and positioning (TASK-033).

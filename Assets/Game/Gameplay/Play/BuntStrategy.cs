@@ -17,7 +17,19 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>From this inning on, with the score within <see cref="CloseMargin"/>.</summary>
         public const int LateInning = 7, CloseMargin = 1;
 
-        public static bool Sacrifice(GameState game)
+        /// <summary>
+        /// Whether the CPU lays one down now: the textbook <see cref="Spot"/>, once sacrifices can work. Not yet — runners start
+        /// a play from a standing 12-ft lead with no secondary lead, so the pitcher forces the lead runner on nearly every
+        /// sacrifice (0 of 134 in the forced sample, Docs/BUNTING.md): the CPU does not choose a tactic that cannot succeed.
+        /// TASK-026 (leads) re-enables it with a measured success rate.
+        /// </summary>
+        public static bool Sacrifice(GameState game) => SacrificesWork && Spot(game);
+
+        /// <summary>Off until runners take their secondary leads (TASK-026).</summary>
+        public const bool SacrificesWork = false;
+
+        /// <summary>The textbook sacrifice spot (the rule of thumb above).</summary>
+        public static bool Spot(GameState game)
         {
             if (game == null) throw new ArgumentNullException(nameof(game));
             if (game.IsOver || game.Outs != 0 || !game.Bases.First || game.Bases.Third || game.Count.Strikes >= 2) return false;

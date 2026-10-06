@@ -77,6 +77,8 @@ else
     if jq -e '.status == "completed"' <<<"$status" >/dev/null 2>&1; then break; fi
     /bin/sleep 2
   done
+  # One last look: the run may have completed during the final sleep.
+  jq -e '.status == "completed"' <<<"$status" >/dev/null 2>&1 || status=$(cmd test_status 2>/dev/null || echo '{}')
   ok=$(jq '.status == "completed"' <<<"$status")
   results=$(jq -c '.results // []' <<<"$status")
 fi

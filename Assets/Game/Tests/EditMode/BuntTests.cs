@@ -222,23 +222,23 @@ namespace Pitchlab.Tests
 
             Assume.That(weak, Is.Not.Null, "a weak hitter in the order");
             g.Set(8, g.Half, 0, new BaseOccupancy(true, false, false), 2, 2);
-            Assert.IsTrue(BuntStrategy.Sacrifice(g), "nobody out, a runner on first, late, close, a weak hitter");
+            Assert.IsTrue(BuntStrategy.Spot(g), "nobody out, a runner on first, late, close, a weak hitter");
             Assert.Greater(BuntStrategy.Aim(g), 0.0, "toward first: the first baseman holds the runner");
             g.Set(8, g.Half, 0, new BaseOccupancy(true, true, false), 2, 2);
-            Assert.IsTrue(BuntStrategy.Sacrifice(g));
+            Assert.IsTrue(BuntStrategy.Spot(g));
             Assert.Less(BuntStrategy.Aim(g), 0.0, "first and second: toward third");
             g.Set(8, g.Half, 1, new BaseOccupancy(true, false, false), 2, 2);
-            Assert.IsFalse(BuntStrategy.Sacrifice(g), "one out");
+            Assert.IsFalse(BuntStrategy.Spot(g), "one out");
             g.Set(3, g.Half, 0, new BaseOccupancy(true, false, false), 2, 2);
-            Assert.IsFalse(BuntStrategy.Sacrifice(g), "early");
+            Assert.IsFalse(BuntStrategy.Spot(g), "early");
             g.Set(8, g.Half, 0, new BaseOccupancy(true, false, false), 6, 2);
-            Assert.IsFalse(BuntStrategy.Sacrifice(g), "not close");
+            Assert.IsFalse(BuntStrategy.Spot(g), "not close");
             g.Set(8, g.Half, 0, new BaseOccupancy(true, false, true), 2, 2);
-            Assert.IsFalse(BuntStrategy.Sacrifice(g), "a runner on third (no squeeze)");
+            Assert.IsFalse(BuntStrategy.Spot(g), "a runner on third (no squeeze)");
             g.Set(8, g.Half, 0, new BaseOccupancy(true, false, false), 2, 2);
             g.Pitch(PitchOutcome.CalledStrike);
             g.Pitch(PitchOutcome.CalledStrike);
-            Assert.IsFalse(BuntStrategy.Sacrifice(g), "two strikes: a foul bunt would be strike three");
+            Assert.IsFalse(BuntStrategy.Spot(g), "two strikes: a foul bunt would be strike three");
         }
 
         [Test]
@@ -272,27 +272,25 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void SimulatedSacrificesGoThroughTheProductionPath()
+        public void TheCpuDoesNotSacrificeUntilRunnersTakeLeads()
         {
-            // Late, close games with a weak hitter up (10 games): the simulator's batter bunts there, never elsewhere.
-            int bunts = 0;
-            for (int seed = 7019; seed <= 7028; seed++)   // seeds with sacrifice spots
+            // TASK-025 measured 0 successful sacrifices in 134 fair bunts (no secondary leads yet): the CPU keeps swinging in
+            // the spot. Games with sacrifice spots (seeds 7019–7028) play no bunts; the spot itself is recognised.
+            int spots = 0;
+            for (int seed = 7019; seed <= 7028; seed++)
             {
                 var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);
                 var sim = new GameSimulator(g);
                 while (!g.IsOver)
                 {
-                    bool spot = BuntStrategy.Sacrifice(g);
-                    PitchOutcome o = sim.PlayPitch();
-                    Assert.AreEqual(spot, sim.LastBunt);
-                    if (!sim.LastBunt) continue;
-                    bunts++;
-                    Assert.AreNotEqual(PitchOutcome.Foul, o, "a foul bunt is recorded as one");
+                    if (BuntStrategy.Spot(g)) spots++;
+                    Assert.IsFalse(BuntStrategy.Sacrifice(g));
+                    sim.PlayPitch();
+                    Assert.IsFalse(sim.LastBunt);
                 }
             }
 
-            TestContext.WriteLine($"{bunts} bunt pitches in 10 games");
-            Assert.Greater(bunts, 0);
+            Assert.Greater(spots, 0, "the spots occur");
         }
     }
 }

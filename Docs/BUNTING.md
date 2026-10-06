@@ -35,6 +35,10 @@ sacrifice and the labs build on that. Labels: MEASURED / DERIVED / ASSUMED / TUN
 `GameState.Apply(play, info, bunt: true)` records a bunted ball.
 
 ## CPU (`BuntStrategy`, `CpuBatter.PlanBunt`)
+**Not active yet.** `BuntStrategy.Sacrifice` is off (`SacrificesWork = false`): runners have no secondary lead yet, so no
+sacrifice succeeds (see Discrepancies). The CPU does not choose a tactic that cannot work. TASK-026 re-enables it with a
+measured success rate. Everything below is implemented and tested, and the simulator's and labs' bunt paths are in place.
+
 - **When he bunts (ASSUMED rule of thumb):**
   - nobody out, a runner on first, nobody on third;
   - 7th inning or later, score within one;

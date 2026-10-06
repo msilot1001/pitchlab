@@ -1092,7 +1092,7 @@ namespace Pitchlab.Sandbox
             if (LastSwing is SwingInput swing && LastResult is ContactResult r && CurrentPitch != null)
             {
                 (double su, double sv) = Pci.ToNormalized(swing.PciX, swing.PciZ);
-                var ball = CurrentPitch.Flight.StateAt(swing.StartTime + PitchSwing.SwingDuration).Position;
+                var ball = CurrentPitch.Flight.StateAt(ContactResolver.ContactTime(CurrentPitch, swing, PitchSwing)).Position;
                 text += $"\nSwing @ {swing.StartTime:0.0000} s: PCI ({su:+0.000;-0.000}, {sv:+0.000;-0.000}) = ({swing.PciX:+0.000;-0.000}, {swing.PciZ:0.000}) m" +
                         $"\nBall at contact time ({ball.X:+0.000;-0.000}, {ball.Y:0.000}, {ball.Z:0.000}) m   timing {(double.IsNaN(r.TimingError) ? "-" : $"{r.TimingError * 1000.0:+0.0;-0.0} ms")}" +
                         (r.IsContact ? $"\nContact point ({r.BattedBall.Position.X:+0.000;-0.000}, {r.BattedBall.Position.Y:0.000}, {r.BattedBall.Position.Z:0.000}) m" : $"\nMiss: {r.Outcome}");
