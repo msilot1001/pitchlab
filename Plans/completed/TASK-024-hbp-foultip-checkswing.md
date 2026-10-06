@@ -104,4 +104,7 @@ Claude Code (sole writer); reviewers and Codex read-only.
   - the lab no longer plays such contact out;
   - the banner shows the rule's call for every touched pitch.
 - [x] check.sh green (EditMode 719 passed, 6 skipped; PlayMode 105/105).
-- [ ] Codex round 3; merge.
+- [x] Codex round 3: grade B. Fixed:
+  - the lab readout gives the rule's call when the touch comes before the offer;
+  - a CPU swing due after the touch is not started (dead ball).
+- [x] check.sh green (EditMode 719 passed, 6 skipped; PlayMode 105/105). Merged.

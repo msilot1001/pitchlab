@@ -830,7 +830,9 @@ namespace Pitchlab.Sandbox
                 _pciTrack.Place(RealtimeOf(e.Time), u, v);
             }
 
-            if (plan.Swing && !LastSwing.HasValue && _resultPending && RealtimeOf(plan.SwingStart) <= now) SwingAtSimTime(plan.SwingStart);
+            // Not after the pitch has touched him (dead ball), as for the player's press.
+            bool dead = LastTouch is BodyHit touched && plan.SwingStart >= touched.Time;
+            if (plan.Swing && !dead && !LastSwing.HasValue && _resultPending && RealtimeOf(plan.SwingStart) <= now) SwingAtSimTime(plan.SwingStart);
             if (!double.IsNaN(plan.CheckTime) && LastSwing.HasValue && double.IsNaN(LastSwing.Value.CheckTime) && RealtimeOf(plan.CheckTime) <= now) CheckSwingAtSimTime(plan.CheckTime);
         }
 
@@ -900,6 +902,13 @@ namespace Pitchlab.Sandbox
                 ResultSummary = r.Outcome == ContactOutcome.MissTiming ? (r.TimingError < 0 ? "Swing and miss — early" : "Swing and miss — late") : "Swing and miss";
                 _readout = $"{_pitchLabel}  timing {timing}\nMISS: {r.Outcome}" +
                            (double.IsNaN(r.VerticalOffset) ? "" : $" (barrel {inches(r.OffsetAlongBarrel):+0.0;-0.0} in, vertical {inches(r.VerticalOffset):+0.0;-0.0} in)");
+                // The pitch touched him before his swing reached the offer point: no swing, the rule's call (TASK-024).
+                if (LastTouch is BodyHit touched && LastSwing is SwingInput s && s.OfferTime(_swing.SwingDuration) > touched.Time)
+                {
+                    (double bottom, double top) = Zone;
+                    ResultSummary = PitchOutcomes.BeforePlay(CurrentPitch, s, r, _swing.SwingDuration, touched, bottom, top) == PitchOutcome.HitByPitch
+                        ? "Hit by pitch (before his swing was an offer)" : "Hit by the pitch in the zone · strike";
+                }
             }
 
             SetPath(_pitchPath, CurrentPitch.Flight);
