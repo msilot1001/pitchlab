@@ -374,19 +374,26 @@ namespace Pitchlab.Gameplay.Play
                     LiveThrow th = Executed(a.Throw);
                     _throws.Add(th);
                     _ball[_ball.Count - 1].Next = th;
-                    _ball.Add(new Segment { Kind = SegmentKind.Thrown, Start = th.ReleaseTime, Throw = th, Aimed = a.Throw });
+                    var thrown = new Segment { Kind = SegmentKind.Thrown, Start = th.ReleaseTime, Throw = th, Aimed = a.Throw };
+                    _ball.Add(thrown);
                     if (th.ReceiverMotion != null) _tracks[(int)th.Receiver].Add(th.SwitchTime, th.ReceiverMotion);
                     Reassign(t, h, _tracks[(int)h].PositionAt(t), th);
                     _play.ScheduleDefense(th.ReleaseTime, () => _play.OnThrowReleased(th), "release");
-                    if (a.IsForce && th.Caught && th.Target != null && a.Throw.Caught && a.Throw.ReceiverMotion == null && th.ReceiverMotion != null
-                        && (th.Catch.FielderTarget - th.ReceiverMotion.Start).Length > PulledOffBag)
-                        _play.ScheduleDefense(th.Catch.Time, () =>
+                    double moved = th.Caught && th.ReceiverMotion != null ? (th.Catch.FielderTarget - th.ReceiverMotion.Start).Length : 0.0;
+                    if (th.Caught && th.Target != null && a.Throw.Caught && a.Throw.ReceiverMotion == null && moved > PulledOffBag && (a.IsForce || moved > GotPast))
+                    {
+                        // The throw as aimed would have been taken on the bag; this one pulls him off it, or gets past him. Seen when
+                        // it passes the bag: from then on everyone plays the real throw (runners may take the extra base).
+                        double passes = Math.Min(th.Catch.Time, ThrowPlanner.ArrivalAtBase(th.Flight, th.AimPoint));
+                        string what = moved > GotPast ? $"throw got past {LivePlay.Abbrev(th.Receiver)}" : $"throw pulled {LivePlay.Abbrev(th.Receiver)} off the bag";
+                        _play.ScheduleDefense(passes, () =>
                         {
-                            // The throw as aimed would have been taken on the bag; this one pulls him off it.
-                            _play.OnMisplay(th.Catch.Time, th.Thrower, MisplayKind.ThrowingMisplay, $"throw pulled {LivePlay.Abbrev(th.Receiver)} off the bag", false);
-                            if (!_play.IsOver) Attempt(th.Receiver, th.Flight, th.Catch, FieldingAction.ReceiveThrow, false, th);
-                        }, "catch");
-                    else if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Attempt(th.Receiver, th.Flight, th.Catch, FieldingAction.ReceiveThrow, false, th), "catch");
+                            thrown.Aimed = null;
+                            _play.OnMisplay(passes, th.Thrower, MisplayKind.ThrowingMisplay, what, false);
+                        }, "off target");
+                    }
+
+                    if (th.Caught) _play.ScheduleDefense(th.Catch.Time, () => Attempt(th.Receiver, th.Flight, th.Catch, FieldingAction.ReceiveThrow, false, th), "catch");
                     else _play.ScheduleDefense(th.FirstContactTime, () => Loose(th, a.Throw.Caught), "loose");
                     return;
                 }
@@ -403,11 +410,11 @@ namespace Pitchlab.Gameplay.Play
         private void Loose(LiveThrow th, bool aimedWouldBeHeld)
         {
             double t = th.FirstContactTime;
+            // The free ball first, then the runners' reaction to it (they must see the loose ball, not the planned catch).
+            LooseBall(th.Flight, t, t, null, double.NegativeInfinity);
             if (aimedWouldBeHeld && !th.AimError.Equals(Vector3d.Zero))
                 _play.OnMisplay(t, th.Thrower, MisplayKind.ThrowingMisplay, $"throw off target ({th.AimError.Length:F1} m)", false);
             else _play.OnLooseBall(t);
-            if (_play.IsOver) return;
-            LooseBall(th.Flight, t, t, null, double.NegativeInfinity);
         }
 
         /// <summary>
@@ -467,6 +474,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>A throw that makes the receiver step this far (m) from the bag on a force play, when the throw as aimed would
         /// have been taken on it, is a throwing misplay (a step to the side is not; ASSUMED).</summary>
         public const double PulledOffBag = 0.6;
+        /// <summary>A throw the receiver has to chase this far (m) has got past him — a misplay on any play (an overthrow).</summary>
+        public const double GotPast = 3.0;
         /// <summary>Recovering from a missed ball before he can go after it again (s; ASSUMED): 0.5 s, a failed dive as long as
         /// getting up from a successful one (<see cref="FieldingActions.DiveRecovery"/>).</summary>
         public const double MissRecovery = 0.5;
@@ -487,7 +496,13 @@ namespace Pitchlab.Gameplay.Play
             double t = take.Time;
             Vector3d at = take.Ball.Position;
             bool fairGround = Math.Abs(Math.Atan2(at.X, at.Y)) <= 0.25 * Math.PI;
-            if (_play.ExecutionSeed is long seed && action != FieldingAction.None && fairGround)
+            // The infield fly rule (OBR Definitions; runners on first and second, fewer than two out, a fly an infielder takes):
+            // the batter is out whether or not it is held — a drop is not modelled there (it would only let runners advance at
+            // their own risk).
+            Situation sit = _play.Situation;
+            bool infieldFly = batted && _play.Kind == LivePlay.BallKind.Caught && !DefensiveDecision.IsOutfielder(p)
+                && sit.Bases.First && sit.Bases.Second && sit.Outs < 2;
+            if (_play.ExecutionSeed is long seed && action != FieldingAction.None && fairGround && !infieldFly)
             {
                 FielderTrack track = _tracks[(int)p];
                 Vector3d v = track.VelocityAt(t);
@@ -524,12 +539,13 @@ namespace Pitchlab.Gameplay.Play
                 : pickup ? "bobble" : "dropped the ball";
             bool stillAFly = batted && outcome == TakeOutcome.Miss && _play.Kind == LivePlay.BallKind.Caught;
             double grounded = stillAFly ? FirstContactAfter(ball, t) : t;
-            _play.OnMisplay(t, p, MisplayKind.FieldingMisplay, $"{what} ({Words(action)})", batted, grounded);
-            if (_play.IsOver) return;
+            string text = $"{what} ({Words(action)})";
+            // The free ball first, then the play's reaction (runners must see the loose ball, not the planned take).
             if (outcome == TakeOutcome.Miss)
             {
                 double recovery = action == FieldingAction.DivingCatch ? FieldingActions.DiveRecovery : MissRecovery;
                 LooseBall(ball, t, t, p, t + recovery, stillAFly ? grounded : double.NegativeInfinity);
+                _play.OnMisplay(t, p, MisplayKind.FieldingMisplay, text, batted, grounded);
                 return;
             }
 
@@ -556,6 +572,7 @@ namespace Pitchlab.Gameplay.Play
             // A dropped ball in the air is played once it has come down (no juggling catches): from its first contact.
             double reactFrom = pickup ? t : FirstContact(knocked);
             LooseBall(knocked, t, reactFrom, p, t + (pickup ? BobbleRecovery : 0.2));
+            _play.OnMisplay(t, p, MisplayKind.FieldingMisplay, text, batted, grounded);
         }
 
         private static double FirstContactAfter(BallInPlay ball, double t)

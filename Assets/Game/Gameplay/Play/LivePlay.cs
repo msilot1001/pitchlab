@@ -676,7 +676,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>A missed fly touched the ground before anyone held it: no catch any more; the runners reconsider.</summary>
         private void OnFlyGrounded(DefensivePosition misplayed, double t)
         {
-            if (Kind != BallKind.Caught || Defense.HolderAt(t) != null) return;
+            // Caught in the air after the miss (a fly out is recorded), or held now: still a catch.
+            if (Kind != BallKind.Caught || Defense.HolderAt(t) != null || _rulesEvents.Any(e => e.Kind == PlayEventKind.FlyOut)) return;
             Kind = DefensiveDecision.IsOutfielder(misplayed) ? BallKind.Hit : BallKind.Grounder;
             foreach (LiveRunner r in _runners)
                 if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);

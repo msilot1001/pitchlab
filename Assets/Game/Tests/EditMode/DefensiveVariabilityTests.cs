@@ -179,8 +179,8 @@ namespace Pitchlab.Tests
         public void ABadThrowFliesOffItsAimAndTheReceiverReactsToIt()
         {
             (LivePlay p, Misplay m, _) = Find(x => x.What.StartsWith("throw pulled"), crew: 0, bases: new BaseOccupancy(true, false, false));
-            // The misplayed throw: the one of this thrower caught (or loose) at the misplay.
-            LiveThrow th = p.Defense.Throws.First(x => x.Thrower == m.Fielder && Math.Abs(x.EndTime - m.Time) < 1e-9);
+            // The misplayed throw: the one of this thrower in the air at the misplay (seen as it passes the bag).
+            LiveThrow th = p.Defense.Throws.First(x => x.Thrower == m.Fielder && x.ReleaseTime <= m.Time && m.Time <= x.EndTime + 1e-9);
             Assert.Greater(th.AimError.Length, 0.3, "off target");
             // It flies on the throw physics from the hand toward its aim plus its error, not toward the aim.
             Assert.AreEqual(th.ReleasePoint, th.Flight.First.Position);
@@ -199,6 +199,38 @@ namespace Pitchlab.Tests
             Assert.GreaterOrEqual(th.SwitchTime, th.ReleaseTime + ThrowPlanner.AdjustReaction - 1e-9);
             // Off the bag: his catch is no force out at that base.
             Assert.IsFalse(p.RulesEvents.Any(e => e.Kind == PlayEventKind.ForceOut && Math.Abs(e.Time - th.Catch.Time) < 1e-6), "no force off the bag");
+        }
+
+        [Test]
+        public void AnOverthrowIsSeenAtTheBagAndTheBatterTakesSecond()
+        {
+            // The FieldingLab's routine SS grounder with a poor crew, seed 10: the throw is 2.2 m off and gets past 1B (found in
+            // the runtime walkthrough). The runners see it when it passes the bag — not when 1B finally gathers it.
+            LivePlay p = Play(Hit(85.0, -8.0, -15.0, -1000.0), Crew(10), 10);   // the FieldingLab preset "SS routine grounder"
+            Misplay m = p.Misplays.Single(x => x.Kind == MisplayKind.ThrowingMisplay);
+            StringAssert.StartsWith("throw got past", m.What);
+            LiveThrow th = p.Defense.Throws.Single();
+            Assert.Less(m.Time, th.Catch.Time - 1.0, "seen at the bag, long before he gathers it");
+            Assert.IsTrue(p.Log.Any(e => e.Text.Contains("batter-runner touches 2B")), "the batter-runner takes second on it");
+        }
+
+        [Test]
+        public void AnInfieldFlyWithTheRuleInEffectIsNeverDropped()
+        {
+            // Runners on first and second, nobody out: an infielder's fly is an out by rule (a drop is not modelled).
+            var bases = new BaseOccupancy(true, true, false);
+            int infieldFlies = 0;
+            foreach (BallInPlay ball in Balls)
+                for (long seed = 1; seed <= 20; seed++)
+                {
+                    LivePlay p = Play(ball, Crew(0), seed, bases);
+                    if (p.Fielding.Primary == null || p.Fielding.Intercept.Kind != InterceptKind.FlyCatch || DefensiveDecision.IsOutfielder(p.Fielding.Primary.Value)) break;
+                    infieldFlies++;
+                    Assert.IsFalse(p.Misplays.Any(x => x.Fielder == p.Fielding.Primary.Value && x.Time <= p.Fielding.PossessionTime + 1e-9), "held");
+                    Assert.IsTrue(p.RulesEvents.Any(e => e.Kind == PlayEventKind.FlyOut));
+                }
+
+            Assert.Greater(infieldFlies, 0, "the grid has infield flies");
         }
 
         [Test]

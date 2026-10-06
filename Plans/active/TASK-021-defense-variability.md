@@ -33,6 +33,31 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
 
 ## Milestones
 - [x] Execution model, defense integration, throw error, stretch, seeds, simulator misplay record.
-- [x] Tuned on whole games: ≈ 0.25 fielding and 0.28 throwing misplays per team-game.
+- [x] Tuned on whole games: ≈ 0.27 fielding and 0.12 throwing misplays per team-game.
 - [x] Tests (DefensiveVariabilityTests).
-- [ ] check.sh; runtime walkthrough; reviews (physics, Unity, test); Codex; merge.
+- [x] Reviews:
+  - Physics:
+    - dropped throws are followed over their whole flight;
+    - a ball out of the field ends the play;
+    - a missed fly stays catchable until it lands (OBR);
+    - the stretch applies only to errant throws (no change without a seed);
+    - dive and bobble recovery; a capped rebound;
+    - runners read the aimed throw;
+    - "pulled off the bag" counts only on force plays.
+  - Unity:
+    - the readout reads the held take (no phantom "caught by");
+    - focus per segment (`Segment.Retriever`);
+    - a misplayed attempt is shown (`BallTake.Held`);
+    - the HUD flash is cached.
+  - Test: the requested assertions were strengthened and new tests added (see Docs/DEFENSIVE_VARIABILITY.md).
+- [x] Runtime (FieldingLab, E/R execution toggle, crew 10):
+  - LF's dive misses, the ball rolls on to the wall, LF gets up and retrieves it;
+  - 2B bobbles a forehand pickup and retakes it 1.05 s later, so the double play becomes a single force;
+  - SS throws 2.2 m off, the throw gets past 1B, and the batter-runner takes second;
+  - a receiver drops a throw.
+  Before its fix, the overthrow was only noticed when 1B gathered it, 6 s later. It is now a misplay seen at the bag, with a
+  test.
+- [x] Codex: C — fixed:
+  - the free ball is installed before runners react;
+  - the infield fly rule (no drop modelled);
+  - the grounded check respects an air catch.

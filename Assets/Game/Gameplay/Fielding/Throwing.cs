@@ -506,7 +506,7 @@ namespace Pitchlab.Gameplay.Fielding
         }
 
         /// <summary>When the throw passes closest (horizontally) to the base, on a 5 ms grid.</summary>
-        private static double ArrivalAtBase(BallInPlay flight, Vector3d basePoint)
+        internal static double ArrivalAtBase(BallInPlay flight, Vector3d basePoint)
         {
             double best = flight.First.Time, bestDistance = double.PositiveInfinity;
             for (double t = flight.First.Time; t <= flight.EndTime; t += 0.005)
