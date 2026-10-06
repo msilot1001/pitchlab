@@ -33,8 +33,11 @@ namespace Pitchlab.Gameplay.Play
         }
 
         /// <param name="fieldingPosition">Where he plays (null: designated hitter, or no assignment).</param>
-        public PlayerProfile(string id, string name, BatterSide bats, Hand throws, double heightInches, DefensivePosition? fieldingPosition, PlayerRatings ratings)
+        /// <param name="repertoire">The pitches he throws (pitchers; null otherwise).</param>
+        public PlayerProfile(string id, string name, BatterSide bats, Hand throws, double heightInches, DefensivePosition? fieldingPosition, PlayerRatings ratings,
+            Repertoire repertoire = null)
         {
+            Repertoire = repertoire;
             if (string.IsNullOrEmpty(id)) throw new ArgumentException("A player needs an id.", nameof(id));
             if (!(heightInches > 48.0 && heightInches < 96.0)) throw new ArgumentOutOfRangeException(nameof(heightInches));
             Id = id;
@@ -57,6 +60,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>The position he fields (null: designated hitter or unassigned).</summary>
         public DefensivePosition? FieldingPosition { get; }
         public PlayerRatings Ratings { get; }
+        /// <summary>The pitches he throws (TASK-018; null for a position player).</summary>
+        public Repertoire Repertoire { get; }
 
         public static string PositionName(DefensivePosition p) => p switch
         {
@@ -105,8 +110,10 @@ namespace Pitchlab.Gameplay.Play
     /// <summary>The pitch as thrown, for the record: what was called for and what the flight did (TASK-013).</summary>
     public readonly struct PitchInfo
     {
-        public PitchInfo(string label, double speedMph, double plateX, double plateZ)
+        public PitchInfo(string label, double speedMph, double plateX, double plateZ, double targetX = double.NaN, double targetZ = double.NaN)
         {
+            TargetX = targetX;
+            TargetZ = targetZ;
             _label = label;
             SpeedMph = speedMph;
             PlateX = plateX;
@@ -121,13 +128,17 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Where it crossed the front plane of the plate (m; NaN if it never did).</summary>
         public double PlateX { get; }
         public double PlateZ { get; }
+        /// <summary>Where the pitcher aimed (front plane of the plate, m; NaN: no target — the preset's own aim).</summary>
+        public double TargetX { get; }
+        public double TargetZ { get; }
+        public bool HasTarget => SpeedMph > 0.0 && !double.IsNaN(TargetX) && !double.IsNaN(TargetZ);   // not a pitch recorded without its info
         /// <summary>Was a flight recorded that crossed the plate (not a pitch recorded without its info)?</summary>
         public bool HasCrossing => SpeedMph > 0.0 && !double.IsNaN(PlateX) && !double.IsNaN(PlateZ);
 
-        public static PitchInfo Of(string label, HittingPitch pitch)
+        public static PitchInfo Of(string label, HittingPitch pitch, double targetX = double.NaN, double targetZ = double.NaN)
         {
             (double x, double z) = StrikeZone.Crossing(pitch);
-            return new PitchInfo(label, Units.MetersPerSecondToMph(pitch.Flight.First.Velocity.Length), x, z);
+            return new PitchInfo(label, Units.MetersPerSecondToMph(pitch.Flight.First.Velocity.Length), x, z, targetX, targetZ);
         }
     }
 

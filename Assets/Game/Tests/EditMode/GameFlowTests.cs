@@ -4,6 +4,7 @@ using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Simulation.BallFlight;
 using Pitchlab.Simulation.Batting;
@@ -279,16 +280,16 @@ namespace Pitchlab.Tests
         // ------------------------------------------------------------------ whole games
 
         // Seeds pinned to exercise each ending with the current rosters and simulator (regression pins — re-chosen when either
-        // changes): 1 visitors after nine, 3 home ahead after the top of the 9th, 14 a walk-off in the 9th, 33 extra innings
-        // ending in a walk-off (asserted below).
-        [TestCase(1, "nine innings")]
-        [TestCase(3, "the home team leads after the top of the 9th")]
-        [TestCase(14, "walk-off")]
-        [TestCase(33, "walk-off")]
+        // changes; the seed drives the game's execution too): 2 visitors after nine, 1 home ahead after the top of the 9th,
+        // 4 a walk-off in the 9th, 8 the visitors after ten innings (asserted below).
+        [TestCase(2, "nine innings")]
+        [TestCase(1, "the home team leads after the top of the 9th")]
+        [TestCase(4, "walk-off")]
+        [TestCase(8, "10 innings")]
         public void ASimulatedGameIsAValidGame(int seed, string ending)
         {
-            var g = new GameState();
-            var sim = new GameSimulator(g, seed);
+            var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);   // the seed drives execution too
+            var sim = new GameSimulator(g);
             var timer = Stopwatch.StartNew();
             while (!g.IsOver)
             {
@@ -305,7 +306,7 @@ namespace Pitchlab.Tests
             Assert.IsTrue(g.IsOver, "it ends");
             GameResult r = g.Result;
             Assert.AreEqual(ending, r.Reason, "the seed's ending");
-            if (seed == 33) Assert.Greater(r.Inning, 9, "extra innings");
+            if (seed == 8) Assert.Greater(r.Inning, 9, "extra innings");
             Assert.AreEqual((g.AwayScore, g.HomeScore), (r.Away, r.Home));
             Assert.AreNotEqual(r.Away, r.Home, "never a tie");
             Assert.GreaterOrEqual(r.Inning, 9);
@@ -370,8 +371,8 @@ namespace Pitchlab.Tests
         {
             string Run(int seed)
             {
-                var g = new GameState();
-                new GameSimulator(g, seed).PlayToEnd();
+                var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);
+                new GameSimulator(g).PlayToEnd();
                 return string.Join("\n", g.Log) + string.Join("|", g.Completed.SelectMany(p => p.Pitches)
                     .Select(p => $"{p.Info.Label}@{p.Info.PlateX:R},{p.Info.PlateZ:R}:{p.Outcome}"));
             }

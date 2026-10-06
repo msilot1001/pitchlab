@@ -1,6 +1,7 @@
 using System;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
@@ -371,7 +372,12 @@ namespace Pitchlab.Sandbox
             Vector3 release = SimulationSpace.ToUnity(releaseSim);
             var rubber = new Vector3(0f, FieldDressing.MoundTop, (float)PitchingGeometry.RubberFrontY);
             Vector3 plant = ReferenceMotions.FootPlant(0f);
-            Vector3 Figure(Vector3 world) => new Vector3(rubber.x - world.x, world.y - rubber.y, rubber.z - world.z);   // root faces home (yaw 180)
+            // A left-hander (TASK-018): the mirrored figure plays the right-handed delivery mirrored, so its release target is
+            // the mirror image of his (mirrored, simulated) release point.
+            bool left = (_lab.PitchPitcher ?? _lab.Game?.Pitcher)?.Throws == Hand.Left;
+            _pitcher.LeftHanded = left;
+            float side = left ? -1f : 1f;
+            Vector3 Figure(Vector3 world) => new Vector3(side * (rubber.x - world.x), world.y - rubber.y, rubber.z - world.z);   // root faces home (yaw 180)
             float drop = FieldDressing.MoundTop - FieldDressing.MoundHeight(rubber.x - plant.x, rubber.z - plant.z);
             // The figure stands on the rubber; only the release wrist target is corrected (a few passes) until the ball in
             // the hand meets the simulated release point — the feet never move for the fit.
@@ -383,7 +389,7 @@ namespace Pitchlab.Sandbox
                 _deliveryClip.Sample(_deliveryClip.Marker("release"), _pose);
                 _pitcher.ApplyPose(_pose);
                 Vector3 miss = release - _pitcher.BallAnchor.position;
-                correction = Vector3.ClampMagnitude(correction + new Vector3(-miss.x, miss.y, -miss.z), 0.2f);
+                correction = Vector3.ClampMagnitude(correction + new Vector3(-side * miss.x, miss.y, -miss.z), 0.2f);
             }
 
             _deliveryClip = ReferenceMotions.ReferenceRightHandedPitchDelivery(Figure(release), drop, correction);

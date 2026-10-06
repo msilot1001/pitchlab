@@ -1,6 +1,7 @@
 using System;
 using Pitchlab.Gameplay.Fielding;
 using Pitchlab.Gameplay.Play;
+using Pitchlab.Gameplay.Players;
 using Pitchlab.Gameplay.Rules;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Presentation;
@@ -136,6 +137,16 @@ namespace Pitchlab.Sandbox
         /// frame instead of throwing a pitch that would already be over.</summary>
         public const double AutoHitchTolerance = 0.25;
 
+        /// <summary>
+        /// Pitch execution (TASK-018, GameLab): the pitcher's command spreads his pitches around the target. Off: the intended
+        /// pitch exactly (debug). The labs without a game always throw the presets exactly.
+        /// </summary>
+        public bool ExecutionVariance { get; set; } = true;
+        /// <summary>How the current pitch's execution differed from the intent (null without variance or a rated pitcher).</summary>
+        public ExecutionError? LastExecution { get; private set; }
+        /// <summary>The pitcher of the current pitch (GameLab).</summary>
+        public PlayerProfile PitchPitcher { get; private set; }
+
         /// <summary>The command the current pitch was thrown with (the auto pitcher's, or the manual selection).</summary>
         public PitchCommand? LastCommand { get; private set; }
         /// <summary>The auto pitcher's seed (the same seed and game give the same pitches).</summary>
@@ -163,6 +174,10 @@ namespace Pitchlab.Sandbox
         /// but delivered by the input system a frame later still counts — the result never depends on the frame schedule.
         /// </summary>
         public const double InputGrace = 0.1;
+
+        /// <summary>The seed of the next standard game NewGame starts (each new game its own seed: pitch execution and every
+        /// other seeded variation differ from game to game; the same seed replays the same game).</summary>
+        public int NextGameSeed { get; set; } = 2;
 
         /// <summary>The batter the current pitch is thrown to (GameLab; null in the HittingLab).</summary>
         public PlayerProfile PitchBatter { get; private set; }
@@ -311,9 +326,17 @@ namespace Pitchlab.Sandbox
         {
             int target = Array.IndexOf(PitchingKeys, control);
             if (target >= 0 && target < PitchTargets.All.Length) Target = PitchTargets.All[target];
-            else if (control == "z" || control == "leftShoulder") PresetIndex = _presetIndex - 1;
-            else if (control == "x" || control == "rightShoulder") PresetIndex = _presetIndex + 1;
+            else if (control == "z" || control == "leftShoulder") StepPitchType(-1);
+            else if (control == "x" || control == "rightShoulder") StepPitchType(1);
             else if (control == "p" || control == "buttonNorth") AutoPitch = !AutoPitch;
+        }
+
+        /// <summary>The pitch type keys: through the pitcher's repertoire in the GameLab, through every preset otherwise.</summary>
+        private void StepPitchType(int step)
+        {
+            Repertoire repertoire = Game?.Pitcher?.Repertoire;
+            if (repertoire == null) PresetIndex = _presetIndex + step;
+            else _presetIndex = (int)repertoire.Step((PitchType)_presetIndex, step);
         }
 
         /// <summary>Arrows / D-pad up and down: through the targets (from the preset's own aim, then each target in order).</summary>
@@ -420,7 +443,7 @@ namespace Pitchlab.Sandbox
         public void NewGame(GameState game = null)
         {
             if (!_gameMode) throw new InvalidOperationException("Only the GameLab plays a game.");
-            Game = game ?? new GameState();
+            Game = game ?? new GameState(GenericRosters.Away(), GenericRosters.Home(), NextGameSeed++);
             _resultPending = false;
             _autoArmed = Clock();   // auto pitching (if on) resumes AutoPitchDelay from now
             ClearPitch();
@@ -447,16 +470,28 @@ namespace Pitchlab.Sandbox
             PitchTarget? target = Target;
             if (AutoPitch && Game != null)
             {
-                PitchCommand auto = AutoPitcher.Choose(AutoPitchSeed, Game.Current.Number, Game.Current.Pitches.Count + 1, Game.Count);
+                PitchCommand auto = AutoPitcher.Choose(AutoPitchSeed, Game.Current.Number, Game.Current.Pitches.Count + 1, Game.Count, Game.Pitcher?.Repertoire);
                 (preset, target) = (auto.Preset, auto.Target);
             }
 
-            (double bottom, double top) = Zone;
+            LastExecution = null;
+            PitchPitcher = Game?.Pitcher;
+            if (Game != null) preset = (int)GamePitches.Available(Game, (PitchType)preset);   // only from his repertoire
             LastCommand = target is PitchTarget aimed ? new PitchCommand(preset, aimed) : (PitchCommand?)null;
-            CurrentPitch = target is PitchTarget at
-                ? PitchTargets.Create(new PitchCommand(preset, at), bottom, top, Environment)
-                : HittingPitch.Create(Presets[preset], Environment);
-            _pitchInfo = PitchInfo.Of(Presets[preset].Label, CurrentPitch);   // as thrown (the selection may change)
+            if (Game != null)
+            {
+                // The pitcher on the mound throws it: his pitch, aimed, executed (TASK-018).
+                CurrentPitch = GamePitches.Create(Game, (PitchType)preset, target, ExecutionVariance, Environment, out _pitchInfo, out ExecutionError? execution);
+                LastExecution = execution;
+            }
+            else
+            {
+                (double bottom, double top) = Zone;
+                CurrentPitch = target is PitchTarget at
+                    ? PitchTargets.Create(new PitchCommand(preset, at), bottom, top, Environment)
+                    : HittingPitch.Create(Presets[preset], Environment);
+                _pitchInfo = PitchInfo.Of(Presets[preset].Label, CurrentPitch);   // as thrown (the selection may change)
+            }
             _pitchStartRealtime = releaseRealtime;
             _pitchPlaybackSpeed = _playbackSpeed;
             ClearPitch();

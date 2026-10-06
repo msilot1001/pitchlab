@@ -73,6 +73,19 @@ namespace Pitchlab.Gameplay.Players
         public static readonly Pitching CommandStarter = new Pitching(38, 85, 55, 75);
         public static readonly Pitching BreakingBallPitcher = new Pitching(50, 58, 82, 60);
 
+        /// <summary>A power right-hander: a hard four-seamer he commands best, a slider, a changeup.</summary>
+        public static Repertoire PowerRepertoire() => new Repertoire(
+            new RepertoirePitch(PitchType.FourSeam, 55, 0.0, 10), new RepertoirePitch(PitchType.Slider, 30, 0.0, 0), new RepertoirePitch(PitchType.Changeup, 15, 0.0, -15));
+
+        /// <summary>A command pitcher: sinker first, a four-seamer, a changeup he trusts, a curveball.</summary>
+        public static Repertoire CommandRepertoire() => new Repertoire(
+            new RepertoirePitch(PitchType.Sinker, 40, 0.0, 10), new RepertoirePitch(PitchType.FourSeam, 20, 0.0, 0),
+            new RepertoirePitch(PitchType.Changeup, 25, 0.0, 10), new RepertoirePitch(PitchType.Curveball, 15, 0.0, -10));
+
+        /// <summary>A breaking-ball pitcher: four-seamer, curveball and slider in near-equal parts.</summary>
+        public static Repertoire BreakingBallRepertoire() => new Repertoire(
+            new RepertoirePitch(PitchType.FourSeam, 40, 0.0, 0), new RepertoirePitch(PitchType.Curveball, 35, 0.0, 10), new RepertoirePitch(PitchType.Slider, 25, 0.0, 5));
+
         public static PlayerRatings Compose(Batting b, Running r, Defense d, int armStrength, Pitching? p = null)
         {
             Pitching pitch = p ?? new Pitching(50, 50, 50, 50);
@@ -84,6 +97,11 @@ namespace Pitchlab.Gameplay.Players
 
         private static PlayerProfile Batter(string prefix, string team, int slot, bool left, DefensivePosition? at, Batting b, Running r, Defense d, int arm) =>
             new PlayerProfile($"{prefix}{slot}", $"{team} #{slot}", left ? BatterSide.Left : BatterSide.Right, Hand.Right, Heights[(slot - 1) % 3], at, Compose(b, r, d, arm));
+
+        /// <summary>A generic pitcher of an archetype (tests, matchups).</summary>
+        public static PlayerProfile Pitcher(string id, Hand throws, Pitching archetype, Repertoire repertoire) =>
+            new PlayerProfile(id, id, throws == Hand.Left ? BatterSide.Left : BatterSide.Right, throws, 75.0, DefensivePosition.P,
+                Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, archetype), repertoire);
 
         /// <summary>The visitors: a speed-and-defence top of the order, power in the middle; a power right-hander starting.</summary>
         public static Team Away()
@@ -102,11 +120,11 @@ namespace Pitchlab.Gameplay.Players
                 Batter("A", t, 9, false, null, FreeSwinger, SlowRunner, PoorDefender, 40),
             });
             var pitcher = new PlayerProfile("AP", "Away P", BatterSide.Right, Hand.Right, 76.0, DefensivePosition.P,
-                Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, PowerStarter));
+                Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, PowerStarter), PowerRepertoire());
             return new Team(t, lineup, pitcher);
         }
 
-        /// <summary>The home team: contact and patience, an elite left side of the infield, a command right-hander starting.</summary>
+        /// <summary>The home team: contact and patience, an elite left side of the infield, a command left-hander starting.</summary>
         public static Team Home()
         {
             const string t = "Home";
@@ -122,8 +140,8 @@ namespace Pitchlab.Gameplay.Players
                 Batter("H", t, 8, false, DefensivePosition.C, BalancedHitter, SlowRunner, AverageDefender, 60),
                 Batter("H", t, 9, false, null, PatientHitter, new Running(35, 40, 50), PoorDefender, 40),
             });
-            var pitcher = new PlayerProfile("HP", "Home P", BatterSide.Right, Hand.Right, 75.0, DefensivePosition.P,
-                Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, CommandStarter));
+            var pitcher = new PlayerProfile("HP", "Home P", BatterSide.Left, Hand.Left, 75.0, DefensivePosition.P,
+                Compose(PitcherBatting, new Running(36, 40, 40), AverageDefender, 50, CommandStarter), CommandRepertoire());
             return new Team(t, lineup, pitcher);
         }
     }
