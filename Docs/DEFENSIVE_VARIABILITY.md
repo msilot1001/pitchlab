@@ -70,8 +70,16 @@ Without a seed the defense is the validated deterministic defense of TASK-005–
 - **Kind and runners:** a dropped fly stops being a catch at the drop; a missed fly stops when it touches the ground
   (`LivePlay.Kind` becomes a hit ball). Then there is no fly out. Every runner reconsiders at the misplay and again when
   the ball lands; nobody knew before. Runners judge a throw in the air as it was aimed, not by whether it will be held.
-- **Out of the field:** a misplayed ball that nobody can reach before it leaves the field ends the play there (no award is
-  modelled).
+- **Out of the field:** a misplayed ball that nobody can reach before it leaves the field is dead:
+  - over the fence on the fly after touching a fielder, a home run (OBR 5.05(a)(9));
+  - otherwise two bases for every runner (OBR 5.06(b)(4)(G)/(H), simplified: counted from the last base touched when the
+    ball went out).
+
+  No out can be made on a dead ball. This is rare in this park: no case appeared in thousands of seeded plays, so it is
+  tested directly.
+- **Infield fly rule:** with runners on first and second and fewer than two out, an infielder's ordinary-effort fly
+  (standing or running catch) is always held. The batter is out by rule anyway; a drop letting runners advance at their own
+  risk is not modelled.
 
 ## Throws
 - **The decision:** the holder chooses his play with throws as aimed (expected ability, TASK-008 decision).
@@ -133,7 +141,11 @@ Tests (`DefensiveVariabilityTests`) cover:
 - nothing before the first error differs from the error-free play (no planning around future errors);
 - a pulled-off-the-bag catch is no force out;
 - simulated games label misplays and stay within a misplay-rate guard;
-- a backup's air catch of a missed fly is an out. This one is inconclusive when the test grid contains no such play.
+- a missed fly stays a catch until it lands (stepped in time);
+- an overthrow is seen at the bag, and the batter takes second;
+- the infield fly rule;
+- the out-of-play award;
+- step-size independence of seeded plays.
 
 ## Limitations
 - No fumbled transfers (Transfer sets the time only).

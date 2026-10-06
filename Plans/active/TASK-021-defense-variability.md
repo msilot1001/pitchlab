@@ -61,3 +61,7 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
   - the free ball is installed before runners react;
   - the infield fly rule (no drop modelled);
   - the grounded check respects an air catch.
+- [x] Codex round 2: C — fixed:
+  - the out-of-play award (two bases, or a home run over the fence on the fly; no outs on a dead ball; the defense stops);
+  - the infield-fly guard is limited to ordinary effort;
+  - stepped-time tests replace the inconclusive search.

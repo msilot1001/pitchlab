@@ -443,16 +443,22 @@ namespace Pitchlab.Gameplay.Play
             int best = FieldingSolver.SelectPrimary(takes);
             if (best < 0)
             {
-                // Nobody can get to it: it leaves the field. The play ends there (no award is modelled after a misplay).
+                // Nobody can get to it: it leaves the field — over the fence on the fly (a home run: four bases), otherwise two.
                 double gone = ball.EndTime;
+                int award = 2;
+                bool bounced = false;
                 foreach (BallEvent e in ball.Events)
+                {
+                    if (e.Kind == BallEventKind.GroundImpact) bounced = true;
                     if (e.Kind == BallEventKind.LeftPlay || e.Kind == BallEventKind.ClearedFence)
                     {
                         gone = e.Time;
+                        if (e.Kind == BallEventKind.ClearedFence && !bounced) award = 4;
                         break;
                     }
+                }
 
-                _play.ScheduleDefense(gone, () => _play.OnBallOutOfPlay(gone), "out of play");
+                _play.ScheduleDefense(gone, () => _play.OnBallOutOfPlay(gone, award), "out of play");
                 return;
             }
 
@@ -496,12 +502,14 @@ namespace Pitchlab.Gameplay.Play
             double t = take.Time;
             Vector3d at = take.Ball.Position;
             bool fairGround = Math.Abs(Math.Atan2(at.X, at.Y)) <= 0.25 * Math.PI;
-            // The infield fly rule (OBR Definitions; runners on first and second, fewer than two out, a fly an infielder takes):
+            // The infield fly rule (OBR Definitions; runners on first and second, fewer than two out, a fly an infielder takes
+            // with ordinary effort — a standing or running catch; a dive or a leap is not):
             // the batter is out whether or not it is held — a drop is not modelled there (it would only let runners advance at
             // their own risk).
             Situation sit = _play.Situation;
             bool infieldFly = batted && _play.Kind == LivePlay.BallKind.Caught && !DefensiveDecision.IsOutfielder(p)
-                && sit.Bases.First && sit.Bases.Second && sit.Outs < 2;
+                && sit.Bases.First && sit.Bases.Second && sit.Outs < 2
+                && (action == FieldingAction.StandingCatch || action == FieldingAction.RunningCatch);   // "ordinary effort"
             if (_play.ExecutionSeed is long seed && action != FieldingAction.None && fairGround && !infieldFly)
             {
                 FielderTrack track = _tracks[(int)p];
