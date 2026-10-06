@@ -289,7 +289,7 @@ namespace Pitchlab.Tests
         public void ASimulatedGameIsAValidGame(int seed, string ending)
         {
             var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);   // the seed drives execution too
-            var sim = new GameSimulator(g, seed);
+            var sim = new GameSimulator(g);
             var timer = Stopwatch.StartNew();
             while (!g.IsOver)
             {
@@ -372,7 +372,7 @@ namespace Pitchlab.Tests
             string Run(int seed)
             {
                 var g = new GameState(GenericRosters.Away(), GenericRosters.Home(), seed);
-                new GameSimulator(g, seed).PlayToEnd();
+                new GameSimulator(g).PlayToEnd();
                 return string.Join("\n", g.Log) + string.Join("|", g.Completed.SelectMany(p => p.Pitches)
                     .Select(p => $"{p.Info.Label}@{p.Info.PlateX:R},{p.Info.PlateZ:R}:{p.Outcome}"));
             }

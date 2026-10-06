@@ -254,6 +254,7 @@ namespace Pitchlab.Tests
             Assert.IsNull(none);
             Assert.IsTrue(error.HasValue);
             Assert.IsTrue(info.HasTarget);
+            Assert.IsFalse(default(PitchInfo).HasTarget, "a pitch recorded without its info has no target");
             Assert.AreEqual((exactInfo.TargetX, exactInfo.TargetZ), (info.TargetX, info.TargetZ));
             Assert.Less(Math.Abs(exactInfo.PlateX - exactInfo.TargetX), 0.03, "intended: on target");
             Assert.AreNotEqual(exactInfo.PlateX, info.PlateX, "executed: off it");

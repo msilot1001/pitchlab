@@ -34,4 +34,4 @@ Claude Code (sole writer); physics / test reviewers and Codex read-only.
 - [x] Reviews (physics, test) fixed: arm-slot ρ sign, σ 0.7°, Movement ±20 %, fatigue in the aim, unaimed pitch aimed
   at the preset crossing, per-type axis σ, crosswind caveat; distribution/correlation/equivalence tests; per-game seeds.
 - [x] check.sh: EditMode 654 (648 passed, 6 skipped), PlayMode 97/97.
-- [ ] Codex, merge.
+- [x] Codex: B — fixed (simulator seeded from the game only; a pitch without info has no target). Merged.

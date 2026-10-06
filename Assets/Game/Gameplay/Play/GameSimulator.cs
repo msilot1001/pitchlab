@@ -24,12 +24,13 @@ namespace Pitchlab.Gameplay.Play
         private readonly int _seed;
         private readonly EnvironmentState _environment;
 
-        public GameSimulator(GameState game, int seed) : this(game, seed, EnvironmentState.Standard) { }
+        /// <summary>Plays <paramref name="game"/>; every seeded choice (pitches, execution, the batter) follows its <see cref="GameState.Seed"/>.</summary>
+        public GameSimulator(GameState game) : this(game, EnvironmentState.Standard) { }
 
-        public GameSimulator(GameState game, int seed, EnvironmentState environment)
+        public GameSimulator(GameState game, EnvironmentState environment)
         {
             Game = game ?? throw new ArgumentNullException(nameof(game));
-            _seed = seed;
+            _seed = game.Seed;
             _environment = environment;
         }
 

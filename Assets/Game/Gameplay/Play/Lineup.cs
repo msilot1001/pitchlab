@@ -131,7 +131,7 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Where the pitcher aimed (front plane of the plate, m; NaN: no target — the preset's own aim).</summary>
         public double TargetX { get; }
         public double TargetZ { get; }
-        public bool HasTarget => !double.IsNaN(TargetX) && !double.IsNaN(TargetZ);
+        public bool HasTarget => SpeedMph > 0.0 && !double.IsNaN(TargetX) && !double.IsNaN(TargetZ);   // not a pitch recorded without its info
         /// <summary>Was a flight recorded that crossed the plate (not a pitch recorded without its info)?</summary>
         public bool HasCrossing => SpeedMph > 0.0 && !double.IsNaN(PlateX) && !double.IsNaN(PlateZ);
 
