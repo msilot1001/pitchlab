@@ -10,9 +10,9 @@ namespace Pitchlab.Gameplay.Play
 {
     /// <summary>
     /// Plays a game without rendering (TASK-016): for state and rules testing and as an accelerated smoke run. Every pitch
-    /// goes through the production systems — the automatic pitcher's command, the simulated pitch flight, the swing and
-    /// contact model, the batted-ball flight, the fielding solver, the live play and <see cref="GameState"/> — none of them
-    /// re-implemented here. The batter is the CPU batter (<see cref="CpuBatter"/>, TASK-019): he sees the pitch only as it
+    /// goes through the production systems — the CPU pitcher's call (TASK-020; the basic automatic pitcher for an unrated
+    /// team), the pitch execution and flight, the swing and contact model, the batted-ball flight, the fielding solver, the
+    /// live play and <see cref="GameState"/> — none of them re-implemented here. The batter is the CPU batter (<see cref="CpuBatter"/>, TASK-019): he sees the pitch only as it
     /// flies and swings through the same timestamped PCI and swing input and the same contact model as a human.
     /// </summary>
     public sealed class GameSimulator
@@ -40,8 +40,20 @@ namespace Pitchlab.Gameplay.Play
             PlateAppearance pa = Game.Current;
             PlayerProfile batter = pa.Batter;
             int number = pa.Pitches.Count + 1;
-            PitchCommand command = AutoPitcher.Choose(_seed, pa.Number, number, Game.Count, Game.Pitcher?.Repertoire);
-            HittingPitch pitch = GamePitches.Create(Game, (Players.PitchType)command.Preset, command.Target, true, _environment, out PitchInfo info, out _);
+            HittingPitch pitch;
+            PitchInfo info;
+            if (Game.Pitcher?.Repertoire != null)
+            {
+                // The CPU pitcher (TASK-020).
+                PitchDecision call = CpuPitcher.Choose(Game);
+                pitch = GamePitches.Create(Game, call.Type, call.TargetX, call.TargetZ, true, _environment, out info, out _);
+            }
+            else
+            {
+                PitchCommand command = AutoPitcher.Choose(_seed, pa.Number, number, Game.Count);
+                pitch = GamePitches.Create(Game, (Players.PitchType)command.Preset, command.Target, true, _environment, out info, out _);
+            }
+
             Pitches++;
 
             // The CPU batter (TASK-019): sees the pitch only as it flies, decides, and swings through the contact model.

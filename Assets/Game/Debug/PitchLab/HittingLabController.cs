@@ -158,9 +158,13 @@ namespace Pitchlab.Sandbox
         /// <summary>The pitcher of the current pitch (GameLab).</summary>
         public PlayerProfile PitchPitcher { get; private set; }
 
-        /// <summary>The command the current pitch was thrown with (the auto pitcher's, or the manual selection).</summary>
+        /// <summary>The CPU pitcher's call for the current pitch (TASK-020; null when the player called it or the pitcher is
+        /// unrated).</summary>
+        public PitchDecision? LastDecision { get; private set; }
+        /// <summary>The command the current pitch was thrown with (the basic auto pitcher's, or the manual selection; null for a
+        /// CPU pitcher's point target).</summary>
         public PitchCommand? LastCommand { get; private set; }
-        /// <summary>The auto pitcher's seed (the same seed and game give the same pitches).</summary>
+        /// <summary>The basic auto pitcher's seed, for unrated pitchers (a rated pitcher's calls follow the game's seed).</summary>
         public int AutoPitchSeed { get; set; } = 1;
         /// <summary>Real seconds between the loop becoming ready and the auto pitcher's next press.</summary>
         public double AutoPitchDelay { get; set; } = 0.8;
@@ -491,7 +495,16 @@ namespace Pitchlab.Sandbox
             // The auto pitcher's choice is this pitch's only — the manual selection stays as the player left it.
             int preset = _presetIndex;
             PitchTarget? target = Target;
-            if (AutoPitch && Game != null)
+            LastDecision = null;
+            if (AutoPitch && Game != null && Game.Pitcher?.Repertoire != null)
+            {
+                // The CPU pitcher (TASK-020): his call from what he may know, aimed at its point.
+                PitchDecision d = CpuPitcher.Choose(Game);
+                LastDecision = d;
+                preset = (int)d.Type;
+                target = null;
+            }
+            else if (AutoPitch && Game != null)
             {
                 PitchCommand auto = AutoPitcher.Choose(AutoPitchSeed, Game.Current.Number, Game.Current.Pitches.Count + 1, Game.Count, Game.Pitcher?.Repertoire);
                 (preset, target) = (auto.Preset, auto.Target);
@@ -504,7 +517,9 @@ namespace Pitchlab.Sandbox
             if (Game != null)
             {
                 // The pitcher on the mound throws it: his pitch, aimed, executed (TASK-018).
-                CurrentPitch = GamePitches.Create(Game, (PitchType)preset, target, ExecutionVariance, Environment, out _pitchInfo, out ExecutionError? execution);
+                CurrentPitch = LastDecision is PitchDecision call
+                    ? GamePitches.Create(Game, call.Type, call.TargetX, call.TargetZ, ExecutionVariance, Environment, out _pitchInfo, out ExecutionError? execution)
+                    : GamePitches.Create(Game, (PitchType)preset, target, ExecutionVariance, Environment, out _pitchInfo, out execution);
                 LastExecution = execution;
             }
             else

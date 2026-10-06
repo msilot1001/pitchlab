@@ -176,7 +176,7 @@ namespace Pitchlab.Tests
                 double start = _now;
                 _lab.PressSwingButton(_now);
                 int k = 0;
-                while (_now < start + 60.0) Frame(_now + steps[k++ % steps.Length]);
+                while (_now < start + 120.0) Frame(_now + steps[k++ % steps.Length]);
                 _lab.AutoPitch = false;
                 _lab.CpuBatting = false;
                 GameState g = _lab.Game;
@@ -306,10 +306,12 @@ namespace Pitchlab.Tests
             yield return null;
             GameState game = _lab.Game;
             for (int i = 0; i < 3; i++) game.Pitch(PitchOutcome.Ball);
-            _lab.AutoPitchSeed = 9;
             _lab.AutoPitch = true;
+            PitchDecision expected = CpuPitcher.Choose(game);   // the CPU pitcher's 3–0 call in this plate appearance (TASK-020)
             _lab.PressSwingButton(_now);
-            Assert.AreEqual(AutoPitcher.Choose(9, game.Current.Number, 4, new Count(3, 0), game.Pitcher.Repertoire), _lab.LastCommand, "the 3–0 pitch of this plate appearance, from his repertoire");
+            Assert.AreEqual(expected.ToString(), _lab.LastDecision?.ToString(), "the 3–0 pitch of this plate appearance, from his repertoire");
+            Assert.AreEqual(expected.TargetX, _lab.LastDecision.Value.TargetX);
+            Assert.IsTrue(game.Pitcher.Repertoire.Has(expected.Type));
         }
 
         [UnityTest]

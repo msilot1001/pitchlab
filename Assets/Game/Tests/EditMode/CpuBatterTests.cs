@@ -378,8 +378,8 @@ namespace Pitchlab.Tests
             {
                 PlateAppearance pa = game.Current;
                 int n = pa.Pitches.Count + 1;
-                PitchCommand cmd = AutoPitcher.Choose(game.Seed, pa.Number, n, game.Count, game.Pitcher.Repertoire);
-                HittingPitch pitch = GamePitches.Create(game, (PitchType)cmd.Preset, cmd.Target, true, Env, out _, out _);
+                PitchDecision call = CpuPitcher.Choose(game);
+                HittingPitch pitch = GamePitches.Create(game, call.Type, call.TargetX, call.TargetZ, true, Env, out _, out _);
                 SeedStream stream = CpuBatter.StreamFor(game.Seed, pa.Batter.Id, pa.Number, n);
                 SwingParameters swing = SwingParameters.For(pa.Batter);
                 BatterPlan plan = CpuBatter.Plan(CpuBatter.Observe(pitch), pa.Batter, game.Count, swing, pitch.ContactPlaneY, ref stream);
