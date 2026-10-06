@@ -244,7 +244,7 @@ namespace Pitchlab.Gameplay.Hitting
 
         /// <summary>When the bat meets the ball's path: a swing at its start + duration; a bunt when the ball arrives.</summary>
         public static double ContactTime(HittingPitch pitch, SwingInput swing, SwingParameters p) =>
-            swing.IsBunt ? pitch.IdealContactTime : swing.StartTime + p.SwingDuration;
+            swing.IsBunt ? BuntArrival(pitch) : swing.StartTime + p.SwingDuration;
 
         private static Vector3d SweetSpot(HittingPitch pitch, SwingInput swing, SwingParameters p, Vector3d ball) =>
             new Vector3d(swing.PciX, ball.Y, swing.PciZ + (ball.Y - pitch.ContactPlaneY) * Math.Tan(p.AttackAngle));

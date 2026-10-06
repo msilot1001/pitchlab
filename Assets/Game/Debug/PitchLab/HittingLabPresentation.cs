@@ -526,6 +526,7 @@ namespace Pitchlab.Sandbox
         private void OnSwing(SwingInput swing, ContactResult result)
         {
             _swing = swing;
+            if (swing.IsBunt) return;   // a bunt's bat is posed by BuntPose (no swing to target)
             // Presentation reflects the authoritative swing: timing turns the body (early = more open, pulled), the vertical
             // offset tilts the finish (undercut = higher, topped = lower).
             double timing = double.IsNaN(result.TimingError) ? 0.0 : result.TimingError;
@@ -564,7 +565,9 @@ namespace Pitchlab.Sandbox
             (double x, double z) = _lab.PciAt(_lab.ToRealtime(Math.Min(t, arrival)));
             Vector3 sweet = SimulationSpace.ToUnity(new Vector3d(x, _pitch.ContactPlaneY, z));
             // The barrel toward the plate's far side (+X for a right-handed hitter), angled by his aim toward first base.
-            double side = _lab.BatterSideAt(_lab.RenderedRealtime) == BatterSide.Right ? 1.0 : -1.0, aim = _lab.BuntAim;
+            // Squared to the ball's incoming path, then his aim — as the contact model squares it.
+            Vector3d incoming = _pitch.Flight.StateAt(arrival).Velocity;
+            double side = _lab.BatterSideAt(_lab.RenderedRealtime) == BatterSide.Right ? 1.0 : -1.0, aim = Math.Atan2(-incoming.X, -incoming.Y) + _lab.BuntAim;
             Vector3 dir = SimulationSpace.ToUnity(new Vector3d(side * Math.Cos(aim), -side * Math.Sin(aim), 0.0)) - SimulationSpace.ToUnity(Vector3d.Zero);
             Vector3 grip = sweet - dir.normalized * Equipment.SweetSpotFromGrip;
             _pose.GripPoint = Vector3.Lerp(stanceGrip, _batter.WorldToFigurePoint(grip), w);

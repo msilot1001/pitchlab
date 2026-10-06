@@ -55,7 +55,11 @@ See Docs/BUNTING.md.
   - Now `BuntStrategy.Sacrifice` is off (`SacrificesWork = false`) until TASK-026; the spot is `BuntStrategy.Spot` (tested).
   - Fixed: test.sh's final status look after polling; the debug readout's bunt contact time.
 - [x] check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107).
-- [ ] Codex round 4; merge.
+- [x] Codex round 4: grade B. Fixed:
+  - a human bunt on a pitch in the dirt: the contact time is the flight's end, the bunt pose has no swing target, and the
+    missed-bunt banner shows;
+  - the drawn bat includes the pitch's incoming yaw.
+- [x] check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107). Merged.
 
 ## Known gaps (handed on)
 - Sacrifice success is very low: the runner's lead and break (TASK-026); bunt defense and positioning (TASK-033).
