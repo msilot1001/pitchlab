@@ -199,7 +199,7 @@ namespace Pitchlab.Gameplay.Play
         private readonly List<Misplay> _misplays = new List<Misplay>();
         /// <summary>Bases awarded to every runner and the batter (OBR 5.05(a)): 4 for a fair ball over the fence on the fly, 2 for
         /// one that bounces out of the park; 0 otherwise. The ball is dead: the runners advance under the running law, no play.</summary>
-        public int AwardedBases { get; }
+        public int AwardedBases { get; private set; }
         /// <summary>A foul: the ball is dead without an award (a home run or ground-rule double is dead with one).</summary>
         public bool IsFoul => Kind == BallKind.Dead && AwardedBases == 0;
         /// <summary>The live defense: every defender's role and motion, the ball and who has it, the throws, the decisions.</summary>
@@ -681,7 +681,7 @@ namespace Pitchlab.Gameplay.Play
         private void OnFlyGrounded(DefensivePosition misplayed, double t)
         {
             // Caught in the air after the miss (a fly out is recorded), or held now: still a catch.
-            if (Kind != BallKind.Caught || Defense.HolderAt(t) != null || _rulesEvents.Any(e => e.Kind == PlayEventKind.FlyOut)) return;
+            if (_deadAfterMisplay || Kind != BallKind.Caught || Defense.HolderAt(t) != null || _rulesEvents.Any(e => e.Kind == PlayEventKind.FlyOut)) return;
             Kind = DefensiveDecision.IsOutfielder(misplayed) ? BallKind.Hit : BallKind.Grounder;
             foreach (LiveRunner r in _runners)
                 if (!r.IsDone) Apply(r, RunnerBrain.Reconsider(this, r, t), t);
@@ -697,6 +697,7 @@ namespace Pitchlab.Gameplay.Play
         {
             if (IsOver) return;
             _deadAfterMisplay = true;
+            if (bases == 4) AwardedBases = 4;   // over the fence off the glove: a home run (a two-base award is classified by where the batter ends)
             _scheduled.RemoveAll(s => s.Name.StartsWith(DefensePrefix, StringComparison.Ordinal));   // nothing more to do with a dead ball
             Note(t, PlayLogKind.Decision, null, null, null, bases == 4 ? "OVER THE FENCE OFF THE GLOVE: HOME RUN" : "BALL OUT OF PLAY: two bases");
             foreach (LiveRunner r in _runners)

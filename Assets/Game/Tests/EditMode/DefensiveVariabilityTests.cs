@@ -312,6 +312,16 @@ namespace Pitchlab.Tests
             // Two bases from the last base touched: the batter (home) to second, the runner (first) to third.
             Assert.AreEqual(new BaseOccupancy(false, true, true), live.ResultingBases());
             Assert.AreEqual(0, live.Runs);
+
+            // Over the fence off a glove: a home run — classified so, everyone scores.
+            var homer = new LivePlay(p.Fielding, p.Situation, personnel: p.Personnel);
+            homer.AdvanceTo(t);
+            typeof(LivePlay).GetMethod("OnBallOutOfPlay", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                .Invoke(homer, new object[] { t, 4 });
+            homer.RunToEnd();
+            Assert.AreEqual(PlayResultKind.HomeRun, PlayResults.Classify(homer));
+            Assert.AreEqual(2, homer.Runs);
+            Assert.AreEqual(BaseOccupancy.Empty, homer.ResultingBases());
         }
 
         [Test]

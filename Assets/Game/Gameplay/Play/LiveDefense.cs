@@ -428,6 +428,15 @@ namespace Pitchlab.Gameplay.Play
         {
             var segment = new Segment { Kind = SegmentKind.Free, Start = t, Free = ball };
             _ball.Add(segment);
+            // It can be fielded only while it is in play: until it clears the fence or leaves the field.
+            double playable = double.PositiveInfinity;
+            foreach (BallEvent e in ball.Events)
+                if (e.Kind == BallEventKind.LeftPlay || e.Kind == BallEventKind.ClearedFence)
+                {
+                    playable = e.Time;
+                    break;
+                }
+
             var takes = new Intercept[DefensiveAlignment.Count];
             var starts = new double[DefensiveAlignment.Count];
             for (int i = 0; i < takes.Length; i++)
@@ -437,7 +446,7 @@ namespace Pitchlab.Gameplay.Play
                 double start = Math.Max(reactFrom + LooseReaction, slow == (DefensivePosition)i ? slowUntil : double.NegativeInfinity);
                 starts[i] = start;
                 var react = new FielderProfile(start - ball.First.Time, p.MaxSpeed, p.AccelerationTime, p.BrakeDeceleration, p.Reach, p.GroundReach, p.CatchHeightMax, p.PickupHeightMax);
-                takes[i] = InterceptSolver.Solve(ball, track.PositionAt(start), react, _play.Field, double.PositiveInfinity, initialVelocity: track.VelocityAt(start));
+                takes[i] = InterceptSolver.Solve(ball, track.PositionAt(start), react, _play.Field, playable, initialVelocity: track.VelocityAt(start));
             }
 
             int best = FieldingSolver.SelectPrimary(takes);

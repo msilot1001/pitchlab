@@ -65,3 +65,7 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
   - the out-of-play award (two bases, or a home run over the fence on the fly; no outs on a dead ball; the defense stops);
   - the infield-fly guard is limited to ordinary effort;
   - stepped-time tests replace the inconclusive search.
+- [x] Codex round 3: C — fixed:
+  - a loose ball is fieldable only until it leaves play;
+  - a fly over the fence off the glove is a home run (`AwardedBases`);
+  - the grounded event is ignored on a dead ball.
