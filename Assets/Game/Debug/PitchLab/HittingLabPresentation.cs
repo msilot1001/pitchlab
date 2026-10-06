@@ -620,6 +620,7 @@ namespace Pitchlab.Sandbox
             _contactShown = true;
             Vector3 point = SimulationSpace.ToUnity(r.BattedBall.Position);
             _cue.Play(point, (float)Math.Min(1.0, r.ExitSpeed / 45.0));
+            if (_lab.LastFoulTip) return;   // into the catcher's mitt: the batting view stays (TASK-024)
             _baseballCamera.Impulse(0.012f, 0.15f);
             _baseballCamera.Follow(_lab.BallTransform);
             _trail.Clear();

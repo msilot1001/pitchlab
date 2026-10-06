@@ -76,7 +76,7 @@ namespace Pitchlab.Gameplay.Play
             LastContact = result;
 
             // Decided at the plate (TASK-024: a caught foul tip, a hit by pitch, a strike, a ball), or a batted ball to play out.
-            PitchOutcome? decided = PitchOutcomes.BeforePlay(pitch, input, result, batter.Bats, batter.HeightInches, batter.ZoneBottom, batter.ZoneTop);
+            PitchOutcome? decided = PitchOutcomes.BeforePlay(pitch, input, result, swing.SwingDuration, batter.Bats, batter.HeightInches, batter.ZoneBottom, batter.ZoneTop);
             if (decided is PitchOutcome outcome)
             {
                 Game.Pitch(outcome, info);

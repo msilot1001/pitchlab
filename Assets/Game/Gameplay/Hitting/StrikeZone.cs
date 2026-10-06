@@ -49,6 +49,14 @@ namespace Pitchlab.Gameplay.Hitting
             return Math.Abs(x) <= HalfWidth + r && z >= bottom - r && z <= top + r;
         }
 
+        /// <summary>Is the ball (centre <paramref name="ball"/>) inside the strike zone's volume — over the plate (front to rear
+        /// point), between the zone's bottom and top, widened by the ball's radius? For the in-zone touch (OBR 5.05(b)(2)(A)).</summary>
+        public static bool ContainsAt(Vector3d ball, double bottom, double top)
+        {
+            double r = BallProperties.Baseball.Radius;
+            return ball.Y >= -r && ball.Y <= PitchingGeometry.PlateFrontY + r && Contains(ball.X, ball.Z, bottom, top);
+        }
+
         public static bool IsStrike(HittingPitch pitch) => IsStrike(pitch, Bottom, Top);
 
         public static bool IsStrike(HittingPitch pitch, double bottom, double top)
@@ -86,23 +94,29 @@ namespace Pitchlab.Gameplay.Hitting
         /// <list type="bullet">
         /// <item>contact caught as a foul tip → <see cref="PitchOutcome.FoulTip"/> (Definitions, "Foul tip");</item>
         /// <item>other contact → null (the play decides);</item>
-        /// <item>no contact and the pitch touches the batter: after a swing a strike, in the zone a strike, otherwise
+        /// <item>the pitch touches the batter: the ball is dead at the touch, so only a swing that had already reached the
+        /// offer point is a swing — then a strike; in the strike zone when it touches him a strike; otherwise
         /// <see cref="PitchOutcome.HitByPitch"/> (OBR 5.05(b)(2), Definitions "Strike" (e), (f));</item>
         /// <item>otherwise a swinging strike, or the zone call for a take (a checked swing is a take).</item>
         /// </list>
         /// </summary>
-        public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, BatterSide side, double heightInches, double zoneBottom, double zoneTop) =>
-            BeforePlay(pitch, swing, result, result is ContactResult r && r.IsContact ? null : BatterBody.FirstTouch(pitch, side, heightInches), zoneBottom, zoneTop);
+        public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, double swingDuration, BatterSide side, double heightInches, double zoneBottom, double zoneTop) =>
+            BeforePlay(pitch, swing, result, swingDuration, result is ContactResult r && r.IsContact ? null : BatterBody.FirstTouch(pitch, side, heightInches), zoneBottom, zoneTop);
 
         /// <summary>The same with the batter's touch already found (<paramref name="touch"/>; null: the pitch missed him).</summary>
-        public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, BodyHit? touch, double zoneBottom, double zoneTop)
+        public static PitchOutcome? BeforePlay(HittingPitch pitch, SwingInput? swing, ContactResult? result, double swingDuration, BodyHit? touch, double zoneBottom, double zoneTop)
         {
             if (pitch == null) throw new ArgumentNullException(nameof(pitch));
             if (result is ContactResult r && r.IsContact) return FoulTips.IsCaught(pitch, r) ? PitchOutcome.FoulTip : (PitchOutcome?)null;
-            bool swung = Offered(swing, result), strike = StrikeZone.IsStrike(pitch, zoneBottom, zoneTop);
+            bool swung = Offered(swing, result);
+            if (touch is BodyHit hit)
+            {
+                if (swung && swing.Value.OfferTime(swingDuration) <= hit.Time) return PitchOutcome.SwingingStrike;
+                return StrikeZone.ContainsAt(hit.BallCentre, zoneBottom, zoneTop) ? PitchOutcome.CalledStrike : PitchOutcome.HitByPitch;
+            }
+
             if (swung) return PitchOutcome.SwingingStrike;
-            if (touch.HasValue && !strike) return PitchOutcome.HitByPitch;
-            return strike ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
+            return StrikeZone.IsStrike(pitch, zoneBottom, zoneTop) ? PitchOutcome.CalledStrike : PitchOutcome.Ball;
         }
 
         public static string Describe(PitchOutcome o) => o switch

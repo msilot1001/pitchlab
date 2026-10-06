@@ -661,6 +661,8 @@ namespace Pitchlab.Sandbox
             LastResult = ContactResolver.Resolve(CurrentPitch, LastSwing.Value, _swing);
             ResultSummary = "Checked swing";
             _readout = $"{_pitchLabel}: checked swing — no offer";
+            SetPath(_pitchPath, CurrentPitch.Flight);
+            _pitchPath.enabled = _showDebugPaths;
             return true;
         }
 
@@ -703,6 +705,8 @@ namespace Pitchlab.Sandbox
                     // One swing per pitch: a second press stamped earlier than the first (another device's event handled
                     // later in the same update) reads as "before the swing" but must not swing again.
                     // A press stamped before the end of the pitch but handled after its take was counted is too late.
+                    // After the pitch has touched the batter the ball is dead: no swing (TASK-024).
+                    if (LastTouch is BodyHit touched && ToSimTime(eventRealtime) >= touched.Time) return;
                     if (LastBatterPlan == null && !LastSwing.HasValue && (Game == null || _resultPending)) SwingAtSimTime(ToSimTime(eventRealtime));
                     return;
                 case BattingState.Windup:
@@ -786,8 +790,9 @@ namespace Pitchlab.Sandbox
             if (LastDefense != null && t >= LastPlay.First.Time) return LastDefense.BallPositionAt(t);
             if (LastFoulTip && LastResult is ContactResult tip && t >= tip.BattedBall.Time)
             {
+                // On past the mitt's plane (behind the plate), where the presentation's catcher takes it when he is shown.
                 Vector3d p = tip.BattedBall.Position, v = tip.BattedBall.Velocity;
-                double caught = (FoulTips.CatcherPlaneY - p.Y) / v.Y, dt = Math.Min(t - tip.BattedBall.Time, caught);
+                double end = (HittingPitch.StopBehindPlateY - p.Y) / v.Y, dt = Math.Min(t - tip.BattedBall.Time, end);
                 return new Vector3d(p.X + v.X * dt, p.Y + v.Y * dt, p.Z + v.Z * dt - 0.5 * Environment.Gravity * dt * dt);
             }
 
@@ -835,7 +840,7 @@ namespace Pitchlab.Sandbox
             _resultPending = false;
             (double bottom, double top) = Zone;
             // At the plate (TASK-024: foul tip, hit by pitch, strike, ball) or the play's.
-            PitchOutcome outcome = PitchOutcomes.BeforePlay(CurrentPitch, LastSwing, LastResult, LastTouch, bottom, top)
+            PitchOutcome outcome = PitchOutcomes.BeforePlay(CurrentPitch, LastSwing, LastResult, _swing.SwingDuration, LastTouch, bottom, top)
                                    ?? PitchOutcomes.Of(CurrentPitch, LastSwing, LastResult, LastLive, bottom, top);
             LastOutcome = outcome;
             LastEnd = outcome == PitchOutcome.Foul || outcome == PitchOutcome.InPlay ? Game.Apply(LastLive, _pitchInfo) : Game.Pitch(outcome, _pitchInfo);

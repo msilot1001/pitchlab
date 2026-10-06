@@ -92,18 +92,42 @@ namespace Pitchlab.Tests
                 Assert.IsFalse(p.Touches(inside.Flight.StateAt(hit.Time - BatterBody.Step).Position, r), $"{p.Name} one step earlier");
         }
 
+        private static readonly double Duration = SwingParameters.Default.SwingDuration;
+
         [Test]
         public void TheCallOfAPitchThatTouchesTheBatter()
         {
             HittingPitch ball = Aimed(-0.85, 1.2, PitchPresets.FourSeam), strike = Aimed(0.0, 0.75, PitchPresets.FourSeam);
-            var touch = new BodyHit(0.45, new Vector3d(-0.8, -0.2, 1.2), "torso");
+            const double touchTime = 0.45;
+            var touch = new BodyHit(touchTime, new Vector3d(-0.8, -0.2, 1.2), "torso");   // beside the plate
             double bottom = StrikeZone.Bottom, top = StrikeZone.Top;
-            var swing = new SwingInput(0.2, -0.5, 1.0);
-            ContactResult miss = new ContactResult(ContactOutcome.MissOffBarrel, 0.0, double.NaN, double.NaN, 0.0, default);
-            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(ball, null, null, touch, bottom, top), "no swing, out of the zone: first base");
-            Assert.AreEqual(PitchOutcome.SwingingStrike, PitchOutcomes.BeforePlay(ball, swing, miss, touch, bottom, top), "he swung: a strike (Definitions, Strike (e))");
-            Assert.AreEqual(PitchOutcome.CalledStrike, PitchOutcomes.BeforePlay(strike, null, null, touch, bottom, top), "in the zone: a strike (Strike (f))");
-            Assert.AreEqual(PitchOutcome.Ball, PitchOutcomes.BeforePlay(ball, null, null, null, bottom, top), "not touched: the call");
+            var miss = new ContactResult(ContactOutcome.MissOffBarrel, 0.0, double.NaN, double.NaN, 0.0, default);
+            SwingInput SwingWithOfferAt(double offer) => new SwingInput(offer + SwingInput.OfferLead - Duration, -0.5, 1.0);
+            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(ball, null, null, Duration, touch, bottom, top), "no swing, out of the zone: first base");
+            Assert.AreEqual(PitchOutcome.Ball, PitchOutcomes.BeforePlay(ball, null, null, Duration, null, bottom, top), "not touched: the call");
+            // The ball is dead at the touch: a swing counts only if it had reached the offer point by then.
+            Assert.AreEqual(PitchOutcome.SwingingStrike, PitchOutcomes.BeforePlay(ball, SwingWithOfferAt(touchTime - 0.01), miss, Duration, touch, bottom, top), "he had swung: a strike (Strike (e))");
+            Assert.AreEqual(PitchOutcome.SwingingStrike, PitchOutcomes.BeforePlay(ball, SwingWithOfferAt(touchTime), miss, Duration, touch, bottom, top), "offered at the touch");
+            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(ball, SwingWithOfferAt(touchTime + 0.01), miss, Duration, touch, bottom, top), "his swing came after the touch: no swing");
+            SwingInput checkedSwing = SwingWithOfferAt(touchTime - 0.01).CheckedAt(touchTime - 0.03);
+            var checkedResult = new ContactResult(ContactOutcome.CheckedSwing, 0.0, double.NaN, double.NaN, 0.0, default);
+            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(ball, checkedSwing, checkedResult, Duration, touch, bottom, top), "a checked swing is no swing");
+            // In the zone when it touches him (5.05(b)(2)(A)): the ball's place at the touch, not where it crossed the plate.
+            var overPlate = new BodyHit(touchTime, new Vector3d(0.15, 0.2, 0.9), "hands");
+            Assert.AreEqual(PitchOutcome.CalledStrike, PitchOutcomes.BeforePlay(ball, null, null, Duration, overPlate, bottom, top), "touched inside the zone: a strike (Strike (f))");
+            Assert.AreEqual(PitchOutcome.CalledStrike, PitchOutcomes.BeforePlay(ball, checkedSwing, checkedResult, Duration, overPlate, bottom, top));
+            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(strike, null, null, Duration, touch, bottom, top), "crossed the zone's front, touched him outside it");
+        }
+
+        [Test]
+        public void TheZoneVolumeIsOverThePlate()
+        {
+            double b = StrikeZone.Bottom, t = StrikeZone.Top, front = PitchingGeometry.PlateFrontY;
+            Assert.IsTrue(StrikeZone.ContainsAt(new Vector3d(0.0, 0.5 * front, 0.5 * (b + t)), b, t));
+            Assert.IsFalse(StrikeZone.ContainsAt(new Vector3d(0.0, -0.2, 0.5 * (b + t)), b, t), "behind the plate");
+            Assert.IsFalse(StrikeZone.ContainsAt(new Vector3d(0.0, front + 0.2, 0.5 * (b + t)), b, t), "in front of it");
+            Assert.IsFalse(StrikeZone.ContainsAt(new Vector3d(0.5, 0.5 * front, 0.5 * (b + t)), b, t), "beside it");
+            Assert.IsFalse(StrikeZone.ContainsAt(new Vector3d(0.0, 0.5 * front, t + 0.2), b, t), "above it");
         }
 
         // ── The foul tip ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -128,8 +152,17 @@ namespace Pitchlab.Tests
             ContactResult side = Tipped(pitch, new Vector3d(4.0, 0.0, 0.0));
             double off = (FoulTips.DirectPathAt(side.BattedBall).Value - glove).Length;
             Assert.AreEqual(off <= FoulTips.GloveReach, FoulTips.IsCaught(pitch, side));
-            Assert.AreEqual(PitchOutcome.FoulTip, PitchOutcomes.BeforePlay(pitch, new SwingInput(0.2, 0.0, 0.75), Tipped(pitch, Vector3d.Zero), null, StrikeZone.Bottom, StrikeZone.Top));
-            Assert.IsNull(PitchOutcomes.BeforePlay(pitch, new SwingInput(0.2, 0.0, 0.75), Tipped(pitch, new Vector3d(0.0, 0.0, 12.0)), null, StrikeZone.Bottom, StrikeZone.Top), "a foul back: the play decides");
+            Assert.AreEqual(PitchOutcome.FoulTip, PitchOutcomes.BeforePlay(pitch, new SwingInput(0.2, 0.0, 0.75), Tipped(pitch, Vector3d.Zero), Duration, null, StrikeZone.Bottom, StrikeZone.Top));
+            Assert.IsNull(PitchOutcomes.BeforePlay(pitch, new SwingInput(0.2, 0.0, 0.75), Tipped(pitch, new Vector3d(0.0, 0.0, 12.0)), Duration, null, StrikeZone.Bottom, StrikeZone.Top), "a foul back: the play decides");
+        }
+
+        [Test]
+        public void APitchInTheDirtIsNeverAFoulTip()
+        {
+            HittingPitch dirt = Aimed(0.0, -0.3, PitchPresets.Curveball);
+            Assert.IsNull(FoulTips.GloveAt(dirt), "it never reaches his plane in the air");
+            BallState at = dirt.Flight.StateAt(dirt.Flight.Final.Time - 0.05);
+            Assert.IsFalse(FoulTips.IsCaught(dirt, new ContactResult(ContactOutcome.Contact, 0.0, 0.0, 0.06, 0.05, new BallState(at.Time, at.Position, at.Velocity * 0.8, at.Spin))));
         }
 
         // ── The check swing ───────────────────────────────────────────────────────────────────────────────────────────
@@ -150,6 +183,7 @@ namespace Pitchlab.Tests
             Assert.AreEqual(ContactOutcome.CheckedSwing, stopped.Outcome);
             Assert.IsFalse(PitchOutcomes.Offered(swing.CheckedAt(offer - 0.001), stopped));
             Assert.AreEqual(PitchOutcome.CalledStrike, PitchOutcomes.Of(pitch, swing.CheckedAt(offer - 0.001), stopped, null), "a take: the zone call");
+            Assert.AreEqual(ContactOutcome.CheckedSwing, ContactResolver.Resolve(pitch, swing.CheckedAt(offer), p).Outcome, "exactly at the offer point: still in time");
             // Too late: the swing goes on exactly as if unchecked.
             ContactResult late = ContactResolver.Resolve(pitch, swing.CheckedAt(offer + 0.001), p);
             Assert.AreEqual(full.Outcome, late.Outcome);
@@ -163,7 +197,7 @@ namespace Pitchlab.Tests
             var swing = new SwingInput(0.2, -0.3, 1.0, 0.21);
             ContactResult r = ContactResolver.Resolve(inside, swing, SwingParameters.Default);
             Assert.AreEqual(ContactOutcome.CheckedSwing, r.Outcome);
-            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(inside, swing, r, BatterSide.Right, Tall, StrikeZone.Bottom, StrikeZone.Top));
+            Assert.AreEqual(PitchOutcome.HitByPitch, PitchOutcomes.BeforePlay(inside, swing, r, Duration, BatterSide.Right, Tall, StrikeZone.Bottom, StrikeZone.Top));
         }
 
         // ── The CPU batter ────────────────────────────────────────────────────────────────────────────────────────────
@@ -211,7 +245,7 @@ namespace Pitchlab.Tests
         [Test]
         public void TheCpuBatterChecksOnlyASwingHeTookForAStrikeAndBeforeTheOffer()
         {
-            int checks = 0;
+            int checks = 0, balls = 0;
             PlayerProfile batter = GenericRosters.Home().Lineup[4];
             SwingParameters p = SwingParameters.For(batter);
             for (int k = 0; k < 400; k++)
@@ -228,10 +262,12 @@ namespace Pitchlab.Tests
                 Assert.LessOrEqual(plan.CheckTime, plan.SwingStart + p.SwingDuration - SwingInput.OfferLead + 1e-12, "before the offer point");
                 Assert.GreaterOrEqual(plan.CheckTime, plan.SwingStart);
                 Assert.AreEqual(ContactOutcome.CheckedSwing, ContactResolver.Resolve(pitch, plan.Input.Value, p).Outcome);
+                if (!StrikeZone.IsStrike(pitch, batter.ZoneBottom, batter.ZoneTop)) balls++;
             }
 
-            TestContext.WriteLine($"{checks} checked swings in 400 pitches");
+            TestContext.WriteLine($"{checks} checked swings in 400 pitches, {balls} of them balls");
             Assert.Greater(checks, 0);
+            Assert.Greater(balls, checks / 2, "he checks mostly on balls: what he sees late is the pitch leaving the zone");
         }
     }
 }

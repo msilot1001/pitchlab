@@ -9,10 +9,13 @@ Labels: MEASURED / DERIVED / ASSUMED / TUNED (Docs/PLAYER_RATINGS.md).
 | Event | Rule (OBR) | Result |
 |---|---|---|
 | Pitch touches the batter, no swing, out of the zone | 5.05(b)(2) | `HitByPitch`: first base, forced runners advance (the walk's advance), dead ball |
-| Pitch touches the batter after a swing | Definitions, "Strike" (e) | swinging strike (strike three included) |
-| Pitch touches the batter in the zone, no swing | Definitions, "Strike" (f) | called strike |
+| Pitch touches the batter after a swing (offer point reached by the touch) | Definitions, "Strike" (e) | swinging strike (strike three included) |
+| Pitch touches the batter while in the zone (ball inside the zone's volume over the plate at the touch), no swing | 5.05(b)(2)(A); "Strike" (f) | called strike |
 | Contact sharp and direct into the catcher's mitt | Definitions, "Foul tip"; 5.09(a)(2) | `FoulTip`: a strike, strike three included (unlike a foul) |
 | Swing stopped before the offer point | umpire's judgement ("struck at") | no swing: the zone call |
+
+The ball is dead at the touch, so a swing that reaches the offer point only after it is no swing; the lab ignores swing
+presses after the touch.
 
 Not modelled:
 - the batter making no attempt to avoid the pitch (5.05(b)(2)(B)); he always tries;

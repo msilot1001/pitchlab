@@ -84,4 +84,19 @@ Claude Code (sole writer); reviewers and Codex read-only.
   re-pinned).
 - [x] check.sh green (EditMode 716 passed, 6 skipped; PlayMode 104/104). Runtime: GameLab CPU vs CPU for 3 min, console
   clean.
-- [ ] Reviews; Codex; merge.
+- [x] Codex round 1: grade C. Fixed:
+  - a swing after the touch could erase a hit by pitch; now a swing counts only if it reached the offer point by the
+    touch, and the lab ignores later presses;
+  - the in-zone exception now uses the ball's place at the touch (`StrikeZone.ContainsAt`), not the plate crossing.
+- [x] Test review:
+  - ordering tests;
+  - the human check test now hits the ball before checking it;
+  - a CPU check through the lab with coarse frames;
+  - the CPU perception test replays from the press;
+  - a pitch in the dirt; checks fall mostly on balls.
+- [x] Unity review:
+  - a foul tip no longer hangs at the catcher's plane when the catcher is hidden (it flies on behind the plate);
+  - no follow camera on a tip;
+  - the debug pitch path is restored after a check.
+- [x] check.sh green (EditMode 718 passed, 6 skipped; PlayMode 105/105).
+- [ ] Codex round 2; merge.
