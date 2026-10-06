@@ -129,10 +129,13 @@ namespace Pitchlab.Gameplay.Hitting
             Vector3d offset = ball.Position - sweetSpot;
             double alongBarrel = Vector3d.Dot(offset, barrelAxis);
             double vertical = Vector3d.Dot(offset, up);
-            double centres = BallProperties.Baseball.Radius + p.BarrelRadius;
+            // Where on the bat (+ toward the tip): from the end of the bat to near the hands (TASK-023).
+            double towardTipDistance = alongBarrel * pullSign;
+            if (towardTipDistance > p.TipReach || towardTipDistance < -p.HandleReach)
+                return new ContactResult(ContactOutcome.MissOffBarrel, timingError, alongBarrel, vertical, 0.0, default);
+            double centres = BallProperties.Baseball.Radius + BatRadiusAt(p, towardTipDistance);
             if (vertical >= centres) return new ContactResult(ContactOutcome.MissUnder, timingError, alongBarrel, vertical, 0.0, default);
             if (vertical <= -centres) return new ContactResult(ContactOutcome.MissOver, timingError, alongBarrel, vertical, 0.0, default);
-            if (Math.Abs(alongBarrel) > p.BarrelHalfLength) return new ContactResult(ContactOutcome.MissOffBarrel, timingError, alongBarrel, vertical, 0.0, default);
 
             // Line of centres from bat axis to ball centre: tilted up when the bat is under the ball (vertical > 0).
             double phi = Math.Asin(vertical / centres);
@@ -140,8 +143,9 @@ namespace Pitchlab.Gameplay.Hitting
 
             // Barrel tip points toward first base (+X) for a right-handed hitter, third base for a left-handed one.
             bool towardTip = alongBarrel * pullSign > 0.0;
-            double q = Math.Max(0.0, p.SweetSpotEfficiency - (towardTip ? p.EfficiencyFalloffTip : p.EfficiencyFalloffHandle) * Sq(alongBarrel));
-            Vector3d batVelocity = p.BatSpeed * swingDirection;
+            double q = Math.Max(towardTip ? p.MinTipEfficiency : 0.0, p.SweetSpotEfficiency - (towardTip ? p.EfficiencyFalloffTip : p.EfficiencyFalloffHandle) * Sq(alongBarrel));
+            // The bat turns about its pivot: slower toward the hands, faster toward the tip (TASK-023).
+            Vector3d batVelocity = BatSpeedAt(p, towardTipDistance) * swingDirection;
             double incomingNormal = -Vector3d.Dot(ball.Velocity, normal);   // > 0: ball moving into the bat
             double outNormal = q * incomingNormal + (1.0 + q) * Vector3d.Dot(batVelocity, normal);
 
@@ -180,6 +184,19 @@ namespace Pitchlab.Gameplay.Hitting
 
         private static Vector3d SweetSpot(HittingPitch pitch, SwingInput swing, SwingParameters p, Vector3d ball) =>
             new Vector3d(swing.PciX, ball.Y, swing.PciZ + (ball.Y - pitch.ContactPlaneY) * Math.Tan(p.AttackAngle));
+
+        /// <summary>The bat's speed at <paramref name="towardTip"/> m from the sweet spot (+ toward the tip): a rotation about a
+        /// pivot <see cref="SwingParameters.PivotRadius"/> from the sweet spot.</summary>
+        public static double BatSpeedAt(SwingParameters p, double towardTip) => p.BatSpeed * (1.0 + towardTip / p.PivotRadius);
+
+        /// <summary>The bat's radius at <paramref name="towardTip"/> m from the sweet spot: the barrel's, tapering toward the handle.</summary>
+        public static double BatRadiusAt(SwingParameters p, double towardTip)
+        {
+            double d = -towardTip;   // toward the handle
+            if (d <= p.TaperStart) return p.BarrelRadius;
+            double u = Math.Min(1.0, (d - p.TaperStart) / (p.HandleReach - p.TaperStart));
+            return p.BarrelRadius + u * (p.HandleRadius - p.BarrelRadius);
+        }
 
         private static double Sq(double v) => v * v;
         private static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);

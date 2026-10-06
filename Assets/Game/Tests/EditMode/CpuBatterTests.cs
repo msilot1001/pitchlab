@@ -273,7 +273,7 @@ namespace Pitchlab.Tests
             Assert.Greater(poorT, goodT * 1.3, $"timing {1000 * poorT:F1} vs {1000 * goodT:F1} ms");
             // Aim spread = perception (≈ 5 cm, the same for both) ⊕ his aim error (2.5 vs 4.6 cm): expected ratio ≈ 1.18; 1.0 without it.
             Assert.Greater(poorA, goodA * 1.1, $"aim {100 * poorA:F1} vs {100 * goodA:F1} cm");
-            Assert.Greater(goodA, CpuBatter.AimSigma(Rated(contact: 90).Ratings) * 0.8, "his aim error is in the PCI");
+            Assert.Greater(goodA, CpuBatter.AimSigmaAlong(Rated(contact: 90).Ratings) * 0.8, "his aim error is in the PCI");
         }
 
         [Test]
@@ -334,7 +334,9 @@ namespace Pitchlab.Tests
             Assert.Greater(Exit(50), Exit(10) + 4.0);
             // And over his population, with his own errors.
             Stats strong = Population(Rated(power: 90, id: "strong"), Set), weak = Population(Rated(power: 10, id: "weak"), Set);
-            Assert.Greater(strong.MeanExitMph, weak.MeanExitMph + 4.0, $"EV {strong.MeanExitMph:F1} vs {weak.MeanExitMph:F1}");
+            // Over his contacts the gap is smaller than squared up: since TASK-023 much contact is off the barrel (weak), where bat
+            // speed matters less. Regression guard (≈ 3.7 mph measured).
+            Assert.Greater(strong.MeanExitMph, weak.MeanExitMph + 2.5, $"EV {strong.MeanExitMph:F1} vs {weak.MeanExitMph:F1}");
         }
 
         [Test]

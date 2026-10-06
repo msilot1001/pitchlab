@@ -101,7 +101,8 @@ namespace Pitchlab.Gameplay.Hitting
         public static double Latency(PlayerRatings r) => 0.06 - 0.015 * RatingScale.Unit(r.Vision);
         /// <summary>Angular noise of one look at the ball (rad, per axis; also used for depth): TUNED so an average hitter's
         /// predicted crossing misses by a few cm; ∓ 30 % by Vision.</summary>
-        public static double AngleNoise(PlayerRatings r) => 0.0005 * (1.0 - 0.3 * RatingScale.Unit(r.Vision));
+        public static double AngleNoise(PlayerRatings r) => AngleNoiseBase * (1.0 - 0.3 * RatingScale.Unit(r.Vision));
+        public const double AngleNoiseBase = 0.00035;
         /// <summary>Depth is judged from looming, far less precisely than direction: σ_depth = DepthScale · σθ · d² / (2 r_ball)
         /// (the ball's angular size is 2r/d; TUNED scale — the full looming bound is ≈ 10 % of the distance per look).</summary>
         public const double DepthScale = 0.1;
@@ -109,8 +110,16 @@ namespace Pitchlab.Gameplay.Hitting
         public static double JudgementSigma(PlayerRatings r) => 0.03 * (1.0 - 0.3 * RatingScale.Unit(r.Vision));
         /// <summary>His motor timing error (s, SD): 10 ms ∓ 30 % by Contact (TUNED; the sweet-spot window is ≈ 9 ms).</summary>
         public static double TimingSigma(PlayerRatings r) => 0.010 * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
-        /// <summary>His hand–eye aim error (m, per axis): 3.5 cm ∓ 30 % by Contact (TUNED).</summary>
-        public static double AimSigma(PlayerRatings r) => 0.035 * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
+        /// <summary>His hand–eye aim error along the barrel (m): ∓ 30 % by Contact (TUNED, TASK-023: sets how squarely he meets
+        /// the ball — exit speeds).</summary>
+        public static double AimSigmaAlong(PlayerRatings r) => AimAlong * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
+        /// <summary>His hand–eye aim error across the barrel, up and down (m): ∓ 30 % by Contact (TUNED, TASK-023: sets
+        /// whiffs and the launch-angle spread).</summary>
+        public static double AimSigmaVertical(PlayerRatings r) => AimVertical * (1.0 - 0.3 * RatingScale.Unit(r.Contact));
+        /// <summary>Base aim spreads (m) along and across the barrel, his lift intent (m: he aims the barrel this far under the
+        /// ball's centre — hitters swing to lift), and how much harder a pitch is to square up the further outside the zone he
+        /// sees it (× 1 + ReachPenalty per metre outside). TUNED to MLB batted-ball and contact rates (Docs/OFFENSE_CALIBRATION.md).</summary>
+        public const double AimAlong = 0.11, AimVertical = 0.025, LiftIntent = 0.005, ReachPenalty = 10.0;
         /// <summary>Discipline scales the chase rate 1 ∓ 45 % (MLB O-Swing% spans ≈ 18–40 % around 28 %; ASSUMED).</summary>
         public const double DisciplineChaseScale = 0.45;
         /// <summary>Chasing falls off with how far outside he judges the pitch: × <see cref="ChaseScale"/> · exp(−d / falloff)
@@ -159,7 +168,7 @@ namespace Pitchlab.Gameplay.Hitting
             double latency = Latency(r), noise = AngleNoise(r);
             // His deviates for this pitch, drawn first so the sequence never depends on what he saw.
             double decide = stream.Unit(), timing = TimingSigma(r) * stream.Normal();
-            double aimX = AimSigma(r) * stream.Normal(), aimZ = AimSigma(r) * stream.Normal();
+            double aimX = AimSigmaAlong(r) * stream.Normal(), aimZ = AimSigmaVertical(r) * stream.Normal();
 
             double zoneMid = 0.5 * (batter.ZoneBottom + batter.ZoneTop);
             var plan = new BatterPlan();
@@ -177,8 +186,19 @@ namespace Pitchlab.Gameplay.Hitting
                 double contactTime = fit.TimeAtY(contactPlaneY, seen);
                 if (double.IsNaN(contactTime)) continue;   // no usable path yet
                 Vector3d atContact = fit.At(contactTime);
-                // The PCI lives in the aimable area, as a human's does.
-                (double u, double v) = PciFrame.Default.ToNormalized(atContact.X + aimX, atContact.Z + aimZ);
+                // Out of the zone (as he sees it) the bat is harder to put on the ball: his aim error grows with the distance.
+                double reach = 1.0;
+                {
+                    double plateTime = fit.TimeAtY(PitchingGeometry.PlateFrontY, seen);
+                    if (!double.IsNaN(plateTime))
+                    {
+                        Vector3d atPlate0 = fit.At(plateTime);
+                        reach += ReachPenalty * Math.Max(0.0, -SignedZoneDistance(atPlate0.X, atPlate0.Z, batter.ZoneBottom, batter.ZoneTop));
+                    }
+                }
+
+                // The PCI lives in the aimable area, as a human's does. Under the ball's centre by his lift intent.
+                (double u, double v) = PciFrame.Default.ToNormalized(atContact.X + reach * aimX, atContact.Z - LiftIntent + reach * aimZ);
                 (double pciX, double pciZ) = PciFrame.Default.ToMeters(u, v);
                 plan.Events.Add(new AimEvent(now, pciX, pciZ));
                 plan.LastObservation = seen;
