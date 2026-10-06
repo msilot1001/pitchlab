@@ -398,6 +398,7 @@ namespace Pitchlab.Sandbox
             if (LastBatterPlan != null) return;   // the CPU batter has the PCI
             if (!eventPtr.IsA<StateEvent>() && !eventPtr.IsA<DeltaStateEvent>()) return;
             if (!mouse.delta.ReadValueFromEvent(eventPtr, out Vector2 delta) || delta == Vector2.zero) return;
+            ResolveBunt(eventPtr.time);   // aim input after the ball's arrival: the bunt is read from the track first
             _pciTrack.Move(eventPtr.time, delta.x * _mouseSensitivity, delta.y * _mouseSensitivity);
         }
 
@@ -653,6 +654,7 @@ namespace Pitchlab.Sandbox
         public void SetPci(double x, double z)
         {
             (double u, double v) = Pci.ToNormalized(x, z);
+            ResolveBunt(Clock());
             _pciTrack.Place(Clock(), u, v);
         }
 
@@ -805,6 +807,7 @@ namespace Pitchlab.Sandbox
         {
             if (LastBatterPlan != null) return;   // the CPU batter has the PCI
             Vector2 aim = context.ReadValue<Vector2>();
+            ResolveBunt(context.time);
             _pciTrack.SetVelocity(context.time, aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
         }
 
@@ -881,6 +884,7 @@ namespace Pitchlab.Sandbox
         {
             if (_aimAction == null) return;
             Vector2 aim = _aimAction.ReadValue<Vector2>();
+            ResolveBunt(Clock());
             _pciTrack.SetVelocity(Clock(), aim.x * PciSpeed / Pci.HalfWidth, aim.y * PciSpeed / Pci.HalfHeight);
         }
 

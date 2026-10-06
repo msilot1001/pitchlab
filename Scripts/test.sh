@@ -72,7 +72,7 @@ else
   rm -f "$root/Temp/pipeline_test_status.json"
   cmd run_tests --mode playmode --async_tests | jq -e '.success' >/dev/null
   status='{}'
-  for _ in $(seq 1 300); do
+  for _ in $(seq 1 750); do   # ≈ 1500 s, as the command timeout
     status=$(cmd test_status 2>/dev/null || echo '{}')
     if jq -e '.status == "completed"' <<<"$status" >/dev/null 2>&1; then break; fi
     /bin/sleep 2

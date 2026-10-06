@@ -44,7 +44,12 @@ See Docs/BUNTING.md.
   - a bunt can be pulled back on a pitch that falls short (`ContactResolver.BuntArrival`);
   - the CPU's bunt aim is clamped to the PCI area like the labs'.
 - [x] Tests for each. check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107).
-- [ ] Codex round 2; merge.
+- [x] Codex round 2: grade C. Fixed:
+  - aim input after the ball's arrival now resolves the bunt first, so the PCI track's pruning cannot change it (test: 300
+    aim updates before a frame);
+  - test.sh PlayMode polling extended to the 1500 s timeout.
+- [x] check.sh green (EditMode 733 passed, 6 skipped; PlayMode 107/107).
+- [ ] Codex round 3; merge.
 
 ## Known gaps (handed on)
 - Sacrifice success is very low: the runner's lead and break (TASK-026); bunt defense and positioning (TASK-033).
