@@ -420,8 +420,15 @@ namespace Pitchlab.Gameplay.Play
                 if (!occupied) _onBase[b] = null;
                 else if (_onBase[b] == null)
                 {
-                    int slot = ((_upNext[(int)Batting] - 1 - back++) % Lineup.Size + Lineup.Size) % Lineup.Size + 1;
-                    _onBase[b] = lineup[slot];
+                    PlayerProfile standIn;
+                    do
+                    {
+                        int slot = ((_upNext[(int)Batting] - 1 - back++) % Lineup.Size + Lineup.Size) % Lineup.Size + 1;
+                        standIn = lineup[slot];
+                    }
+                    while (Array.IndexOf(_onBase, standIn) >= 0);   // never a man already on base
+
+                    _onBase[b] = standIn;
                 }
             }
         }

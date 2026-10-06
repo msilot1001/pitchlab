@@ -45,6 +45,7 @@ namespace Pitchlab.Tests
                     Assert.Greater(fb.MaxSpeed, fa.MaxSpeed);
                     Assert.Less(fb.AccelerationTime, fa.AccelerationTime);
                     Assert.Greater(RatingScale.Throw(hi, p).Speed, RatingScale.Throw(lo, p).Speed, $"{p}: stronger arm");
+                    Assert.Greater(RatingScale.FullThrow(hi, p).Speed, RatingScale.FullThrow(lo, p).Speed, $"{p}: stronger full-effort throw");
                     Assert.Less(RatingScale.Throw(hi, p).TransferTime, RatingScale.Throw(lo, p).TransferTime, $"{p}: quicker transfer");
                 }
             }
@@ -70,6 +71,7 @@ namespace Pitchlab.Tests
             {
                 FielderProfile f = RatingScale.Fielder(avg, p), g = FielderProfile.For(p);
                 Assert.AreEqual((g.ReactionTime, g.AccelerationTime, g.Reach), (f.ReactionTime, f.AccelerationTime, f.Reach), p.ToString());
+                Assert.AreEqual(27.0 * 0.3048, f.MaxSpeed, 1e-12, "a fielder's top speed is his own sprint speed (27 ft/s at 50), not the position's");
                 ThrowProfile t = RatingScale.Throw(avg, p), u = ThrowProfile.For(p);
                 Assert.AreEqual(u.Speed, t.Speed, 1e-12, p.ToString());
                 Assert.AreEqual(u.TransferTime, t.TransferTime, 1e-12, p.ToString());
@@ -124,10 +126,56 @@ namespace Pitchlab.Tests
             for (int k = 0; k < 9; k++) game.Pitch(PitchOutcome.SwingingStrike);
             Assert.AreEqual(Half.Bottom, game.Half);
             Assert.IsNull(game.RunnerOn(Base.First));
-            // In the bottom half the visitors field.
+            // In the bottom half the visitors field (their centre fielder is faster than the home team's).
             Team away = game.TeamOf(TeamSide.Away);
-            Assert.AreEqual(RatingScale.Fielder(away.Fielder(DefensivePosition.Shortstop).Ratings, DefensivePosition.Shortstop).ReactionTime,
-                game.Personnel.Fielder(DefensivePosition.Shortstop).ReactionTime);
+            Assert.AreNotEqual(away.Fielder(DefensivePosition.CenterField).Ratings.Speed, home.Fielder(DefensivePosition.CenterField).Ratings.Speed);
+            Assert.AreEqual(RatingScale.Fielder(away.Fielder(DefensivePosition.CenterField).Ratings, DefensivePosition.CenterField).MaxSpeed,
+                game.Personnel.Fielder(DefensivePosition.CenterField).MaxSpeed);
+            Assert.AreEqual(RatingScale.Throw(away.Fielder(DefensivePosition.ThirdBase).Ratings, DefensivePosition.ThirdBase).Speed, game.Personnel.Throw(DefensivePosition.ThirdBase).Speed);
+        }
+
+        [Test]
+        public void ResetPutsTheRunnersBack()
+        {
+            var game = new GameState();
+            for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);
+            PlayerProfile first = game.RunnerOn(Base.First), batter = game.Batter;
+            for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);   // forces him to second
+            Assert.AreEqual((batter, first), (game.RunnerOn(Base.First), game.RunnerOn(Base.Second)));
+            game.ResetPlateAppearance();
+            Assert.AreEqual((first, (PlayerProfile)null), (game.RunnerOn(Base.First), game.RunnerOn(Base.Second)), "the walk undone: back on first alone");
+        }
+
+        [Test]
+        public void ThePlayDecidesWhoEndsUpWhere()
+        {
+            // A runner on first (walked), then a fielder's choice: he is forced at second, the batter is on first.
+            var game = new GameState();
+            for (int i = 0; i < 4; i++) game.Pitch(PitchOutcome.Ball);
+            PlayerProfile walked = game.RunnerOn(Base.First), batter = game.Batter;
+            LivePlay fc = Play(game, 60.0, -20.0, -40.0, -1000.0);
+            Assert.AreEqual(PlayResultKind.FieldersChoice, PlayResults.Classify(fc));
+            game.Apply(fc);
+            Assert.AreEqual((batter, (PlayerProfile)null, (PlayerProfile)null), (game.RunnerOn(Base.First), game.RunnerOn(Base.Second), game.RunnerOn(Base.Third)));
+            Assert.AreNotSame(walked, game.RunnerOn(Base.First));
+            // A single with him on first: each runner where the play left him.
+            var g2 = new GameState();
+            for (int i = 0; i < 4; i++) g2.Pitch(PitchOutcome.Ball);
+            PlayerProfile r1 = g2.RunnerOn(Base.First), hitter = g2.Batter;
+            LivePlay single = Play(g2, 95.0, 6.0, 0.0, 700.0);
+            g2.Apply(single);
+            foreach (LiveRunner r in single.Runners.Where(r => !r.IsOut && !r.HasScored))
+                Assert.AreSame(r.Id.IsBatter ? hitter : r1, g2.RunnerOn(r.LastTouched), $"{r.Id} on {r.LastTouched}");
+        }
+
+        private static LivePlay Play(GameState game, double mph, double launch, double spray, double spin)
+        {
+            Situation s = game.Situation;
+            PlayPersonnel personnel = game.Personnel;
+            BallInPlay ball = BallInPlaySimulation.Run(new BattedBallLaunch(mph, launch, spray, spin).ToState(new Vector3d(0.0, 0.7, 0.8)), EnvironmentState.Standard, FieldLayout.Standard);
+            var play = new LivePlay(FieldingSolver.Solve(ball, s.Alignment, personnel.Fielder, FieldLayout.Standard), s, personnel: personnel);
+            play.RunToEnd();
+            return play;
         }
 
         [Test]
@@ -140,6 +188,13 @@ namespace Pitchlab.Tests
             game.Set(1, Half.Top, 1, new BaseOccupancy(false, true, false), 0, 0);
             Assert.IsNull(game.RunnerOn(Base.First));
             Assert.AreSame(away[8], game.RunnerOn(Base.Second), "the one still there stays");
+            game.Set(1, Half.Top, 1, BaseOccupancy.Loaded, 0, 0);
+            Assert.AreEqual(3, new[] { game.RunnerOn(Base.First), game.RunnerOn(Base.Second), game.RunnerOn(Base.Third) }.Distinct().Count(), "three different runners");
+            // A walked batter on first, then the editor adds a runner on second: someone else.
+            var g = new GameState();
+            for (int i = 0; i < 4; i++) g.Pitch(PitchOutcome.Ball);
+            g.Set(1, Half.Top, 0, new BaseOccupancy(true, true, false), 0, 0);
+            Assert.AreNotSame(g.RunnerOn(Base.First), g.RunnerOn(Base.Second));
         }
 
         [Test]
@@ -156,6 +211,77 @@ namespace Pitchlab.Tests
             }
 
             Assert.AreEqual(RunnerProfile.Standard.MaxSpeed, p.Runner(Runner.Batter).MaxSpeed, "an unrated (all-50) batter runs at the standard");
+            // The same ball plays out identically with the game's personnel and with the generic one.
+            BallInPlay ball = BallInPlaySimulation.Run(new BattedBallLaunch(95.0, 6.0, 0.0, 700.0).ToState(new Vector3d(0.0, 0.7, 0.8)), EnvironmentState.Standard, FieldLayout.Standard);
+            game.Set(1, Half.Top, 0, new BaseOccupancy(true, false, true), 0, 0);
+            Situation s = game.Situation;
+            string Log(PlayPersonnel personnel)
+            {
+                var play = new LivePlay(FieldingSolver.Solve(ball, s.Alignment, personnel.Fielder, FieldLayout.Standard), s, personnel: personnel);
+                play.RunToEnd();
+                return string.Join("\n", play.Log.Select(e => $"{e.Time:R} {e.Text}"));
+            }
+
+            Assert.AreEqual(Log(PlayPersonnel.Standard), Log(game.Personnel));
+        }
+
+        [Test]
+        public void EachRunnerRunsAsHimselfAndTrotsAsHimself()
+        {
+            var fast = new PlayerRatings(speed: 100);
+            var slow = new PlayerRatings(speed: 0);
+            var personnel = new PlayPersonnel(FielderProfile.For, ThrowProfile.For, ThrowProfile.Full, r => RatingScale.Runner(r.IsBatter ? slow : r.From == Base.First ? fast : new PlayerRatings()));
+            LivePlay Play(double mph, double launch, double spray, double spin, BaseOccupancy bases)
+            {
+                var situation = new Situation(0, bases);
+                BallInPlay ball = BallInPlaySimulation.Run(new BattedBallLaunch(mph, launch, spray, spin).ToState(new Vector3d(0.0, 0.7, 0.8)), EnvironmentState.Standard, FieldLayout.Standard);
+                var play = new LivePlay(FieldingSolver.Solve(ball, situation.Alignment, personnel.Fielder, FieldLayout.Standard), situation, personnel: personnel);
+                play.RunToEnd();
+                return play;
+            }
+
+            LivePlay single = Play(95.0, 6.0, 0.0, 700.0, new BaseOccupancy(true, false, false));
+            Assert.AreEqual(RatingScale.Runner(fast).MaxSpeed, single.RunnerOf(new Runner(Base.First)).Profile.MaxSpeed);
+            Assert.AreEqual(RatingScale.Runner(slow).MaxSpeed, single.RunnerOf(Runner.Batter).Profile.MaxSpeed);
+            Assert.AreEqual(single.RunnerOf(Runner.Batter).Profile.MaxSpeed, single.Profile.MaxSpeed, "the play's profile is the batter's");
+            LivePlay hr = Play(106.0, 28.0, -10.0, 2000.0, BaseOccupancy.Loaded);
+            Assert.AreEqual(4, hr.AwardedBases);
+            foreach (LiveRunner r in hr.Runners) Assert.AreEqual(personnel.Runner(r.Id).Trot().MaxSpeed, r.Profile.MaxSpeed, $"{r.Id} trots at his own pace");
+            Assert.AreEqual(3, hr.Runners.Select(r => r.Profile.MaxSpeed).Distinct().Count());
+        }
+
+        [Test]
+        public void TheDefensePlaysWithItsRatings()
+        {
+            // The same grounder to short: a strong, quick arm gets the ball to first sooner (through the live defense's throw).
+            BallInPlay grounder = BallInPlaySimulation.Run(new BattedBallLaunch(85.0, -8.0, -15.0, -1000.0).ToState(new Vector3d(0.0, 0.7, 0.8)), EnvironmentState.Standard, FieldLayout.Standard);
+            LiveThrow FirstThrow(int arm)
+            {
+                var r = new PlayerRatings(armStrength: arm, transfer: arm);
+                var personnel = new PlayPersonnel(FielderProfile.For, p => RatingScale.Throw(r, p), p => RatingScale.FullThrow(r, p), _ => RunnerProfile.Standard);
+                var s = new Situation(0, BaseOccupancy.Empty);
+                var play = new LivePlay(FieldingSolver.Solve(grounder, s.Alignment, personnel.Fielder, FieldLayout.Standard), s, personnel: personnel);
+                play.RunToEnd();
+                return play.Defense.Throws.First();
+            }
+
+            LiveThrow weak = FirstThrow(0), strong = FirstThrow(100);
+            Assert.Less(strong.ReleaseTime, weak.ReleaseTime, "a quicker transfer");
+            Assert.Less(strong.EndTime - strong.ReleaseTime, weak.EndTime - weak.ReleaseTime, "a faster throw");
+            // A fly to the gap: a centre fielder with a quicker first step and more speed takes it sooner (the fielding solve).
+            BallInPlay gapper = BallInPlaySimulation.Run(new BattedBallLaunch(90.0, 25.0, 12.0, 1800.0).ToState(new Vector3d(0.0, 0.7, 0.8)), EnvironmentState.Standard, FieldLayout.Standard);
+            double Arrive(int skill)
+            {
+                var r = new PlayerRatings(reaction: skill, speed: skill, acceleration: skill);
+                FieldingPlay f = FieldingSolver.Solve(gapper, DefensiveAlignment.Standard, p => RatingScale.Fielder(r, p), FieldLayout.Standard);
+                return f.Candidate(DefensivePosition.CenterField).Time;
+            }
+
+            Assert.Less(Arrive(100), Arrive(0));
+            // A play solved with other fielders than its personnel is refused.
+            var solvedGeneric = FieldingSolver.Solve(grounder, DefensiveAlignment.Standard, FielderProfile.For, FieldLayout.Standard);
+            var rated = new PlayPersonnel(p => RatingScale.Fielder(new PlayerRatings(speed: 90, reaction: 90), p), ThrowProfile.For, ThrowProfile.Full, _ => RunnerProfile.Standard);
+            Assert.Throws<ArgumentException>(() => new LivePlay(solvedGeneric, new Situation(0, BaseOccupancy.Empty), personnel: rated));
         }
 
         [Test]

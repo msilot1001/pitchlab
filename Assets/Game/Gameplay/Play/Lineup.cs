@@ -43,7 +43,7 @@ namespace Pitchlab.Gameplay.Play
             Throws = throws;
             HeightInches = heightInches;
             FieldingPosition = fieldingPosition;
-            Ratings = ratings;
+            Ratings = ratings ?? throw new ArgumentNullException(nameof(ratings));
             Position = fieldingPosition is DefensivePosition p ? PositionName(p) : "DH";
         }
 

@@ -3,7 +3,8 @@
 Ratings are a 0–100 display scale (50 = an average major leaguer at the skill). Gameplay never reads a rating directly:
 `RatingScale` (Assets/Game/Gameplay/Players) converts each into the physical or input parameter the simulation runs on.
 Every mapping is linear in r̂ = (rating − 50) / 50 ∈ [−1, 1], monotonic, and returns the pre-ratings generic value at 50,
-so an all-50 player plays exactly like the generic profiles. Ratings feed inputs (speeds, delays, arm speed, execution
+so an all-50 player plays like the generic profiles — except a fielder's top speed, which is always his own sprint speed (27
+ft/s at 50 whatever the position; the generic C/1B profiles run 25, SS/CF 28). Ratings feed inputs (speeds, delays, arm speed, execution
 spreads); they never choose a result.
 
 Labels: **MEASURED** (published Statcast / official / peer-reviewed number), **DERIVED** (computed from measured data),

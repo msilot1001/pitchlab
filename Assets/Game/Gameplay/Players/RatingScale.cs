@@ -8,7 +8,9 @@ namespace Pitchlab.Gameplay.Players
     /// <summary>
     /// Display ratings → the physical and input parameters gameplay runs on (TASK-017; Docs/PLAYER_RATINGS.md records the
     /// source of every range). Each mapping is linear in r̂ = (rating − 50) / 50 ∈ [−1, 1], monotonic, and gives the existing
-    /// generic value at 50 — so an all-50 player plays exactly as the generic profiles did. Nothing here decides an outcome:
+    /// generic value at 50 — except a fielder's top speed, which is always his own sprint speed (27 ft/s at 50 whatever his
+    /// position; the generic rosters rate catchers, first basemen and middle fielders to their positions' generic speeds).
+    /// Nothing here decides an outcome:
     /// these are the inputs (speeds, delays, arm speeds) the simulation then plays out.
     /// </summary>
     public static class RatingScale

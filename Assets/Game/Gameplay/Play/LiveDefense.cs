@@ -334,6 +334,7 @@ namespace Pitchlab.Gameplay.Play
             }
             else (chosen, reason) = Choose(h, candidates);
 
+            // (A routine and a full-effort throw share the fielder's transfer time — the candidates' "ready" uses the same.)
             double commit = took + _play.Personnel.Throw(h).TransferTime + Recovery(h, took) - DefensivePlay.ArmAction;
             if (chosen.Kind == LiveActionKind.Throw && t < commit - 1e-9 && _firstChoice == null && reason != "override")
             {
@@ -663,7 +664,8 @@ namespace Pitchlab.Gameplay.Play
         }
 
         /// <summary>When the defense could have the ball at <paramref name="b"/> as seen at <paramref name="now"/> — the runners'
-        /// estimate: who has it (or will field it), the transfer, a throw at that fielder's routine speed at 0.9 of it.</summary>
+        /// estimate: who has it (or will field it), the transfer, a throw at that fielder's routine speed at 0.9 of it (the
+        /// runners' conservative read — an outfielder actually throws at full effort; kept as validated in TASK-007/008).</summary>
         internal double Eta(Base b, double now)
         {
             Vector3d bag = FieldLayout.BasePosition(b);
