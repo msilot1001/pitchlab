@@ -46,7 +46,7 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void CentredOnTimeContactHitsHardestAndUpTheMiddle()
+        public void OnTimeContactNearTheSweetSpotHitsHardestAndUpTheMiddle()
         {
             HittingPitch pitch = Pitch(PitchPresets.FourSeam);
             ContactResult perfect = Swing(pitch);
@@ -92,15 +92,73 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void OffSweetSpotLosesExitSpeedFasterTowardTheTip()
+        public void ExitSpeedAlongTheBat()
         {
+            // TASK-023: q falls off faster toward the tip, but the bat turns about its pivot, so it is faster there and slower
+            // toward the hands (Nathan's BBS = q·v_ball + (1+q)·v_bat with the bat speed at the impact point). The fastest exit is
+            // a little tipward of the sweet spot, a ball off the end is weak (q < 0) and so is a jammed one.
             HittingPitch pitch = Pitch(PitchPresets.FourSeam);
             // Right-handed hitter: barrel tip toward first base (+X). Ball at +X of the sweet spot = toward the tip.
-            ContactResult towardTip = Swing(pitch, pciDx: -0.0762);
-            ContactResult towardHandle = Swing(pitch, pciDx: 0.0762);
-            Assert.Less(towardTip.CollisionEfficiency, towardHandle.CollisionEfficiency);
-            Assert.Less(towardHandle.CollisionEfficiency, Params.SweetSpotEfficiency);
-            Assert.Less(towardTip.ExitSpeed, towardHandle.ExitSpeed);
+            Assert.Less(Swing(pitch, pciDx: -0.0762).CollisionEfficiency, Swing(pitch, pciDx: 0.0762).CollisionEfficiency, "q falls faster toward the tip");
+            double Ev(double inchesTowardTip)
+            {
+                ContactResult r = Swing(pitch, pciDx: -inchesTowardTip * 0.0254 * 0.999);
+                Assert.IsTrue(r.IsContact, $"contact at {inchesTowardTip} in");
+                return Mph(r.ExitSpeed);
+            }
+            double peak = double.NegativeInfinity, peakAt = double.NaN;
+            for (double d = -2.0; d <= 3.0; d += 0.25)
+                if (Ev(d) > peak) (peak, peakAt) = (Ev(d), d);
+            Assert.That(peakAt, Is.InRange(0.0, 1.5), "the fastest exit is 0–1.5 in tipward of the sweet spot");
+            Assert.LessOrEqual(Ev(6.0), 80.0, "off the end: weak");
+            double previous = double.PositiveInfinity;
+            for (double d = 0.0; d >= -14.0; d -= 1.0)
+            {
+                Assert.Less(Ev(d), previous + 1e-9, $"weaker toward the hands ({d} in)");
+                previous = Ev(d);
+            }
+
+            Assert.Less(Ev(-10.0), 60.0, "jammed: weak");
+        }
+
+        [Test]
+        public void TheBatEndsAtTheTipAndAtTheHands()
+        {
+            // TASK-023: contact from the end of the bat (TipReach) to near the hands (HandleReach); beyond, a miss.
+            HittingPitch pitch = Pitch(PitchPresets.FourSeam);
+            Assert.IsTrue(Swing(pitch, pciDx: -Params.TipReach * (1.0 - 1e-9)).IsContact, "just inside the end");
+            Assert.AreEqual(ContactOutcome.MissOffBarrel, Swing(pitch, pciDx: -Params.TipReach * (1.0 + 1e-9)).Outcome, "just past the end");
+            Assert.IsTrue(Swing(pitch, pciDx: Params.HandleReach * (1.0 - 1e-9)).IsContact, "just inside the hands");
+            Assert.AreEqual(ContactOutcome.MissOffBarrel, Swing(pitch, pciDx: Params.HandleReach * (1.0 + 1e-9)).Outcome, "past the hands");
+        }
+
+        [Test]
+        public void TheHandleIsThinnerThanTheBarrel()
+        {
+            // The bat keeps the barrel's radius to TaperStart, then narrows to the handle: the vertical window shrinks.
+            Assert.AreEqual(Params.BarrelRadius, ContactResolver.BatRadiusAt(Params, 0.0), 1e-12);
+            Assert.AreEqual(Params.BarrelRadius, ContactResolver.BatRadiusAt(Params, -Params.TaperStart), 1e-12);
+            Assert.AreEqual(0.5 * (Params.BarrelRadius + Params.HandleRadius), ContactResolver.BatRadiusAt(Params, -0.5 * (Params.TaperStart + Params.HandleReach)), 1e-12);
+            Assert.AreEqual(Params.HandleRadius, ContactResolver.BatRadiusAt(Params, -Params.HandleReach), 1e-12);
+            // The same height offset that still makes contact on the barrel passes under the ball near the hands.
+            HittingPitch pitch = Pitch(PitchPresets.FourSeam);
+            double dz = -(BallProperties.Baseball.Radius + Params.BarrelRadius) * 0.95;
+            Assert.IsTrue(Swing(pitch, pciDz: dz).IsContact, "barrel");
+            Assert.AreEqual(ContactOutcome.MissUnder, Swing(pitch, pciDx: 10 * 0.0254, pciDz: dz).Outcome, "10 in toward the handle: thinner");
+        }
+
+        [Test]
+        public void OldSwingsGetTheWholeBat()
+        {
+            SwingParameters old = Params;
+            (old.TipReach, old.HandleReach, old.TaperStart, old.HandleRadius, old.PivotRadius, old.MinTipEfficiency) = (0, 0, 0, 0, 0, 0);
+            Assert.Throws<ArgumentException>(() => old.Validate(), "without its geometry the swing is invalid");
+            SwingParameters migrated = old.WithBatGeometry();
+            Assert.DoesNotThrow(() => migrated.Validate());
+            Assert.AreEqual(Params.PivotRadius, migrated.PivotRadius);
+            Assert.AreEqual(Params.HandleReach, migrated.HandleReach);
+            Assert.AreEqual(Params.MinTipEfficiency, migrated.MinTipEfficiency);
+            Assert.AreEqual(Params.BatSpeed, migrated.BatSpeed, "the rest of the swing is kept");
         }
 
         [Test]
@@ -111,7 +169,8 @@ namespace Pitchlab.Tests
             Assert.AreEqual(ContactOutcome.MissTiming, Swing(pitch, 0.050).Outcome);
             Assert.AreEqual(ContactOutcome.MissUnder, Swing(pitch, pciDz: -0.10).Outcome, "PCI far below the ball: bat passes under");
             Assert.AreEqual(ContactOutcome.MissOver, Swing(pitch, pciDz: 0.10).Outcome);
-            Assert.AreEqual(ContactOutcome.MissOffBarrel, Swing(pitch, pciDx: 0.20).Outcome);
+            Assert.AreEqual(ContactOutcome.MissOffBarrel, Swing(pitch, pciDx: 0.40).Outcome, "beyond the hands");
+            Assert.AreEqual(ContactOutcome.MissOffBarrel, Swing(pitch, pciDx: -0.17).Outcome, "beyond the end of the bat");
         }
 
         [TestCase(double.NaN, 0.0, 0.7), TestCase(0.25, double.NaN, 0.7), TestCase(0.25, 0.0, double.NaN),
@@ -149,6 +208,12 @@ namespace Pitchlab.Tests
             Expect(p => { p.SprayRate = 100.0; return p; });   // would yaw the bat past 90° inside the window
             Expect(p => { p.SweetSpotEfficiency = 1.5; return p; });
             Expect(p => { p.AttackAngle = Math.PI; return p; });
+            Expect(p => { p.HandleReach = p.PivotRadius; return p; });       // the bat's speed would reach zero at the hands
+            Expect(p => { p.TaperStart = p.HandleReach; return p; });        // a taper of no length
+            Expect(p => { p.HandleRadius = p.BarrelRadius * 1.1; return p; });
+            Expect(p => { p.MinTipEfficiency = 0.05; return p; });
+            Expect(p => { p.TipReach = 0.0; return p; });
+            Expect(p => { p.PivotRadius = double.NaN; return p; });
 
             SwingParameters instant = Params;
             instant.SwingDuration = 0.0;
@@ -184,14 +249,16 @@ namespace Pitchlab.Tests
         }
 
         [Test]
-        public void BarrelEdgeStillMakesContactAndTipEfficiencyClampsAtZero()
+        public void BarrelEdgeStillMakesContactAndTipEfficiencyHasAFloor()
         {
             HittingPitch pitch = Pitch(PitchPresets.FourSeam);
             double h = Params.BarrelHalfLength * (1.0 - 1e-9);
             ContactResult tipEdge = Swing(pitch, pciDx: -h);     // ball 5 in toward the tip (+X) for a right-handed hitter
             Assert.IsTrue(tipEdge.IsContact);
-            Assert.AreEqual(0.0, tipEdge.CollisionEfficiency, "0.21 − 0.012/in²·(5 in)² < 0 → clamped");
+            Assert.AreEqual(Params.SweetSpotEfficiency - 0.012 * 25.0, tipEdge.CollisionEfficiency, 1e-6, "0.21 − 0.012/in²·(5 in)² = −0.09: slightly negative off the end");
             Assert.Greater(tipEdge.ExitSpeed, 0.0);
+            ContactResult end = Swing(pitch, pciDx: -Params.TipReach * (1.0 - 1e-9));
+            Assert.AreEqual(Params.MinTipEfficiency, end.CollisionEfficiency, 1e-12, "at the end of the bat: the floor");
             ContactResult handleEdge = Swing(pitch, pciDx: h);
             Assert.AreEqual(Params.SweetSpotEfficiency - 0.003 * 25.0, handleEdge.CollisionEfficiency, 1e-6);
         }
@@ -403,17 +470,21 @@ namespace Pitchlab.Tests
         [Test]
         public void OffCentreContactKeepsTheSpinOfTheSameUndercut()
         {
-            // Spin depends on the line of centres and the slip, not on where along the barrel the ball is hit (q only
-            // changes the normal impulse, so the friction cap at most lowers it). Real bats recoil more off the sweet
-            // spot (b²/I₀ in r_x); not modelled.
+            // Spin depends on the line of centres and the slip. Along the barrel only the bat's local speed (TASK-023: it turns
+            // about its pivot) changes the slip — within ±3 in, ≈ ±11 % of the speed — and q the normal impulse. Real bats recoil
+            // more off the sweet spot (b²/I₀ in r_x); not modelled.
             HittingPitch pitch = Pitch(PitchPresets.FourSeam);
             double centred = Swing(pitch, pciDz: -0.0127).BattedBall.Spin.Length;
             foreach (double dx in new[] { -0.0762, 0.0762 })
             {
                 BattedBallLaunch l = Spin(Swing(pitch, pciDx: dx, pciDz: -0.0127));
                 Assert.Greater(l.BackspinRpm, 1000.0);
-                Assert.LessOrEqual(Swing(pitch, pciDx: dx, pciDz: -0.0127).BattedBall.Spin.Length, centred * (1.0 + 1e-9));
             }
+
+            // Directional: the faster bat toward the tip slips more, the slower one toward the handle less.
+            double tip = Swing(pitch, pciDx: -0.0762, pciDz: -0.0127).BattedBall.Spin.Length, handle = Swing(pitch, pciDx: 0.0762, pciDz: -0.0127).BattedBall.Spin.Length;
+            Assert.Greater(tip, centred);
+            Assert.Greater(centred, handle);
         }
 
         [Test]
@@ -448,8 +519,9 @@ namespace Pitchlab.Tests
             Assert.AreEqual(GoldenSpin, r.BattedBall.Spin.Length, 1e-4);
         }
 
-        // TASK-004.5 (e_x 0.30, r_x 0.30, vertical bat angle 32°, incoming spin ⟂ line of centres) re-pinned these.
-        private const double GoldenExitSpeed = 45.506727145173578, GoldenLaunch = 28.187673952178166, GoldenSpray = 23.816341936477784, GoldenSpin = 444.99594617101008;
+        // TASK-004.5 (e_x 0.30, r_x 0.30, vertical bat angle 32°, incoming spin ⟂ line of centres) re-pinned these; TASK-023
+        // (the bat's speed along its length: this swing meets the ball 1 cm toward the handle) re-pinned them again.
+        private const double GoldenExitSpeed = 45.145792483554438, GoldenLaunch = 28.247937065832577, GoldenSpray = 23.922048923965093, GoldenSpin = 443.31880358508806;
 
         [Test]
         public void PitchThatNeverReachesTheContactPlaneCannotBeHit()

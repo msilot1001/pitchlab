@@ -39,7 +39,7 @@ namespace Pitchlab.Tests
         [TestCase(1, "3", 90.0, 18.0, -15.0, 1800.0, PlayResultKind.SacrificeFly)]
         [TestCase(1, "3", 85.0, 20.0, -30.0, 1800.0, PlayResultKind.SacrificeFly)]
         [TestCase(2, "3", 55.0, 28.0, -30.0, 1800.0, PlayResultKind.FlyOut)]           // two out: no sacrifice fly
-        [TestCase(2, "", 95.0, 12.0, -42.0, 1800.0, PlayResultKind.Single)]           // thrown out stretching: still a single
+        [TestCase(2, "", 100.0, 12.0, -42.0, 1800.0, PlayResultKind.Single)]          // thrown out stretching: still a single
         [TestCase(1, "2", 70.0, 12.0, -30.0, 1800.0, PlayResultKind.Single)]          // runner thrown out, not forced: a hit
         [TestCase(1, "123", 85.0, 20.0, -30.0, 1800.0, PlayResultKind.DoublePlay)]    // caught, a run scores, a runner doubled off
         public void ThePlayIsDescribedFromItsRecord(int outs, string on, double mph, double launch, double spray, double spin, PlayResultKind expected)

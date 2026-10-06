@@ -42,10 +42,35 @@ The PCI is a point in the contact plane (world X, Z). At contact the bat's sweet
 
 Reference = Nathan's average-Statcast spin at the same EV/LA/spray, with which the flight model matches 2024 Statcast (TASK-004). Over a deterministic grid (5 pitch types × both hands × timing × PCI offsets) back+side spin is 0.84–0.98 × Nathan's average per 5° launch bucket from 10° to 40° (before: 1.11–1.30 ×), sidespin follows spray at ≈ 90–100 rpm/° with zero on the pull side for both hands, and carry differs from the reference by −1.6…+3.8 ft on average for 15–40° launches (before: −15…+11 ft, LA-dependent). Low line drives (10–15°) carry 8 ft short on average: a centred hit on a fastball keeps little backspin because the pitch's surviving backspin cancels it.
 
+## The whole bat (TASK-023)
+- **Contact span:** from the end of the bat (`TipReach` 6 in tipward of the sweet spot; the sweet spot is ≈ 6 in from the end
+  of a 34-in bat) to near the hands (`HandleReach` 14 in toward the handle). The barrel (±5 in, `BarrelHalfLength`) is the
+  PCI's drawn width, where contact is good; outside it, contact is weak, not a miss.
+- **Taper:** the bat keeps the barrel radius to `TaperStart` (4 in toward the handle), then narrows linearly to
+  `HandleRadius` (0.6 in) at the hands. The vertical window is r_ball + the local radius. ASSUMED wood-bat geometry
+  (271/I13-type: 2.61-in barrel, ≈ 1.2-in handle, ≈ 10-in taper).
+- **Rotation:** the bat turns about a pivot `PivotRadius` 0.70 m from the sweet spot, so its speed along the bat is
+  BatSpeed·(1 + d/0.70), d tipward. A rigid rotation gives exactly this. At impact the centre of rotation is near or
+  slightly beyond the knob (Cross 2009, AJP 77, "Mechanics of swinging a bat"); 32 m/s / 0.70 m ≈ 46 rad/s, within the
+  35–50 rad/s reported. ASSUMED, range 0.6–0.8 m. `BatSpeed` stays the sweet-spot speed (Statcast measures 6 in from the
+  end).
+- **Collision efficiency:** Nathan's q(d) comes from a bat at rest (effective mass, vibration). His BBS = q·v_ball +
+  (1+q)·v_bat uses the bat speed at the impact point, so local speed with his q is consistent, not double counted. Toward
+  the handle q stays ≥ 0. Toward the tip it goes slightly negative: q = (e − r)/(1 + r) with r ≈ 0.4 and e ≈ 0.3 gives
+  ≈ −0.07, with a floor of −0.10 (`MinTipEfficiency`).
+- **Result (four-seamer, centred height):**
+  - the fastest exit is 106.5 mph at 1 in tipward (105.2 at the sweet spot);
+  - the end of the bat gives ≈ 70 mph;
+  - 4 in toward the handle gives 86 mph, 8 in gives 54 and the hands 36.
+
+  `ContactResolverTests.ExitSpeedAlongTheBat` pins the shape.
+- **[Approx]:** the tangential recoil r_x keeps the barrel's value (its R² term would be ≈ 0.2× at the handle, so handle
+  contact gets slightly too little spin); the taper's ≈ 4° surface tilt is ignored.
+
 ## Ratings
 
 All hitter- and swing-specific values live in `SwingParameters` (bat speed, attack angle, swing duration, barrel contact width, sweet-spot q, timing window, spray rate, handedness). Ratings map onto these fields; the resolver has no hidden constants.
 
 ## Limitations
 
-One swing type with one attack angle and bat tilt (real hitters vary both per swing); bat is straight-line during contact (no bat rotation inside the collision); no bat-speed variation along the barrel; spin about the line of centres dropped; no foul-tip/caught distinction; e_x measured at 85–120 mph, below game relative speeds (≈ 150 mph); r_x for one measured wood bat; q curve from a simulated generic wood bat. Individual-ball spin cannot be validated (public Statcast has no batted-ball spin); only averages against Nathan's Statcast-derived model, whose back/side split Trackman infers from the trajectory.
+One swing type with one attack angle and bat tilt (real hitters vary both per swing); bat is straight-line during contact (no bat rotation inside the collision); spin about the line of centres dropped; no foul-tip/caught distinction; e_x measured at 85–120 mph, below game relative speeds (≈ 150 mph); r_x for one measured wood bat; q curve from a simulated generic wood bat. Individual-ball spin cannot be validated (public Statcast has no batted-ball spin); only averages against Nathan's Statcast-derived model, whose back/side split Trackman infers from the trajectory.

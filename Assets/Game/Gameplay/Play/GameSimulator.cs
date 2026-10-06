@@ -36,6 +36,8 @@ namespace Pitchlab.Gameplay.Play
         /// <summary>Every misplay of the game so far (TASK-021).</summary>
         public IReadOnlyList<Misplay> Misplays => _misplays;
         private readonly List<Misplay> _misplays = new List<Misplay>();
+        /// <summary>The last pitch's swing and its contact result (null: a take) — calibration and diagnostics (TASK-023).</summary>
+        public ContactResult? LastContact { get; private set; }
         /// <summary>The last ball in play (null before the first).</summary>
         public LivePlay LastPlay { get; private set; }
 
@@ -68,6 +70,7 @@ namespace Pitchlab.Gameplay.Play
             BatterPlan plan = CpuBatter.Plan(CpuBatter.Observe(pitch), batter, Game.Count, swing, pitch.ContactPlaneY, ref stream);
             SwingInput? input = plan.Input;
             ContactResult? result = input is SwingInput s ? ContactResolver.Resolve(pitch, s, swing) : (ContactResult?)null;
+            LastContact = result;
 
             if (result is ContactResult r && r.IsContact)
             {

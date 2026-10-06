@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Pitchlab.Gameplay.Hitting;
 using Pitchlab.Gameplay.Play;
@@ -239,7 +240,7 @@ namespace Pitchlab.Tests
                 double mean = sum / n, sd = Math.Sqrt(sq / n - mean * mean), expected = CpuBatter.TimingSigma(b.Ratings);
                 Assert.Greater(n, 400);
                 Assert.That(sd, Is.InRange(0.85 * expected, 1.15 * expected), $"contact {contact}: {1000 * sd:F1} ms vs {1000 * expected:F1}");
-                Assert.Less(Math.Abs(mean), 0.15 * expected, "unbiased (an early press is never cut short)");
+                Assert.AreEqual(CpuBatter.TimingBias, mean, 0.15 * expected, "his average timing is his bias (slightly early, TASK-023); an early press is never cut short");
             }
         }
 
@@ -271,9 +272,65 @@ namespace Pitchlab.Tests
             (double goodT, double goodA) = Spread(Rated(contact: 90));
             (double poorT, double poorA) = Spread(Rated(contact: 10));
             Assert.Greater(poorT, goodT * 1.3, $"timing {1000 * poorT:F1} vs {1000 * goodT:F1} ms");
-            // Aim spread = perception (≈ 5 cm, the same for both) ⊕ his aim error (2.5 vs 4.6 cm): expected ratio ≈ 1.18; 1.0 without it.
+            // Aim spread (both axes) = perception (the same for both) ⊕ his aim error (σ scales 0.73× vs 1.27× of 11 cm along /
+            // 2.5 cm across by Contact): clearly wider for the poor hitter; equal without it.
             Assert.Greater(poorA, goodA * 1.1, $"aim {100 * poorA:F1} vs {100 * goodA:F1} cm");
-            Assert.Greater(goodA, CpuBatter.AimSigma(Rated(contact: 90).Ratings) * 0.8, "his aim error is in the PCI");
+            Assert.Greater(goodA, CpuBatter.AimSigmaAlong(Rated(contact: 90).Ratings) * 0.8, "his aim error is in the PCI");
+        }
+
+        /// <summary>His PCI at the press minus the ball at the contact plane, over his swings at <paramref name="pitch"/>.</summary>
+        private static List<(double Dx, double Dz)> AimOffsets(HittingPitch pitch, PlayerProfile b, Count count, int n)
+        {
+            Vector3d c = pitch.IdealContactState.Position;
+            var list = new List<(double, double)>();
+            for (int k = 0; k < n; k++)
+            {
+                BatterPlan plan = Plan(CpuBatter.Observe(pitch), pitch, b, count, k);
+                if (plan.Input is SwingInput s) list.Add((s.PciX - c.X, s.PciZ - c.Z));
+            }
+
+            return list;
+        }
+
+        private static double Sd(IEnumerable<double> v)
+        {
+            var a = v.ToList();
+            double m = a.Average();
+            return Math.Sqrt(a.Sum(x => (x - m) * (x - m)) / a.Count);
+        }
+
+        [Test]
+        public void HeSwingsToLiftAndMissesMoreAlongTheBarrelThanAcrossIt()
+        {
+            // TASK-023: he aims a little under the ball (lift intent), and his aim error is much wider along the barrel (how
+            // squarely he meets it) than across it (whiffs, launch angle).
+            HittingPitch middle = Pitch();
+            List<(double Dx, double Dz)> o = AimOffsets(middle, Rated(), new Count(0, 2), 800);
+            Assert.Greater(o.Count, 500);
+            // Against his own prediction (his perception's error is separate: his prior expects no lift, so he reads a rising
+            // fastball low): the PCI sits LiftIntent under where he expects the ball, plus his zero-mean aim error.
+            var underPrediction = new List<double>();
+            for (int k = 0; k < 800; k++)
+            {
+                BatterPlan plan = Plan(CpuBatter.Observe(middle), middle, Rated(), new Count(0, 2), k);
+                if (!plan.Swing) continue;
+                AimEvent e = plan.Aim.Last(a => a.Time <= plan.SwingStart);
+                underPrediction.Add(e.Z - e.PredictedZ);
+            }
+
+            Assert.That(underPrediction.Average(), Is.InRange(-CpuBatter.LiftIntent - 0.003, -CpuBatter.LiftIntent + 0.003), "under his predicted ball by his lift intent");
+            Assert.Greater(Sd(o.Select(x => x.Dx)), 2.5 * Sd(o.Select(x => x.Dz)), "wider along the barrel");
+        }
+
+        [Test]
+        public void APitchFarOutsideIsHarderToSquareUp()
+        {
+            // TASK-023: the reach penalty — his aim error grows with how far outside the zone he sees the pitch.
+            PlayerProfile b = Rated();
+            List<(double Dx, double Dz)> middle = AimOffsets(Pitch(PitchType.FourSeam, PitchTarget.Middle), b, new Count(0, 2), 800);
+            List<(double Dx, double Dz)> wide = AimOffsets(Pitch(PitchType.FourSeam, PitchTarget.BallRight), b, new Count(0, 2), 3000);
+            Assert.Greater(wide.Count, 40, "he chases it sometimes");
+            Assert.Greater(Sd(wide.Select(x => x.Dz)), 1.5 * Sd(middle.Select(x => x.Dz)), "a wider aim error well outside the zone");
         }
 
         [Test]
@@ -334,7 +391,9 @@ namespace Pitchlab.Tests
             Assert.Greater(Exit(50), Exit(10) + 4.0);
             // And over his population, with his own errors.
             Stats strong = Population(Rated(power: 90, id: "strong"), Set), weak = Population(Rated(power: 10, id: "weak"), Set);
-            Assert.Greater(strong.MeanExitMph, weak.MeanExitMph + 4.0, $"EV {strong.MeanExitMph:F1} vs {weak.MeanExitMph:F1}");
+            // Over his contacts the gap is smaller than squared up: since TASK-023 much contact is off the barrel (weak), where bat
+            // speed matters less. Regression guard (≈ 3.7 mph measured).
+            Assert.Greater(strong.MeanExitMph, weak.MeanExitMph + 2.5, $"EV {strong.MeanExitMph:F1} vs {weak.MeanExitMph:F1}");
         }
 
         [Test]

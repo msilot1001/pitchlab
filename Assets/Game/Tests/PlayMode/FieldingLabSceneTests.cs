@@ -80,6 +80,11 @@ namespace Pitchlab.Tests
                 // At the take the shown ball is exactly the gameplay ball (no jump); once secured it sits in the glove.
                 At(t + 1e-5);
                 Assert.Less(Vector3.Distance(_lab.Ball.position, SimulationSpace.ToUnity(f.BallPositionAt(f.Intercept.Time + 1e-5))), 2e-3f, $"{FieldingLabController.Presets[k].Name}: no jump at the take");
+                // Secured: the glove reach hands over to the hold pose without a pop (the glove, not the wrist, met the ball).
+                At(t + FieldingPlay.SecureTime - 1e-3);
+                Vector3 before = _lab.Ball.position;
+                At(t + FieldingPlay.SecureTime + 1e-3);
+                Assert.Less(Vector3.Distance(before, _lab.Ball.position), 0.03f, $"{FieldingLabController.Presets[k].Name}: no pop when secured");
                 // Held in the glove until the wind-up (0.15 s before the arm action, not before it is secured; from there the
                 // ball is between the hands), or for good without a throw.
                 LiveThrow th = _lab.Team.Throws.FirstOrDefault();
@@ -166,7 +171,7 @@ namespace Pitchlab.Tests
                 LiveThrow next = d.Throws.FirstOrDefault(x => x.Thrower == th.Receiver && x.ReleaseTime > th.Catch.Time);
                 double held = th.Catch.Time + FieldingPlay.SecureTime + 0.1;
                 if (next != null) held = System.Math.Min(held, System.Math.Max(next.ReleaseTime - DefensivePlay.ArmAction - 0.15, th.Catch.Time + FieldingPlay.SecureTime));
-                At(held - t0);
+                At(held - t0 - 1e-3);   // just before the wind-up, which can start the moment the ball is secured
                 Assert.Less(Vector3.Distance(_lab.Ball.position, receiver.GloveAnchor.position), 1e-4f, $"{name}: held by the receiver");
                 log.AppendLine($"{name}: hand {hand:0.000} m, receiver glove {glove:0.000} m");
             }

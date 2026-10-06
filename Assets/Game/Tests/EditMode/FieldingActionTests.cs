@@ -45,7 +45,7 @@ namespace Pitchlab.Tests
         {
             var seen = new System.Collections.Generic.List<FieldingAction>();
             // A sliding catch is low and at speed; a jumping catch is high; a dive is the dive envelope; a running catch is moving.
-            foreach (var (mph, launch, spray, spin) in new[] { (60.0, 10.0, -20.0, 1500.0), (95.0, 30.0, -10.0, 2200.0), (80.0, 22.0, -40.0, 1500.0), (90.0, 20.0, 15.0, 1800.0) })
+            foreach (var (mph, launch, spray, spin) in new[] { (60.0, 10.0, -20.0, 1500.0), (98.0, 30.0, -10.0, 2200.0), (80.0, 22.0, -40.0, 1500.0), (90.0, 20.0, 15.0, 1800.0) })
             {
                 FieldingPlay f = Field(mph, launch, spray, spin);
                 FielderMotion m = f.Motion(f.Primary.Value);

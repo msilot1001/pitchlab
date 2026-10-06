@@ -21,6 +21,9 @@ namespace Pitchlab.Sandbox
     {
         /// <summary>How long before a take the glove starts toward the ball (s).</summary>
         public const double GloveLead = 0.45;
+
+        /// <summary>A wall play taken below this height (m) is shown as a pickup (knee height: an upright reach cannot get there).</summary>
+        private const double LowWallBall = 0.3;
         /// <summary>The catcher appears once he is this far from his spot behind the plate (m).</summary>
         private const double CatcherShowDistance = 1.5;
         /// <summary>The follow-through after a release (s).</summary>
@@ -241,6 +244,7 @@ namespace Pitchlab.Sandbox
             FieldingAction.SlidingCatch => BodyAction.Slide,
             FieldingAction.DivingCatch => BodyAction.Dive,
             FieldingAction.JumpingCatch => BodyAction.Jump,
+            FieldingAction.WallPlay when take.BallPoint.Z < LowWallBall => BodyAction.Pickup,   // a ground ball off the wall: down to it
             FieldingAction.ReceiveThrow when OnABase(d.FielderPositionAt(position, take.Time)) => BodyAction.Stretch,
             FieldingAction.None => BodyAction.None,
             _ => BodyAction.Reach,
@@ -428,6 +432,7 @@ namespace Pitchlab.Sandbox
             {
                 input.GloveTarget = figure.WorldToFigurePoint(CatcherGlove);
                 input.GloveWeight = Mathf.Clamp01(CatcherGloveWeight);
+                input.GloveEffector = 1f;
             }
             else if (take != null && sinceTake < FieldingPlay.SecureTime)
             {
@@ -438,6 +443,7 @@ namespace Pitchlab.Sandbox
                 Vector3 point = sinceTake >= 0.0 ? input.ActionPoint : figure.WorldToFigurePoint(SimulationSpace.ToUnity(take.Value.BallPoint));
                 float secure = sinceTake >= 0.0 ? Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)) : 0f;
                 input.GloveTarget = Vector3.Lerp(point, FieldingPoser.HoldPoint(input), secure);   // ends exactly in the hold pose
+                input.GloveEffector = 1f - secure;   // the glove meets the ball; the wrist ends at the hold point (no pop)
             }
             else if (th != null && sinceTake >= FieldingPlay.SecureTime)
             {
@@ -464,7 +470,7 @@ namespace Pitchlab.Sandbox
                     // Through the arm action the ball (and the hand holding it) goes from the hold at the chest to the gameplay ball
                     // path, arriving exactly on it at the release (the transfer, readable; no jump).
                     Vector3 hand = time < release
-                        ? figure.WorldToFigurePoint(ArmBall(figure, input, d, time, armStart, release))
+                        ? figure.WorldToFigurePoint(ArmBall(figure.FigurePoint(FieldingPoser.HoldPoint(input)), d, time, armStart, release))
                         : Vector3.Lerp(figure.WorldToFigurePoint(SimulationSpace.ToUnity(th.ReleasePoint)), new Vector3(-0.25f, 0.95f, 0.55f), Mathf.SmoothStep(0f, 1f, after));
                     input.ThrowHand = hand;
                     input.ThrowTwist = time < release ? Mathf.Lerp(-35f, 25f, Mathf.SmoothStep(0f, 1f, (float)((time - armStart) / DefensivePlay.ArmAction))) : 25f;
@@ -510,7 +516,11 @@ namespace Pitchlab.Sandbox
             if (sinceTake < FieldingPlay.SecureTime)
                 ball.position = Vector3.Lerp(figure.FigurePoint(input.ActionPoint), glove, Mathf.SmoothStep(0f, 1f, (float)(sinceTake / FieldingPlay.SecureTime)));
             else if (th != null && time >= c.WindStart)
-                ball.position = ArmBall(figure, input, d, time, armStart, release);   // from the wind-up: at the hold, between the hands
+            {
+                // From the wind-up: out of the glove into the hands at the hold (0.05 s, before the glove arm leads out), then onto the throw.
+                Vector3 hold = figure.FigurePoint(FieldingPoser.HoldPoint(input));
+                ball.position = ArmBall(Vector3.Lerp(glove, hold, Mathf.SmoothStep(0f, 1f, (float)((time - c.WindStart) / 0.05))), d, time, armStart, release);
+            }
             else ball.position = glove;
         }
 
@@ -542,11 +552,12 @@ namespace Pitchlab.Sandbox
 
         /// <summary>The ball through the arm action: from the hold point (world) to the authoritative ball path, reaching it at the
         /// release.</summary>
-        private static Vector3 ArmBall(PlayerMannequin figure, in FieldingPoseInput input, LiveDefense d, double time, double armStart, double release)
+        /// <param name="from">Where it starts (world): the hold point for the throwing hand's target; for the shown ball, the
+        /// glove blending into the hold point (once this frame's pose is applied), so it leaves the glove without a jump.</param>
+        private static Vector3 ArmBall(Vector3 from, LiveDefense d, double time, double armStart, double release)
         {
             float s = Mathf.SmoothStep(0f, 1f, (float)((time - armStart) / Math.Max(1e-3, release - armStart)));
-            Vector3 hold = figure.FigurePoint(FieldingPoser.HoldPoint(input));
-            return Vector3.Lerp(hold, SimulationSpace.ToUnity(d.BallPositionAt(time)), s);
+            return Vector3.Lerp(from, SimulationSpace.ToUnity(d.BallPositionAt(time)), s);
         }
 
         /// <summary>Feet on the ground where it is not flat (the mound): each ankle target is raised or lowered by the ground

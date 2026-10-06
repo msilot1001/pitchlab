@@ -293,6 +293,9 @@ namespace Pitchlab.Sandbox
                 return;
             }
 
+            // Scenes serialized before the bat's full geometry (TASK-023) have none: the default bat's.
+            _swing = _swing.WithBatGeometry();
+
             if (_gameMode) Game = new GameState();
             _pciRange = Instantiate(_pci, _pci.transform.parent);
             _pciRange.name = "PciRange";

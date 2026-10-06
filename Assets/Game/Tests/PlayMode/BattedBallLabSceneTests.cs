@@ -54,7 +54,7 @@ namespace Pitchlab.Tests
             lab.ApplyPreset(5);
             Assert.IsTrue(System.Array.Exists(Events(lab.LastPlay), e => e.Kind == BallEventKind.WallImpact), "off the wall");
             Assert.AreEqual(BallPhase.Rest, lab.LastPlay.EndPhase);
-            Assert.Less(Units.MetersToFeet(lab.LastPlay.FinalDistance), 400.0, "rests in the park");
+            Assert.Less(FieldLayout.Standard.DistanceBeyondFence(lab.LastPlay.Final.Position.X, lab.LastPlay.Final.Position.Y, out _), 0.0, "rests in the park");
 
             lab.ApplyPreset(6);
             Assert.AreEqual(BallPhase.OutOfPlay, lab.LastPlay.EndPhase, "home run");

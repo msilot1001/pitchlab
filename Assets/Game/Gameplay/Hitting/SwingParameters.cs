@@ -38,8 +38,20 @@ namespace Pitchlab.Gameplay.Hitting
         public double EfficiencyFalloffTip;
         /// <summary>Same toward the handle (1/m²); q falls off much more slowly on that side.</summary>
         public double EfficiencyFalloffHandle;
-        /// <summary>Largest along-barrel distance from the sweet spot that still makes contact (PCI half-width), m.</summary>
+        /// <summary>The barrel's half-width around the sweet spot, m: the PCI's drawn width, where contact is good. It does not
+        /// limit contact (TASK-023): <see cref="TipReach"/> and <see cref="HandleReach"/> do.</summary>
         public double BarrelHalfLength;
+        /// <summary>
+        /// The bat beyond the barrel (TASK-023): contact reaches <see cref="TipReach"/> toward the tip (the end of the bat) and
+        /// <see cref="HandleReach"/> toward the handle, where the bat narrows from <see cref="BarrelRadius"/> (until
+        /// <see cref="TaperStart"/> from the sweet spot) to <see cref="HandleRadius"/>. The bat turns about a pivot
+        /// <see cref="PivotRadius"/> from the sweet spot, so its speed along the bat is BatSpeed·(1 + d/PivotRadius) (d toward the
+        /// tip): weak contact off the handle (jammed) and off the end, not a miss. m.
+        /// </summary>
+        public double TipReach, HandleReach, TaperStart, HandleRadius, PivotRadius;
+        /// <summary>The lowest collision efficiency toward the tip (≤ 0): off the end the bat's effective mass is small and q goes
+        /// slightly negative (q = (e − r)/(1 + r), r ≈ 0.4, e ≈ 0.3 → ≈ −0.07; floor −0.10). Toward the handle q stays ≥ 0.</summary>
+        public double MinTipEfficiency;
         /// <summary>Horizontal bat-angle change per second of timing error, rad/s (early → pull).</summary>
         public double SprayRate;
         /// <summary>Largest |timing error| that can still make contact, s.</summary>
@@ -66,6 +78,12 @@ namespace Pitchlab.Gameplay.Hitting
             Require(EfficiencyFalloffTip >= 0.0 && Finite(EfficiencyFalloffTip), nameof(EfficiencyFalloffTip));
             Require(EfficiencyFalloffHandle >= 0.0 && Finite(EfficiencyFalloffHandle), nameof(EfficiencyFalloffHandle));
             Require(BarrelHalfLength > 0.0 && Finite(BarrelHalfLength), nameof(BarrelHalfLength));
+            Require(TipReach > 0.0 && Finite(TipReach), nameof(TipReach));
+            Require(HandleReach > 0.0 && HandleReach < PivotRadius && Finite(HandleReach), nameof(HandleReach));
+            Require(TaperStart >= 0.0 && TaperStart < HandleReach, nameof(TaperStart));
+            Require(HandleRadius > 0.0 && HandleRadius <= BarrelRadius, nameof(HandleRadius));
+            Require(PivotRadius > 0.0 && Finite(PivotRadius), nameof(PivotRadius));
+            Require(MinTipEfficiency <= 0.0 && MinTipEfficiency > -1.0, nameof(MinTipEfficiency));
             Require(MaxTimingError > 0.0 && Finite(MaxTimingError), nameof(MaxTimingError));
             // The bat may not yaw past 90°, or the swing would point back at the catcher.
             Require(SprayRate >= 0.0 && SprayRate * MaxTimingError < 0.5 * Math.PI, nameof(SprayRate));
@@ -94,6 +112,17 @@ namespace Pitchlab.Gameplay.Hitting
             return p;
         }
 
+        /// <summary>This swing with the default bat's geometry beyond the barrel when it has none (TASK-023: swings serialized
+        /// before the whole bat existed — their reach, taper, pivot and tip floor read as zero).</summary>
+        public SwingParameters WithBatGeometry()
+        {
+            if (PivotRadius > 0.0) return this;
+            SwingParameters bat = Default, p = this;
+            (p.TipReach, p.HandleReach, p.TaperStart, p.HandleRadius, p.PivotRadius, p.MinTipEfficiency) =
+                (bat.TipReach, bat.HandleReach, bat.TaperStart, bat.HandleRadius, bat.PivotRadius, bat.MinTipEfficiency);
+            return p;
+        }
+
         /// <summary>A typical MLB right-handed hitter's swing (see Docs/HITTING.md).</summary>
         public static SwingParameters Default => new SwingParameters
         {
@@ -107,6 +136,15 @@ namespace Pitchlab.Gameplay.Hitting
             EfficiencyFalloffTip = 0.012 / (Units.MetersPerInch * Units.MetersPerInch),
             EfficiencyFalloffHandle = 0.003 / (Units.MetersPerInch * Units.MetersPerInch),
             BarrelHalfLength = Units.InchesToMeters(5.0),
+            // A 34-in wood bat: sweet spot ≈ 6 in from the end; the handle tapers to ≈ 1.2 in diameter over ≈ 10 in, the hands
+            // ≈ 20 in from the sweet spot (ASSUMED geometry); pivot radius = 72 mph / ≈ 45 rad/s at contact ≈ 0.7 m (DERIVED,
+            // Docs/HITTING.md).
+            TipReach = Units.InchesToMeters(6.0),
+            HandleReach = Units.InchesToMeters(14.0),
+            TaperStart = Units.InchesToMeters(4.0),
+            HandleRadius = Units.InchesToMeters(0.6),
+            PivotRadius = 0.70,
+            MinTipEfficiency = -0.10,
             SprayRate = Units.DegreesToRadians(1.2) / 0.001,
             MaxTimingError = 0.035,
             TangentialRestitution = 0.30,

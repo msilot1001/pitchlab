@@ -132,14 +132,17 @@ namespace Pitchlab.Tests
             string.Join("|", p.Log.Select(e => $"{e.Time:R}:{e.Text}")) + string.Join(",", p.Defense.Takes.Select(k => $"{k.Fielder}@{k.Time:R}"));
 
         /// <summary>Plays of the grid with a poor crew over seeds, until <paramref name="match"/> finds a misplay.</summary>
-        private static (LivePlay Play, Misplay Misplay, BallInPlay Ball) Find(Func<Misplay, bool> match, int crew = 5, BaseOccupancy? bases = null)
+        private static (LivePlay Play, Misplay Misplay, BallInPlay Ball) Find(Func<Misplay, bool> match, int crew = 5, BaseOccupancy? bases = null) =>
+            Find((m, _) => match(m), crew, bases);
+
+        private static (LivePlay Play, Misplay Misplay, BallInPlay Ball) Find(Func<Misplay, BallInPlay, bool> match, int crew = 5, BaseOccupancy? bases = null)
         {
             for (long seed = 1; seed < 200; seed++)
                 foreach (BallInPlay ball in Balls)
                 {
                     LivePlay p = Play(ball, Crew(crew), seed, bases);
                     foreach (Misplay m in p.Misplays)
-                        if (match(m)) return (p, m, ball);
+                        if (match(m, ball)) return (p, m, ball);
                 }
 
             Assert.Fail("no such misplay found");
@@ -284,7 +287,9 @@ namespace Pitchlab.Tests
             // OBR: a fly is caught by any fielder before it touches the ground. After a miss the ball stays a catchable fly until
             // its first contact (a backup holding it then makes the out — rare: in 18,400 seeded plays no backup got there), and
             // only then becomes a hit ball. Stepped in time, as the play unfolds.
-            (LivePlay done, Misplay m, BallInPlay ball) = Find(x => x.What.StartsWith("dive missed") || x.What.StartsWith("missed the catch (") && !x.What.Contains("receive"));
+            (LivePlay done, Misplay m, BallInPlay ball) = Find((x, b) =>
+                (x.What.StartsWith("dive missed") || x.What.StartsWith("missed the catch (") && !x.What.Contains("receive"))
+                && !b.Events.Any(e => e.Time <= x.Time && (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact)));   // a fly: untouched
             double landing = ball.Events.First(e => e.Time > m.Time && (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact)).Time;
             Assume.That(landing > m.Time + 0.01, "the ball is still in the air after the miss");
             var situation = new Situation(0, BaseOccupancy.Empty);

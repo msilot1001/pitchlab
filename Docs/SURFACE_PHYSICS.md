@@ -131,7 +131,9 @@ Simulation geometry. The presentation draws the same shapes.
   - plus a 13 ft circle around home and the 9 ft mound circle.
   These match `FieldDressing` exactly.
 - **Natural grass:** everywhere else inside the warning track, including foul territory.
-- **Fence:** a polyline through 330 ft (foul lines, ±45°), 375 ft (±22.5°) and 400 ft (centre). It is generic, not a real park. Height 8 ft (2.44 m).
+- **Fence:** an MLB-average generic park (TASK-023): 332 ft at the foul lines (±45°), 385 ft at the alleys (±22.5°), 405 ft in
+  centre. Between those points the distance changes linearly with the angle, sampled every 2.5° (37 points). It is generic,
+  not a real park. Height 8 ft (2.44 m). See Docs/OFFENSE_CALIBRATION.md.
 - **Warning track:** the 15 ft band inside the fence, between the foul lines.
 - **Known simplifications:**
   - The mound is flat for ground physics. It is 10 in visually, so ground balls roll through the hump.

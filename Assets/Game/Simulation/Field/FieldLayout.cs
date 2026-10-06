@@ -6,7 +6,7 @@ namespace Pitchlab.Simulation.Field
     /// <summary>
     /// Playing-surface geometry in the simulation frame (origin at the rear point of home plate, +X toward first base,
     /// +Y toward centre field, ground at Z = 0). Infield dirt matches the presentation's FieldDressing; the outfield
-    /// fence is a generic polyline (330 ft lines, 375 ft alleys, 400 ft centre), 8 ft high, with a 15 ft warning
+    /// fence is a generic polyline (332 ft lines, 385 ft alleys, 405 ft centre: an MLB-average park, TASK-023), 8 ft high, with a 15 ft warning
     /// track inside it between the foul lines. See Docs/SURFACE_PHYSICS.md.
     /// </summary>
     public enum Base
@@ -32,12 +32,19 @@ namespace Pitchlab.Simulation.Field
         {
             if (!(wallHeight > 0.0)) throw new ArgumentOutOfRangeException(nameof(wallHeight));
             double[] feet = { leftLineFeet, leftAlleyFeet, centerFeet, rightAlleyFeet, rightLineFeet };
-            _fence = new Vector3d[feet.Length];
-            for (int i = 0; i < feet.Length; i++)
+            foreach (double f in feet)
+                if (!(f > 100.0)) throw new ArgumentOutOfRangeException(nameof(feet), "Fence distances must be beyond the infield.");
+            // The quoted distances are at −45°, −22.5°, 0, +22.5°, +45° from centre field; between them the wall's distance
+            // changes smoothly with the angle (as park dimensions describe it), sampled every 2.5° (TASK-023: straight chords
+            // between the five points cut ≈ 10 ft off the wall between the alleys and centre field).
+            _fence = new Vector3d[FencePointCount];
+            for (int i = 0; i < FencePointCount; i++)
             {
-                if (!(feet[i] > 100.0)) throw new ArgumentOutOfRangeException(nameof(feet), "Fence distances must be beyond the infield.");
-                double angle = (i - 2) * Math.PI / 8.0;   // −45°, −22.5°, 0, +22.5°, +45° from centre field
-                _fence[i] = new Vector3d(feet[i] * Ft * Math.Sin(angle), feet[i] * Ft * Math.Cos(angle), 0.0);
+                double u = 4.0 * i / (FencePointCount - 1);   // 0…4 across the five control points
+                int k = Math.Min(3, (int)Math.Floor(u));
+                double dist = feet[k] + (feet[k + 1] - feet[k]) * (u - k);
+                double angle = -Math.PI / 4.0 + i * (Math.PI / 2.0) / (FencePointCount - 1);
+                _fence[i] = new Vector3d(dist * Ft * Math.Sin(angle), dist * Ft * Math.Cos(angle), 0.0);
             }
 
             WallHeight = wallHeight;
@@ -63,7 +70,14 @@ namespace Pitchlab.Simulation.Field
             }
         }
 
-        public static FieldLayout Standard => new FieldLayout(330.0, 375.0, 400.0, 375.0, 330.0, 8.0 * Ft);
+        /// <summary>
+        /// The generic MLB-average park (TASK-023): 332 ft lines, 385 ft alleys, 405 ft centre, an 8-ft wall. The lines and
+        /// centre are the 2024–25 parks' averages (≈ 333 / 403 ft, Wikipedia infoboxes); the alleys and the wall reproduce MLB's
+        /// measured home-run probability by projected distance (2024 Statcast, LA 20–40°: 18 / 27 / 38 / 55 / 74 / 90 % for
+        /// 360…420 ft in 10-ft bins) — real walls run deep and tall between the quoted points (TUNED geometry; physics
+        /// untouched). Docs/OFFENSE_CALIBRATION.md.
+        /// </summary>
+        public static FieldLayout Standard { get; } = new FieldLayout(332.0, 385.0, 405.0, 385.0, 332.0, 8.0 * Ft);   // immutable: built once
 
         public double WallHeight { get; }
 
@@ -82,8 +96,8 @@ namespace Pitchlab.Simulation.Field
         /// <summary>Fence segment between the foul lines that a ray from home at this spray angle meets (clamped to the lines).</summary>
         private int Segment(double spray)
         {
-            int i = (int)Math.Floor((spray + Math.PI / 4.0) / (Math.PI / 8.0));
-            return Math.Max(0, Math.Min(3, i));
+            int i = (int)Math.Floor((spray + Math.PI / 4.0) / (Math.PI / 2.0 / (FencePointCount - 1)));
+            return Math.Max(0, Math.Min(FencePointCount - 2, i));
         }
 
         /// <summary>
@@ -120,6 +134,6 @@ namespace Pitchlab.Simulation.Field
 
         /// <summary>Fence polyline points (ground level), left-field line to right-field line.</summary>
         public Vector3d FencePoint(int index) => _fence[index];
-        public const int FencePointCount = 5;
+        public const int FencePointCount = 37;
     }
 }

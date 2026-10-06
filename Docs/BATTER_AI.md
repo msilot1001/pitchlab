@@ -14,7 +14,7 @@ result. A test replaces the ball's future after his last look with a different o
 
 ## Perception
 - He looks every 10 ms (a deterministic tick, not a frame). Across the line of sight each look has angular noise
-  σθ = 0.0005 rad · (1 − 0.3 r̂(Vision)) per axis, times the distance from his eye (0, plate front, 1.5 m).
+  σθ = 0.00035 rad · (1 − 0.3 r̂(Vision)) per axis (TASK-023: was 0.0005), times the distance from his eye (0, plate front, 1.5 m).
 - Depth is judged from looming (the ball's angular size is 2r/d), so it is far less precise:
   σ_depth = 0.1 · σθ · d² / (2 r). That is ≈ 22 cm at 18 m and ≈ 3 cm at 7 m; the full looming bound would be ≈ 10 % of
   the distance.
@@ -60,11 +60,20 @@ The swing rates are used directly. The contact rates are only a comparison: cont
 
 ## Swing (aim and timing)
 - PCI: at every look after his first fit he places the PCI at his predicted contact-plane point plus his aim error, clamped
-  to the PCI area. The aim error is fixed per swing: σ = 3.5 cm · (1 − 0.3 r̂(Contact)) per axis (TUNED). The swing reads
-  the PCI at the press, like a human's.
-- Press: his predicted contact time − swing duration + timing error, where σ = 10 ms · (1 − 0.3 r̂(Contact)) (TUNED; the
-  sweet-spot window is ≈ 9 ms, MEASURED, Higuchi et al. 2025). With his arrival misjudgement, an average hitter is
-  ≈ 10 ms RMS off the ball.
+  to the PCI area. The swing reads the PCI at the press, like a human's. TASK-023 calibrated the aim to MLB batted balls
+  (Docs/OFFENSE_CALIBRATION.md):
+  - **Aim error**, fixed per swing and scaled by (1 − 0.3 r̂(Contact)): σ 11 cm along the barrel (how squarely he meets the
+    ball: exit speeds) and 2.5 cm across it (whiffs, launch spread).
+  - **Lift intent:** he aims 0.5 cm under the ball's centre (hitters swing to lift).
+  - **Reach penalty:** the error grows by +10 % per 1 cm outside the zone he sees the pitch. A pitch out of the zone is
+    harder to square up.
+
+  All TUNED.
+- Press: his predicted contact time − swing duration + timing error, with mean −2 ms (slightly early: hitters pull) and
+  σ = 13 ms · (1 − 0.3 r̂(Contact)) (TUNED, TASK-023: fouls and pull share; the sweet-spot window is ≈ 9 ms, MEASURED,
+  Higuchi et al. 2025).
+- His perception's prior expects a straight pitch (gravity and drag only), so he reads a fastball's backspin lift late
+  and predicts it ≈ 1.4 cm low at the decision: the "rising fastball" effect, emergent, not scripted.
 - Power: bat speed = 72 + 5 r̂(Power) mph, i.e. 67–77 mph. MLB average is 72; 2025 qualified hitters run P10 66.5 /
   P90 75.8 (DERIVED). This is the physical input of the collision (exit ≈ q·v_pitch + (1+q)·v_bat). It applies to human-
   and CPU-batted game pitches alike: the GameLab swings `SwingParameters.For(batter)`, as the simulator does. No exit
@@ -86,19 +95,21 @@ equally. One average-height right-handed batter per archetype:
 
 | Archetype (Con/Pow/Vis/Dis) | Z-Swing | Chase | Z-Contact | O-Contact | EV mph | squared-up EV |
 |---|---|---|---|---|---|---|
-| contact 78/35/65/60 | 68 % | 28 % | 80 % | 80 % | 90.0 | 102.4 |
-| power 42/85/45/40 | 70 % | 27 % | 69 % | 65 % | 94.1 | 108.6 |
-| balanced 55/55/55/55 | 66 % | 25 % | 75 % | 69 % | 91.2 | 104.7 |
-| patient 55/50/72/85 | 64 % | 19 % | 82 % | 77 % | 91.9 | 104.6 |
-| free swinger 45/65/35/18 | 75 % | 29 % | 63 % | 64 % | 91.0 | 106.3 |
-| pitcher 15/10/15/20 | 67 % | 34 % | 49 % | 53 % | 86.7 | 100.6 |
+| contact 78/35/65/60 | 69 % | 28 % | 78 % | 70 % | 83.2 | 103.4 |
+| power 42/85/45/40 | 70 % | 27 % | 70 % | 40 % | 84.1 | 109.3 |
+| balanced 55/55/55/55 | 68 % | 25 % | 77 % | 49 % | 84.1 | 103.8 |
+| patient 55/50/72/85 | 65 % | 19 % | 78 % | 54 % | 83.5 | — |
+| free swinger 45/65/35/18 | 74 % | 30 % | 70 % | 49 % | 85.4 | 106.4 |
+| pitcher 15/10/15/20 | 69 % | 35 % | 56 % | 50 % | 77.0 | 101.8 |
+
+After TASK-023's calibration (Docs/OFFENSE_CALIBRATION.md). EV here is over all contact, fouls included. Squared-up balls
+are now rare (0–6 per archetype), so that column is only indicative.
 
 Squared up means within 1 cm of the sweet spot's height and 1 in along the barrel (8–13 balls per archetype). The tests
 assert the orderings, and a deterministic squared-up swing gives ≥ 4 mph more exit speed per 40 Power points.
 
 ## Known discrepancies
-- O-Contact is too high: ≈ 55–80 % against MLB 56 %. His chases are mostly near the edge, where contact is as easy as in the
-  zone. Real chases are often breaking balls that leave the zone late, and his prior only partly captures that.
-- Simulated games (TASK-016 simulator, basic automatic pitcher) give too much offence: ≈ 18 runs per game, K ≈ 16 %,
-  BB ≈ 18 % (MLB ≈ 9, 22 %, 8.5 %; 20 games, seeds 101–120). The pitcher throws too few strikes (TASK-020), and contact is still too easy.
+- O-Contact: ≈ 40–70 % across archetypes (≈ 55 % in games; MLB 62 %). It was too high before TASK-023's reach penalty.
+- Simulated offence is calibrated (TASK-023): ≈ 4.45 runs per team-game, K 21 %, BB 9.5 %. Home runs remain ≈ 2× MLB;
+  see Docs/OFFENSE_CALIBRATION.md.
 - One swing (no check swings, no two-strike shortening, no pitch-type guessing, no scouting).
