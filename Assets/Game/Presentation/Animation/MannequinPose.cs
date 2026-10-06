@@ -21,8 +21,9 @@ namespace Pitchlab.Presentation
         /// <summary>Hand IK (wrist position) with an elbow hint direction; used when the weight is &gt; 0.</summary>
         public float RightHandWeight, LeftHandWeight;
         public Vector3 RightHand, LeftHand, RightElbowHint = Vector3.down, LeftElbowHint = Vector3.down;
-        /// <summary>The left-hand target is the glove's (its anchor, 8 cm past the wrist), not the wrist's.</summary>
-        public bool LeftHandIsGlove;
+        /// <summary>How much the left-hand target is the glove's (its anchor, 8 cm past the wrist) rather than the wrist's:
+        /// 1 = the glove meets the target, 0 = the wrist; blended, so moving between them never pops the hand.</summary>
+        public float LeftHandGlove;
         /// <summary>Ankle IK with a knee hint direction; used when the weight is &gt; 0. A planted foot keeps the same target.</summary>
         public float RightFootWeight, LeftFootWeight;
         public Vector3 RightFoot, LeftFoot, RightKneeHint = Vector3.forward, LeftKneeHint = Vector3.forward;
@@ -71,7 +72,7 @@ namespace Pitchlab.Presentation
             into.LeftHandWeight = Mathf.Lerp(p1.LeftHandWeight, p2.LeftHandWeight, t);
             into.RightHand = V(p0.RightHand, p1.RightHand, p2.RightHand, p3.RightHand);
             into.LeftHand = V(p0.LeftHand, p1.LeftHand, p2.LeftHand, p3.LeftHand);
-            into.LeftHandIsGlove = t < 0.5f ? p1.LeftHandIsGlove : p2.LeftHandIsGlove;
+            into.LeftHandGlove = Mathf.Lerp(p1.LeftHandGlove, p2.LeftHandGlove, t);
             into.RightElbowHint = D(p0.RightElbowHint, p1.RightElbowHint, p2.RightElbowHint, p3.RightElbowHint);
             into.LeftElbowHint = D(p0.LeftElbowHint, p1.LeftElbowHint, p2.LeftElbowHint, p3.LeftElbowHint);
             into.RightFootWeight = Mathf.Lerp(p1.RightFootWeight, p2.RightFootWeight, t);

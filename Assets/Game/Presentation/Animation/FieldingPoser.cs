@@ -77,6 +77,8 @@ namespace Pitchlab.Presentation
         /// <summary>Glove (left hand) target in the figure frame, and how far the glove has gone to it (0–1).</summary>
         public Vector3 GloveTarget;
         public float GloveWeight;
+        /// <summary>How much <see cref="GloveTarget"/> is for the glove itself rather than the wrist (1 = the glove meets it).</summary>
+        public float GloveEffector;
         /// <summary>Ball in the glove: both hands together in front of the chest.</summary>
         public bool HoldingBall;
         /// <summary>Throwing motion (0–1 weight): throwing hand at <see cref="ThrowHand"/> (figure frame), torso turned by
@@ -340,7 +342,7 @@ namespace Pitchlab.Presentation
                 Vector3 rest = new Vector3(-0.25f, 0.9f, 0.35f);
                 pose.LeftHandWeight = 1f;
                 pose.LeftHand = Vector3.Lerp(rest, input.GloveTarget, w);
-                pose.LeftHandIsGlove = true;   // the glove, not the wrist, meets the ball
+                pose.LeftHandGlove = Mathf.Clamp01(input.GloveEffector) * w;   // the glove, not the wrist, meets the ball (none at rest: no pop)
                 pose.LeftElbowHint = new Vector3(-1f, input.GloveTarget.y > 1.4f ? 0.3f : -0.5f, 0f);
                 if (input.Action == BodyAction.Pickup || input.Action == BodyAction.ShortHop)
                 {

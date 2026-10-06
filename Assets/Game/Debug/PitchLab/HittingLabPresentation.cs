@@ -434,8 +434,8 @@ namespace Pitchlab.Sandbox
         public const double CatcherGlovePlaneY = -0.35;
         /// <summary>How long (s) his glove moves to the pitch before it arrives.</summary>
         private const double CatcherReach = 0.3;
-        /// <summary>The glove (pocket) takes the ball only if it got within this distance (m) of it — the IK aims the wrist,
-        /// the pocket sits ≈ 8 cm from it, as for every fielder's take.</summary>
+        /// <summary>The glove (pocket) takes the ball only if it got within this distance (m) of it — the IK aims the glove
+        /// anchor, within ≈ 2 cm (its sideways offset), as for every fielder's take.</summary>
         public const float CatcherGloveReach = 0.12f;
         private double _catchTime = double.NaN;
         private Vector3 _catchPoint;

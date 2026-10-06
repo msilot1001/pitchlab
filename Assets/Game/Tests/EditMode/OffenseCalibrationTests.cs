@@ -132,7 +132,7 @@ namespace Pitchlab.Tests
             Sample s = Run(Enumerable.Range(5101, 12));
             string all = s.ToString();
             Assert.That(s.RunsPerTeamGame, Is.InRange(2.6, 5.4), all);          // MLB 4.39
-            Assert.That(s.HomeRunsPerTeamGame, Is.InRange(0.6, 2.1), all);      // 1.13
+            Assert.That(s.HomeRunsPerTeamGame, Is.InRange(0.6, 1.9), all);      // 1.13
             Assert.That(s.KRate, Is.InRange(19.5, 29.5), all);                  // 22.6 %
             Assert.That(s.BBRate, Is.InRange(5.5, 12.0), all);                  // 8.2 %
             Assert.That(s.ExitMph, Is.InRange(85.5, 90.5), all);                // 88.8 mph
@@ -144,6 +144,6 @@ namespace Pitchlab.Tests
         }
 
         /// <summary>Development report (Docs/OFFENSE_CALIBRATION.md).</summary>
-        public static string Report(int games = 30) => Run(Enumerable.Range(5001, games)).ToString();
+        public static string Report(int games = 30) => Run(Enumerable.Range(6001, games)).ToString();   // seeds 6001 on: the doc's sample
     }
 }

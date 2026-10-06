@@ -77,7 +77,7 @@ namespace Pitchlab.Simulation.Field
         /// 360…420 ft in 10-ft bins) — real walls run deep and tall between the quoted points (TUNED geometry; physics
         /// untouched). Docs/OFFENSE_CALIBRATION.md.
         /// </summary>
-        public static FieldLayout Standard => new FieldLayout(332.0, 385.0, 405.0, 385.0, 332.0, 8.0 * Ft);
+        public static FieldLayout Standard { get; } = new FieldLayout(332.0, 385.0, 405.0, 385.0, 332.0, 8.0 * Ft);   // immutable: built once
 
         public double WallHeight { get; }
 

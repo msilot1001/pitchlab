@@ -181,6 +181,15 @@ namespace Pitchlab.Tests
                 Assert.AreEqual(1.0, n.Length, 1e-12);
             }
 
+            // Between the quoted points the wall's distance changes smoothly with the angle (TASK-023): halfway between the
+            // left alley (385 ft) and centre (405 ft) it is 395 ft, not the straight chord's ≈ 389 ft.
+            foreach (double spray in new[] { -11.25, 33.75 })
+            {
+                double feet = spray < 0.0 ? 395.0 : 358.5;
+                (double x, double y) = At(feet, spray);
+                Assert.AreEqual(0.0, Field.DistanceBeyondFence(x, y, out _), 0.05, $"{spray}°: the wall between the quoted points");
+            }
+
             (double cx, double cy) = At(385.0, 0.0);
             double inside = Field.DistanceBeyondFence(cx, cy, out _);
             Assert.Less(inside, -5.0, "20 ft short of the 405 ft mark is ≈ 6 m inside the fence face");

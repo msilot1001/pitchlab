@@ -69,4 +69,16 @@ Claude Code (sole writer); physics, test and Unity reviewers and Codex read-only
 - [x] Runs are ≈ 25 % low. Traced to defensive conversion by batted-ball type (GB .353 / LD .508 / FB .052 vs MLB
   ≈ .24 / .68 / .13), documented and handed to TASK-033/037.
 - [x] check.sh green (EditMode 705 passed, 6 skipped; PlayMode 103/103).
-- [ ] Unity review; Codex round 2; merge.
+- [x] Codex round 2: grade B. Fixed:
+  - the home-run guard tightened to ≤ 1.9 per team-game;
+  - the fence test checks angles between the quoted points;
+  - `Report` uses the doc's seeds (6001 on);
+  - the runs-deficit attribution softened to "likely main contributor".
+- [x] Unity review:
+  - The glove IK now hands over to the hold pose through a blended weight (`LeftHandGlove`). With a hard switch the hand
+    popped 8 cm when the catch was secured.
+  - The wind-up ball leaves the glove for the hands over 0.05 s; it used to jump the glove's 8 cm.
+  - `FieldLayout.Standard` is built once.
+  - A new test: no pop when secured.
+  - Left as is: the scene migration keys on PivotRadius only. Re-saving the lab scenes would persist the fields.
+- [x] check.sh green (EditMode 705 passed, 6 skipped; PlayMode 103/103). Merged.

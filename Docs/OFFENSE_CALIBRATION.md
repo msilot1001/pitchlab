@@ -8,7 +8,7 @@ corrected:
 2. The CPU hitter's contact quality and timing were too good and too centred (Docs/BATTER_AI.md).
 3. The generic park was too easy to hit out: the straight-chord fence and its dimensions (`FieldLayout.Standard`).
 
-Harness: `OffenseCalibrationTests.Report(n)` (EditMode assembly). Guards: `SimulatedOffenseStaysNearMlb`.
+Harness: `OffenseCalibrationTests.Report(n)` (EditMode assembly; seeds 6001 onward, the sample below). Guards: `SimulatedOffenseStaysNearMlb`.
 
 Labels: MEASURED / DERIVED / ASSUMED / TUNED (Docs/PLAYER_RATINGS.md).
 
@@ -82,7 +82,7 @@ Labels: MEASURED / DERIVED / ASSUMED / TUNED (Docs/PLAYER_RATINGS.md).
 | Fouls, share of contact | — | 45 % | ≈ 52 % |
 
 ## Remaining discrepancies (handed on, with the measurements)
-- **Runs are ≈ 25 % low because balls in play convert wrongly by type.**
+- **Runs are ≈ 25 % low. The likely main contributor: balls in play convert wrongly by type.**
 
   | Type | Sim (30 games) | MLB (approx., FanGraphs BABIP by type) |
   |---|---|---|
@@ -92,8 +92,8 @@ Labels: MEASURED / DERIVED / ASSUMED / TUNED (Docs/PLAYER_RATINGS.md).
 
   - Doubles are 0.57 per team-game against ≈ 1.6. Outfielders gather hits in a median 3.65 s (P90 5.0 s), so few balls
     get far enough for a double.
-  - This is defensive conversion: infield range and outfield reads, positioning and catch success. It is not the hitter
-    or the park.
+  - This points to defensive conversion (infield range and outfield reads, positioning, catch success). It does not
+    isolate it: the lower launch angle (10° vs 13°) and barrel rate (6 % vs 7.8 %) also cost runs.
   - Handed to TASK-033 (defensive positioning) and TASK-037 (large-sample calibration).
 - **Zone contact is 76 % (MLB 86 %).** Vertical misses come from the hitter's perception; sharper perception would square
   the ball up again.

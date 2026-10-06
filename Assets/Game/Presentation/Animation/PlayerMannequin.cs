@@ -149,7 +149,7 @@ namespace Pitchlab.Presentation
             OrientFoot(MannequinJoint.RightFoot, pose.RightFootYaw, pose.RightFootPitch);
             OrientFoot(MannequinJoint.LeftFoot, pose.LeftFootYaw, pose.LeftFootPitch);
             if (pose.RightHandWeight > 0f) ReachLimb(MannequinJoint.RightUpperArm, pose.RightHand, pose.RightElbowHint);
-            if (pose.LeftHandWeight > 0f) ReachLimb(MannequinJoint.LeftUpperArm, pose.LeftHand, pose.LeftElbowHint, pose.LeftHandIsGlove ? GloveAnchor : null);
+            if (pose.LeftHandWeight > 0f) ReachLimb(MannequinJoint.LeftUpperArm, pose.LeftHand, pose.LeftElbowHint, GloveAnchor, pose.LeftHandGlove);
             if (pose.GripWeight > 0f) Grip(pose.GripPoint, pose.GripDirection);
         }
 
@@ -166,14 +166,18 @@ namespace Pitchlab.Presentation
         /// Two-bone reach of a limb (upper arm or thigh as <paramref name="root"/>) so its end joint (wrist or ankle) is at a
         /// figure-frame point, bending toward a figure-frame hint direction (elbow/knee side).
         /// </summary>
-        /// <param name="effector">The point that reaches the target, when it is not the end joint (a glove anchor on the
-        /// hand: hand rotation is identity, so it lies ≈ along the forearm; its 2 cm sideways offset is ignored).</param>
-        public void ReachLimb(MannequinJoint root, Vector3 figureTarget, Vector3 figureHint, Transform effector = null)
+        /// <param name="effector">A point on the end joint (a glove anchor on the hand: hand rotation is identity, so it lies
+        /// ≈ along the forearm; its 2 cm sideways offset is ignored) that reaches the target with weight
+        /// <paramref name="effectorWeight"/> (0 = the end joint itself).</param>
+        public void ReachLimb(MannequinJoint root, Vector3 figureTarget, Vector3 figureHint, Transform effector = null, float effectorWeight = 0f)
         {
             Transform upper = Joint(root);
             Transform lower = Joint(root + 1);
+            Transform end = Joint(root + 2);
             Vector3 target = _visual.TransformPoint(figureTarget);
-            Reach(upper, lower, effector != null ? effector : Joint(root + 2), target, (upper.position + target) * 0.5f + FigureToWorld(figureHint) * 0.5f);
+            float extend = effector != null && effectorWeight > 0f
+                ? effectorWeight * (Vector3.Distance(lower.position, effector.position) - Vector3.Distance(lower.position, end.position)) : 0f;
+            Reach(upper, lower, end, target, (upper.position + target) * 0.5f + FigureToWorld(figureHint) * 0.5f, extend);
         }
 
         /// <summary>
@@ -212,9 +216,9 @@ namespace Pitchlab.Presentation
             Joint(rightArm ? MannequinJoint.RightForearm : MannequinJoint.LeftForearm),
             Joint(rightArm ? MannequinJoint.RightHand : MannequinJoint.LeftHand), target, elbowHint);
 
-        private static void Reach(Transform upper, Transform lower, Transform hand, Vector3 target, Vector3 elbowHint)
+        private static void Reach(Transform upper, Transform lower, Transform hand, Vector3 target, Vector3 elbowHint, float extend = 0f)
         {
-            float a = Vector3.Distance(upper.position, lower.position), b = Vector3.Distance(lower.position, hand.position);
+            float a = Vector3.Distance(upper.position, lower.position), b = Vector3.Distance(lower.position, hand.position) + extend;
             Vector3 toTarget = target - upper.position;
             float d = Mathf.Clamp(toTarget.magnitude, 0.05f, (a + b) * 0.999f);
             Vector3 dir = toTarget.normalized;
