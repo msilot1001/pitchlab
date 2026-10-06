@@ -554,7 +554,7 @@ namespace Pitchlab.Gameplay.Fielding
             ReceiverMotion = receiverMotion;
             double first = flight.EndTime;
             foreach (BallEvent e in flight.Events)
-                if (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact || e.Kind == BallEventKind.LeftPlay)
+                if (e.Kind == BallEventKind.GroundImpact || e.Kind == BallEventKind.WallImpact || e.Kind == BallEventKind.LeftPlay || e.Kind == BallEventKind.ClearedFence)
                 {
                     first = e.Time;
                     break;

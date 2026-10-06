@@ -346,12 +346,25 @@ namespace Pitchlab.Tests
         [Test]
         public void SimulatedGamesLabelTheirMisplays()
         {
-            var g = new GameState(Gameplay.Players.GenericRosters.Away(), Gameplay.Players.GenericRosters.Home(), 7);
-            var sim = new GameSimulator(g);
-            sim.PlayToEnd();
-            int labelled = g.Completed.Count(pa => pa.Result.Contains("misplay"));
-            Assert.LessOrEqual(labelled, sim.Misplays.Count);
-            if (sim.Misplays.Count > 0) Assert.Greater(labelled + sim.Misplays.Count(m => m.Kind == MisplayKind.ThrowingMisplay), 0);
+            // Every plate appearance whose ball in play had a misplay says so in its result.
+            int labelled = 0;
+            foreach (int seed in new[] { 7, 8, 9 })
+            {
+                var g = new GameState(Gameplay.Players.GenericRosters.Away(), Gameplay.Players.GenericRosters.Home(), seed);
+                var sim = new GameSimulator(g);
+                LivePlay seen = null;
+                while (!g.IsOver)
+                {
+                    PitchOutcome o = sim.PlayPitch();
+                    if (o != PitchOutcome.InPlay || ReferenceEquals(sim.LastPlay, seen)) continue;
+                    seen = sim.LastPlay;
+                    if (seen.Misplays.Count == 0) continue;
+                    StringAssert.Contains("misplay", g.Completed[g.Completed.Count - 1].Result);
+                    labelled++;
+                }
+            }
+
+            Assert.Greater(labelled, 0, "the sample had misplays");
             // A rate guard on whole games (regression guard; MLB ≈ 0.5 errors per team-game): misplays are rare, not chaos.
             int total = 0;
             for (int seed = 31; seed <= 36; seed++)

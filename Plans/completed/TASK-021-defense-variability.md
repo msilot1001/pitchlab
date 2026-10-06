@@ -77,3 +77,8 @@ Claude Code (sole writer); physics, Unity and test reviewers and Codex read-only
   double (OBR: that is a fair ball bouncing over the fence). This is documented and tested.
 - [x] Codex round 5: C — fixed: an overrunning or retouching runner still receives the out-of-play award (it waits until he
   can go), with a live-state test. Codex accepted the classification of a two-base award by the batter's final base.
+- [x] Codex round 6: B — fixed:
+  - a throw clearing the fence ends there;
+  - the label test proves every misplayed play is labelled.
+
+  check.sh green (EditMode 697 passed, 6 skipped; PlayMode 101/101). Merged.
